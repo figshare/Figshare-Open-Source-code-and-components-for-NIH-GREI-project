@@ -1,0 +1,83 @@
+commit f44ecd0510f19d861ac98cf725f63f3b82d6dbf6
+Author: Adrian-Tudor Panescu <tudor@figshare.com>
+Date:   Wed Aug 24 15:46:19 2022 +0300
+
+    FIG-25206(identifier): send ROR when minting DOIs
+
+diff --git a/src/figcore/lib/identifier/doi/__init__.py b/src/figcore/lib/identifier/doi/__init__.py
+index a8e12775b..cb7d81e9c 100644
+--- a/src/figcore/lib/identifier/doi/__init__.py
++++ b/src/figcore/lib/identifier/doi/__init__.py
+@@ -140,15 +140,28 @@ class DOIHelper(object):
+         funding = []
+         for fund in item.funding:
+             if fund.funder_title:
+-                fund_dict = {
+-                    "funder_name": fund.funder_title,
+-                    "founder_identifier": fund.grid_id,
+-                    "founder_identifier_type": "GRID",
+-                    "award_number": fund.grant_code,
+-                    "award_uri": None,
+-                    "award_title": fund.title,
+-                }
+-                funding.append(fund_dict)
++                identifier = fund.grid_id
++                funder_identifier_type = "GRID"
++                funder_identifier_scheme_uri = "https://www.grid.ac/"
++
++                grid = Grid.find(fund.grid_id)
++
++                if grid and grid.crosswalk("ror"):
++                    funder_identifier_scheme_uri = "https://ror.org/"
++                    identifier = f"{funder_identifier_scheme_uri}{grid.crosswalk('ror')}"
++                    funder_identifier_type = "ROR"
++
++                funding.append(
++                    {
++                        "funder_name": fund.funder_title,
++                        "funder_identifier": identifier,
++                        "funder_identifier_type": funder_identifier_type,
++                        "funder_identifier_scheme_uri": funder_identifier_scheme_uri,
++                        "award_number": fund.grant_code,
++                        "award_uri": None,
++                        "award_title": fund.title,
++                    }
++                )
+         return funding
+ 
+     def build_suffix(self, item):
+@@ -333,11 +346,19 @@ class DOIHelper(object):
+                 grids = Grid.get_by_ids(author[4])
+                 for grid in grids:
+                     affiliation = ET.SubElement(creator, "affiliation")
+-                    affiliation.set("affiliationIdentifier", grid.grid_id)
+-                    affiliation.set("affiliationIdentifierScheme", "GRID")
+-                    affiliation.set("schemeURI", "https://grid.ac/institutes/")
+                     affiliation.text = grid.title
+ 
++                    if grid.crosswalk("ror"):
++                        scheme_uri = "https://ror.org/"
++                        affiliation.set("affiliationIdentifier", f"{scheme_uri}{grid.crosswalk('ror')}")
++                        affiliation.set("affiliationIdentifierScheme", "ROR")
++                    else:
++                        scheme_uri = "https://www.grid.ac/"
++                        affiliation.set("affiliationIdentifier", grid.grid_id)
++                        affiliation.set("affiliationIdentifierScheme", "GRID")
++
++                    affiliation.set("schemeURI", scheme_uri)
++
+         # Set the item title
+         titles = ET.SubElement(root, "titles")
+         title = ET.SubElement(titles, "title")
+@@ -436,8 +457,9 @@ class DOIHelper(object):
+                 funder_name.text = funding["funder_name"]
+ 
+                 funder_identifier = ET.SubElement(funding_reference, "funderIdentifier")
+-                funder_identifier.set("funderIdentifierType", funding["founder_identifier_type"])
+-                funder_identifier.text = funding["founder_identifier"]
++                funder_identifier.set("funderIdentifierType", funding["funder_identifier_type"])
++                funder_identifier.set("schemeURI", funding["funder_identifier_scheme_uri"])
++                funder_identifier.text = funding["funder_identifier"]
+ 
+                 award_number = ET.SubElement(funding_reference, "awardNumber")
+                 if funding["award_uri"]:

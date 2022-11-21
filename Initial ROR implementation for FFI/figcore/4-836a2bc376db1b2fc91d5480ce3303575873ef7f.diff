@@ -1,0 +1,40 @@
+commit 836a2bc376db1b2fc91d5480ce3303575873ef7f
+Author: Adrian-Tudor Panescu <tudor@figshare.com>
+Date:   Tue Aug 30 09:53:12 2022 +0300
+
+    FIG-25206(identifier): don't append resolver to RORs
+
+diff --git a/src/figcore/lib/identifier/doi/__init__.py b/src/figcore/lib/identifier/doi/__init__.py
+index cb7d81e9c..85f4165d1 100644
+--- a/src/figcore/lib/identifier/doi/__init__.py
++++ b/src/figcore/lib/identifier/doi/__init__.py
+@@ -148,7 +148,7 @@ class DOIHelper(object):
+ 
+                 if grid and grid.crosswalk("ror"):
+                     funder_identifier_scheme_uri = "https://ror.org/"
+-                    identifier = f"{funder_identifier_scheme_uri}{grid.crosswalk('ror')}"
++                    identifier = f"{grid.crosswalk('ror')}"
+                     funder_identifier_type = "ROR"
+ 
+                 funding.append(
+@@ -350,7 +350,7 @@ class DOIHelper(object):
+ 
+                     if grid.crosswalk("ror"):
+                         scheme_uri = "https://ror.org/"
+-                        affiliation.set("affiliationIdentifier", f"{scheme_uri}{grid.crosswalk('ror')}")
++                        affiliation.set("affiliationIdentifier", f"{grid.crosswalk('ror')}")
+                         affiliation.set("affiliationIdentifierScheme", "ROR")
+                     else:
+                         scheme_uri = "https://www.grid.ac/"
+diff --git a/tests/api/grid/test_api.py b/tests/api/grid/test_api.py
+index b47193597..352ad30be 100644
+--- a/tests/api/grid/test_api.py
++++ b/tests/api/grid/test_api.py
+@@ -21,5 +21,5 @@ class TestGridMethods(BaseTestTransactioned):
+         assert grids[0].grid_id == "grid.123"
+ 
+     def test_update(self):
+-        self.grid.update({"crosswalks": {"ror": "12a34"}})
+-        assert self.grid.crosswalk("ror") == "12a34"
++        self.grid.update({"crosswalks": {"ror": "https://ror.org/12a34"}})
++        assert self.grid.crosswalk("ror") == "https://ror.org/12a34"

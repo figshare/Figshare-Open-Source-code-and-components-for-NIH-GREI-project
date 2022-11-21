@@ -1,0 +1,83 @@
+commit 9fbfdfd353c41736b76b10776e5b29eb2dd10ded
+Author: Adrian-Tudor Panescu <tudor@figshare.com>
+Date:   Thu Aug 25 11:03:15 2022 +0300
+
+    FIG-25204(oai): add ROR to funding output for RDF
+
+diff --git a/figshare_api2/app/presenters/oai/record.py b/figshare_api2/app/presenters/oai/record.py
+index 746a1f2..937c167 100644
+--- a/figshare_api2/app/presenters/oai/record.py
++++ b/figshare_api2/app/presenters/oai/record.py
+@@ -8,6 +8,7 @@ import six
+ from lxml import etree
+ 
+ from figcore.lib.data.citation_static import FIGSHARE_BRANDING
++from figcore.api import Grid
+ from figshare_api import config
+ from figshare_api2.app import oai_exceptions
+ from figshare_api2.app.presenters.file import FilePresenter
+@@ -618,6 +619,12 @@ class RDFPresenter(OAIMetadataPresenter):
+                     identifier.set("type", "grid")
+                     identifier.text = grant.grid_id
+ 
++                    grid = Grid.find(grant.grid_id)
++                    if grid and grid.crosswalk("ror"):
++                        identifier = etree.SubElement(grant_root, nsrifcis("identifier"))
++                        identifier.set("type", "ror")
++                        identifier.text = f"{grid.crosswalk('ror')}"
++
+                 if grant.dimensions_id:
+                     identifier = etree.SubElement(grant_root, nsrifcis("identifier"))
+                     identifier.set("type", "local")
+diff --git a/figshare_api2/tests/app/presenters/oai/record_test.py b/figshare_api2/tests/app/presenters/oai/record_test.py
+index f660028..61af02e 100644
+--- a/figshare_api2/tests/app/presenters/oai/record_test.py
++++ b/figshare_api2/tests/app/presenters/oai/record_test.py
+@@ -1,6 +1,8 @@
+ from lxml import etree
+ from mock import Mock
+ 
++from figcore.api import Funding, Grid
++
+ from figshare_api2.app.presenters import OAIResponse
+ 
+ GET_RECORD_XML = """
+@@ -84,6 +86,15 @@ GET_RECORD_XML_RDF = """
+                 <rifcis:publisher>Figgy</rifcis:publisher>
+               </rifcis:citationMetadata>
+             </rifcis:citationInfo>
++            <rifcis:relatedInfo type="metadata">
++              <rifcis:title>test</rifcis:title>
++              <rifcis:identifier type="local">1</rifcis:identifier>
++              <rifcis:identifier type="grid">1234</rifcis:identifier>
++              <rifcis:identifier type="ror">https://ror.org/j312l</rifcis:identifier>
++              <rifcis:identifier type="local">456</rifcis:identifier>
++              <rifcis:identifier type="fundref">test</rifcis:identifier>
++              <rifcis:relation type="isFundedBy"/>
++            </rifcis:relatedInfo>
+           </rifcis:registryObject>
+         </rifcis:registryObjects>
+       </rdf:RDF>
+@@ -271,7 +282,21 @@ def test_article_presenter(article):
+     assert result_str.strip() == GET_RECORD_XML.strip()
+ 
+ 
+-def test_article_rdf_presenter(article):
++def test_article_rdf_presenter(article, patcher):
++    grid_mock = Mock(spec=Grid)
++    grid_mock.grid_id = "1234"
++    grid_mock.crosswalk.return_value = "https://ror.org/j312l"
++    patcher.object(Grid, "find", return_value=grid_mock)
++
++    grant = Mock(spec=Funding)
++    grant.title = "test"
++    grant.id = 1
++    grant.grid_id = grid_mock.grid_id
++    grant.dimensions_id = "456"
++    grant.funder_title = "test"
++
++    article.funding = [grant]
++
+     article.description = "{}{}".format(article.description, "\x02")
+ 
+     result_xml = OAIResponse.Record(article, metadata_prefix="rdf").to_xml()

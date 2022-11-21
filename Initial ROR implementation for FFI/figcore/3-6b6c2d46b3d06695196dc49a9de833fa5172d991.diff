@@ -1,0 +1,115 @@
+commit 6b6c2d46b3d06695196dc49a9de833fa5172d991
+Author: Adrian-Tudor Panescu <tudor@figshare.com>
+Date:   Fri Aug 26 15:12:06 2022 +0300
+
+    FIG-25203(grid): allow updating GRIDs
+
+diff --git a/src/figcore/api/grid/api.py b/src/figcore/api/grid/api.py
+index b452d9ce2..74d88e4c3 100644
+--- a/src/figcore/api/grid/api.py
++++ b/src/figcore/api/grid/api.py
+@@ -35,6 +35,14 @@ class Grid(APIEntity):
+ 
+         return cls(model.grid_id).load_from_model(model)
+ 
++    def update(self, data):
++        data = copy.deepcopy(data)
++        data = GridValidator.sanitize_input(data)
++        validator = GridValidator(data)
++        validator.validate_update_data()
++        GridInternals.update(self.grid_id, data)
++        self._model = None
++
+     @property
+     def id(self):
+         return self._grid_id
+diff --git a/src/figcore/api/grid/validator.py b/src/figcore/api/grid/validator.py
+index 5488304b1..9adb039a8 100644
+--- a/src/figcore/api/grid/validator.py
++++ b/src/figcore/api/grid/validator.py
+@@ -7,7 +7,8 @@ class GridValidator(Validator):
+     MIN_LENGTH = 3
+     MAX_TITLE_LENGTH = 2000
+     MANDATORY_CREATE_FIELDS = ["grid_id", "title"]
+-    ALLOWED_CREATE_FIELDS = MANDATORY_CREATE_FIELDS + []
++    ALLOWED_CREATE_FIELDS = MANDATORY_CREATE_FIELDS + ["crosswalks"]
++    ALLOWED_UPDATE_FIELDS = ["title", "crosswalks"]
+ 
+     def __init__(self, data):
+         self.data = data
+@@ -21,13 +22,20 @@ class GridValidator(Validator):
+         return data
+ 
+     @classmethod
+-    def validate_title(cls, data):
+-        if not data.get("title"):
++    def validate_title(cls, data, required=True):
++        if not data.get("title") and required:
+             raise fig_exc.MissingMandatoryField("title")
+ 
+-        if not cls.validate_string(data["title"], min_length=cls.MIN_LENGTH, max_length=cls.MAX_TITLE_LENGTH):
++        if data.get("title") and not cls.validate_string(
++            data["title"], min_length=cls.MIN_LENGTH, max_length=cls.MAX_TITLE_LENGTH
++        ):
+             raise fig_exc.InvalidLength(field="title")
+ 
++    @classmethod
++    def validate_crosswalks(cls, data):
++        if data.get("crosswalks") and not isinstance(data["crosswalks"], dict):
++            raise fig_exc.InvalidValue(field="crosswalks")
++
+     def validate_create_data(self):
+         for field in self.data:
+             if field not in self.ALLOWED_CREATE_FIELDS:
+@@ -38,3 +46,12 @@ class GridValidator(Validator):
+                 raise fig_exc.MissingMandatoryField(field)
+ 
+         self.validate_title(self.data)
++        self.validate_crosswalks(self.data)
++
++    def validate_update_data(self):
++        for field in self.data:
++            if field not in self.ALLOWED_UPDATE_FIELDS:
++                raise fig_exc.UnknownField(field)
++
++        self.validate_title(self.data, required=False)
++        self.validate_crosswalks(self.data)
+diff --git a/src/figcore/internals/db_calls/grid.py b/src/figcore/internals/db_calls/grid.py
+index 54a0bf136..bde94be66 100644
+--- a/src/figcore/internals/db_calls/grid.py
++++ b/src/figcore/internals/db_calls/grid.py
+@@ -30,3 +30,9 @@ class GridDBCalls(BaseDBCalls):
+         query = query.filter(Grid_model.grid_id.in_(grid_ids))
+ 
+         return query.all()
++
++    @classmethod
++    def update(cls, db_session, grid_id, data):
++        query = db_session.query(Grid_model)
++        query = query.filter(Grid_model.grid_id == grid_id)
++        query.update(data, synchronize_session=False)
+diff --git a/src/figcore/internals/grid/grid.py b/src/figcore/internals/grid/grid.py
+index 6eb556659..850300540 100644
+--- a/src/figcore/internals/grid/grid.py
++++ b/src/figcore/internals/grid/grid.py
+@@ -44,3 +44,8 @@ class GridInternals(object):
+                 setattr(model, key, value)
+ 
+         return model
++
++    @classmethod
++    def update(cls, grid_id, data):
++        with cls.DB.get_session() as db_session:
++            GridDBCalls.update(db_session, grid_id, data)
+diff --git a/tests/api/grid/test_api.py b/tests/api/grid/test_api.py
+index 51c7dccde..b47193597 100644
+--- a/tests/api/grid/test_api.py
++++ b/tests/api/grid/test_api.py
+@@ -19,3 +19,7 @@ class TestGridMethods(BaseTestTransactioned):
+         grids = Grid.get_by_ids(["grid.123", "grid.000"])
+         assert len(grids) == 1
+         assert grids[0].grid_id == "grid.123"
++
++    def test_update(self):
++        self.grid.update({"crosswalks": {"ror": "12a34"}})
++        assert self.grid.crosswalk("ror") == "12a34"

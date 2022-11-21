@@ -1,0 +1,56 @@
+commit 674deac9e582d3796bf1d42f6335313698582c65
+Author: Adrian-Tudor Panescu <tudor@figshare.com>
+Date:   Wed Aug 24 15:45:46 2022 +0300
+
+    FIG-25201(models): add crosswalks support for GRIDs
+
+diff --git a/scripts/sql_migrations/2022-09-29.sql b/scripts/sql_migrations/2022-09-29.sql
+new file mode 100644
+index 000000000..7c8f69b6f
+--- /dev/null
++++ b/scripts/sql_migrations/2022-09-29.sql
+@@ -0,0 +1 @@
++ALTER TABLE `grid` ADD crosswalks VARBINARY(1000) DEFAULT '{}' NOT NULL;
+diff --git a/src/figcore/api/grid/api.py b/src/figcore/api/grid/api.py
+index 04d156f9b..b452d9ce2 100644
+--- a/src/figcore/api/grid/api.py
++++ b/src/figcore/api/grid/api.py
+@@ -22,7 +22,8 @@ class Grid(APIEntity):
+ 
+     @classmethod
+     def get_by_ids(cls, grid_ids):
+-        return GridInternals.get_by_ids(grid_ids)
++        models = GridInternals.get_by_ids(grid_ids)
++        return [cls(model.grid_id).load_from_model(model) for model in models]
+ 
+     @classmethod
+     def create(cls, data):
+@@ -48,6 +49,10 @@ class Grid(APIEntity):
+     def title(self):
+         return self._model.title
+ 
++    @GridChecker.ensure("model")
++    def crosswalk(self, target):
++        return self._model.crosswalks.get(target)
++
+     def load_model(self):
+         self._model = GridInternals.get_by_id(self.grid_id)
+ 
+diff --git a/src/figcore/models/dao/grid.py b/src/figcore/models/dao/grid.py
+index 817085bf1..20c6906c5 100644
+--- a/src/figcore/models/dao/grid.py
++++ b/src/figcore/models/dao/grid.py
+@@ -1,7 +1,7 @@
+ from sqlalchemy import Column
+ from sqlalchemy.dialects.mysql import VARCHAR
+ 
+-from ..custom_data_types import TextVarbinary
++from ..custom_data_types import TextVarbinary, JsonDictBlob
+ from .base import Base, ExtendedBase
+ 
+ 
+@@ -12,3 +12,4 @@ class Grid(Base, ExtendedBase):
+ 
+     grid_id = Column(VARCHAR(255), primary_key=True)
+     title = Column(TextVarbinary(2000), nullable=False, default="", server_default="")
++    crosswalks = Column(JsonDictBlob(1000), nullable=False, default={}, server_default="{}")
