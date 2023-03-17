@@ -1,0 +1,301 @@
+From 12fc17059aa114dcd3e23ae4827cef2ca2035fbf Mon Sep 17 00:00:00 2001
+From: teodora <teogrosu29@gmail.com>
+Date: Mon, 13 Mar 2023 15:49:59 +0200
+Subject: [PATCH] FIG-28895: Add funder and grant title facets
+
+---
+ .../facets/components/optionsList/index.css   | 43 +++++++++++++++++++
+ .../facets/components/optionsList/index.jsx   | 43 +++++++++++++++----
+ .../components/optionsList/index.test.jsx     | 22 ++++++++++
+ .../searchNew/components/facets/constants.js  |  6 +++
+ .../searchNew/components/facets/index.gql     | 32 ++++++++++++++
+ .../components/facets/index.test.jsx          | 18 ++++++++
+ 6 files changed, 155 insertions(+), 9 deletions(-)
+
+diff --git a/src/pages/searchNew/components/facets/components/optionsList/index.css b/src/pages/searchNew/components/facets/components/optionsList/index.css
+index 27690a7b..470cbb9f 100644
+--- a/src/pages/searchNew/components/facets/components/optionsList/index.css
++++ b/src/pages/searchNew/components/facets/components/optionsList/index.css
+@@ -28,6 +28,10 @@
+   }
+ }
+ 
++.grantButton {
++  height: auto;
++}
++
+ .checkbox {
+   margin-right: var(--gridSize);
+   flex-shrink: 0;
+@@ -81,3 +85,42 @@
+   color: var(--color-typography-disabled);
+   flex-shrink: 0;
+ }
++
++.grantContainer {
++  display: flex;
++}
++
++.grantCheckbox {
++  display: flex;
++
++  margin-right: var(--gridSize);
++  flex-shrink: 0;
++
++  align-self: flex-start;
++}
++
++.grant {
++  display: -webkit-box;
++
++  overflow: hidden;
++
++  margin-top: var(--gridSize);
++
++  text-align: left;
++  white-space: normal;
++  -webkit-line-clamp: 2;
++  -webkit-box-orient: vertical;
++
++  color: var(--color-typography-primary);
++}
++
++.grantLabelContainer {
++  display: flex;
++
++  height: fit-content;
++}
++
++.grantCount {
++  color: var(--color-typography-disabled);
++  align-self: flex-end;
++}
+diff --git a/src/pages/searchNew/components/facets/components/optionsList/index.jsx b/src/pages/searchNew/components/facets/components/optionsList/index.jsx
+index c46b9ac3..ff700e6e 100644
+--- a/src/pages/searchNew/components/facets/components/optionsList/index.jsx
++++ b/src/pages/searchNew/components/facets/components/optionsList/index.jsx
+@@ -6,7 +6,7 @@ import Checkmark from "@figshare/components/ui/checkbox/components/checkmark";
+ import { Content, Trigger, UncontrolledTooltip as Tooltip } from "@figshare/components/ui/tooltip";
+ 
+ import Context from "../../../../context";
+-import { MAX_VALUES } from "../../constants";
++import { gqlFacets, MAX_VALUES } from "../../constants";
+ 
+ import style from "./index.css";
+ 
+@@ -71,19 +71,48 @@ export default class FacetOptions extends Component {
+     const { name, value, count } = option;
+     const { facets, facetsLoading, resultsLoading, searchBy } = this.context;
+     const { disabled: facetDisabled, facet, showCount } = this.props;
++
++    const isGrantFacet = facet === gqlFacets.GRANTS;
+     const checked = facets?.[facet]?.includes?.(value);
+ 
+     let countNode = null;
+-
+     if (showCount) {
+-      countNode = <span className={style.count}>{" "}({count.toString().replace(FORMAT_REGEX, ",")})</span>;
++      countNode = (
++        <span className={classnames([style.count, { [style.grantCount]: isGrantFacet }])}>
++          {" "}({count.toString().replace(FORMAT_REGEX, ",")})
++        </span>
++      );
+     }
+ 
+     const loading = facetsLoading || resultsLoading;
+     const maxValuesChecked = facets?.[facet]?.length === MAX_VALUES;
+ 
+     const disabled = facetDisabled || loading || (maxValuesChecked && !checked) || searchBy === "text";
+-    const className = [style.button, { [style.disabled]: disabled }];
++    const className = [style.button, { [style.disabled]: disabled }, { [style.grantButton]: isGrantFacet }];
++
++    let checkboxNode = (
++      <>
++        <Checkmark checked={checked} className={style.checkbox} />
++        <span {...props} className={style.label}>
++          {name}
++        </span>
++        {countNode}
++      </>
++    );
++
++    if (isGrantFacet) {
++      checkboxNode = (
++        <>
++          <div className={style.grantContainer}>
++            <Checkmark checked={checked} className={style.grantCheckbox} />
++            <span {...props} className={style.grantLabelContainer}>
++              <span className={style.grant}>{name}</span>
++              {countNode}
++            </span>
++          </div>
++        </>
++      );
++    }
+ 
+     return (
+       <Button
+@@ -95,11 +124,7 @@ export default class FacetOptions extends Component {
+         onClick={this.onClick(value)}
+         onFocus={this.onFocus(index + 1)}
+       >
+-        <Checkmark checked={checked} className={style.checkbox} />
+-        <span {...props} className={style.label}>
+-          {name}
+-        </span>
+-        {countNode}
++        {checkboxNode}
+       </Button>
+     );
+   }
+diff --git a/src/pages/searchNew/components/facets/components/optionsList/index.test.jsx b/src/pages/searchNew/components/facets/components/optionsList/index.test.jsx
+index f09cb3f5..35b40ea0 100644
+--- a/src/pages/searchNew/components/facets/components/optionsList/index.test.jsx
++++ b/src/pages/searchNew/components/facets/components/optionsList/index.test.jsx
+@@ -130,4 +130,26 @@ describe("<SearchPage.FacetOptionsList />", () => {
+ 
+     expect(mounted.find("button.disabled")).not.toHaveLength(0);
+   });
++
++  it("handles grants facet correctly", () => {
++    let mounted = mount(
++      <Context.Provider value={context}>
++        <Options facet="funders" label="Funder" options={elements} />
++      </Context.Provider>
++    );
++
++    expect(mounted.find(".grantContainer")).toHaveLength(0);
++    expect(mounted.find(".grantButton")).toHaveLength(0);
++    expect(mounted.find(".grantCount")).toHaveLength(0);
++
++    mounted = mount(
++      <Context.Provider value={context}>
++        <Options facet="grants" label="Grant Title" options={elements} />
++      </Context.Provider>
++    );
++
++    expect(mounted.find(".grantContainer")).not.toHaveLength(0);
++    expect(mounted.find(".grantButton")).not.toHaveLength(0);
++    expect(mounted.find(".grantCount")).not.toHaveLength(0);
++  });
+ });
+diff --git a/src/pages/searchNew/components/facets/constants.js b/src/pages/searchNew/components/facets/constants.js
+index 9bf034f5..501f5377 100644
+--- a/src/pages/searchNew/components/facets/constants.js
++++ b/src/pages/searchNew/components/facets/constants.js
+@@ -6,6 +6,8 @@ export const facetsMapping = {
+   "categories": "categories",
+   "groups": "groups",
+   "sources": "sources",
++  "grants": "grants",
++  "funders": "funders",
+ };
+ 
+ export const gqlFacets = {
+@@ -15,6 +17,8 @@ export const gqlFacets = {
+   GROUPS: "groups",
+   CONTENT_TYPES: "contentTypes",
+   SOURCES: "sources",
++  GRANTS: "grants",
++  FUNDERS: "funders",
+ };
+ 
+ export const facetNames = {
+@@ -24,6 +28,8 @@ export const facetNames = {
+   [gqlFacets.GROUPS]: "group",
+   [gqlFacets.CONTENT_TYPES]: "content type",
+   [gqlFacets.SOURCES]: "source",
++  [gqlFacets.GRANTS]: "grant title",
++  [gqlFacets.FUNDERS]: "funder",
+ };
+ 
+ export const pluralizeFacetName = (facet) => {
+diff --git a/src/pages/searchNew/components/facets/index.gql b/src/pages/searchNew/components/facets/index.gql
+index 6e291ab3..1971b511 100644
+--- a/src/pages/searchNew/components/facets/index.gql
++++ b/src/pages/searchNew/components/facets/index.gql
+@@ -51,6 +51,22 @@ query institutionalFacetsValues(
+         name
+       }
+     }
++    funders(pageSize: $pageSize, cursor: $cursor) {
++      cursor
++      elements {
++        value
++        count
++        name
++      }
++    }
++    grants(pageSize: $pageSize, cursor: $cursor) {
++      cursor
++      elements {
++        value
++        count
++        name
++      }
++    }
+     onlinePublishDate {
+       value
+       count
+@@ -120,6 +136,22 @@ query facetsValues(
+         name
+       }
+     }
++    funders(pageSize: $pageSize, cursor: $cursor) {
++      cursor
++      elements {
++        value
++        count
++        name
++      }
++    }
++    grants(pageSize: $pageSize, cursor: $cursor) {
++      cursor
++      elements {
++        value
++        count
++        name
++      }
++    }
+     sources(pageSize: $pageSize, cursor: $cursor) {
+       cursor
+       elements {
+diff --git a/src/pages/searchNew/components/facets/index.test.jsx b/src/pages/searchNew/components/facets/index.test.jsx
+index d5eecd97..414569c1 100644
+--- a/src/pages/searchNew/components/facets/index.test.jsx
++++ b/src/pages/searchNew/components/facets/index.test.jsx
+@@ -28,6 +28,8 @@ describe("<SearchPage.Facets />", () => {
+     "contentTypes",
+     "pubAcceptDate",
+     "categories",
++    "grants",
++    "funders",
+   ];
+ 
+   const commonFacets = {
+@@ -63,6 +65,22 @@ describe("<SearchPage.Facets />", () => {
+         count: 1,
+       }],
+     },
++    funders: {
++      cursor: null,
++      elements: [{
++        name: "grid.427645.6",
++        value: 1,
++        count: 1,
++      }],
++    },
++    grants: {
++      cursor: null,
++      elements: [{
++        name: "NIH",
++        value: 1,
++        count: 1,
++      }],
++    },
+     publishedDate: [
+       {
+         name: "last-year",
+-- 
+2.25.1
+

@@ -1,0 +1,178 @@
+From 7b0ac285d4afc8bb4caf5cb73e303b57c0b4b4ad Mon Sep 17 00:00:00 2001
+From: Roxana Pantea <roxana.pantea@figshare.com>
+Date: Mon, 13 Mar 2023 14:54:30 +0200
+Subject: [PATCH] FIG-28894: Add Funder and Grant default facets to GQL queries
+
+---
+ .../es_search/query_parser/static.py          | 12 +++++---
+ .../v2_schema/types/advanced_search_facets.py |  8 +++++
+ .../types/advanced_search_filter_facet.py     |  8 +++++
+ .../graphql/advanced_search/data.py           | 15 ++++++++++
+ .../advanced_search/test_public_search.py     | 30 +++++++++++++++++--
+ 5 files changed, 67 insertions(+), 6 deletions(-)
+
+diff --git a/figshare/graphql/v2_resolvers/es_search/query_parser/static.py b/figshare/graphql/v2_resolvers/es_search/query_parser/static.py
+index 669ecde4d9..dce1f7e3e4 100644
+--- a/figshare/graphql/v2_resolvers/es_search/query_parser/static.py
++++ b/figshare/graphql/v2_resolvers/es_search/query_parser/static.py
+@@ -90,16 +90,20 @@ FACETS_MAPPING = {
+         "on_portal": {"institutional": True, "non-institutional": False},
+         "has_nested_alias": True,
+     },
+-    "funder": {
++    "funders": {
+         "index_field": "funding_institution_defined.grid_id",
++        "source": ["funding_institution_defined.grid_id", "funding_institution_defined.funder_title"],
++        "index_mapping": {"root": "funding_institution_defined", "name": "funder_title", "id": "grid_id"},
+         "type": IdentifierType.BASE,
+-        "on_portal": {"institutional": False, "non-institutional": False},
++        "on_portal": {"institutional": True, "non-institutional": True},
+         "has_nested_alias": True,
+     },
+-    "grant": {
++    "grants": {
+         "index_field": "funding_institution_defined.id",
++        "source": ["funding_institution_defined.id", "funding_institution_defined.title"],
++        "index_mapping": {"root": "funding_institution_defined", "name": "title", "id": "id"},
+         "type": IdentifierType.BASE,
+-        "on_portal": {"institutional": False, "non-institutional": False},
++        "on_portal": {"institutional": True, "non-institutional": True},
+         "has_nested_alias": True,
+     },
+     "online_publish_date": {
+diff --git a/figshare/graphql/v2_schema/types/advanced_search_facets.py b/figshare/graphql/v2_schema/types/advanced_search_facets.py
+index a9192b2ea1..70c5978cde 100644
+--- a/figshare/graphql/v2_schema/types/advanced_search_facets.py
++++ b/figshare/graphql/v2_schema/types/advanced_search_facets.py
+@@ -36,6 +36,14 @@ class AdvancedSearchFacets(GqlType):
+     def categories(cls):
+         return base_facet_definition()
+ 
++    @classmethod
++    def funders(cls):
++        return base_facet_definition()
++
++    @classmethod
++    def grants(cls):
++        return base_facet_definition()
++
+     @classmethod
+     def online_publish_date(cls):
+         return {"type": ["SearchFacet"]}
+diff --git a/figshare/graphql/v2_schema/types/advanced_search_filter_facet.py b/figshare/graphql/v2_schema/types/advanced_search_filter_facet.py
+index 45b1a23985..e97c978fe8 100644
+--- a/figshare/graphql/v2_schema/types/advanced_search_filter_facet.py
++++ b/figshare/graphql/v2_schema/types/advanced_search_filter_facet.py
+@@ -26,6 +26,14 @@ class AdvancedSearchFilterFacet(GqlType):
+     def content_types(cls):
+         return {"type": ["String"]}
+ 
++    @classmethod
++    def funders(cls):
++        return {"type": ["String"]}
++
++    @classmethod
++    def grants(cls):
++        return {"type": ["Int"]}
++
+     @classmethod
+     def online_publish_date(cls):
+         return {"type": "String"}
+diff --git a/tests/functional/graphql/advanced_search/data.py b/tests/functional/graphql/advanced_search/data.py
+index 273e78b56d..2e115e08f8 100644
+--- a/tests/functional/graphql/advanced_search/data.py
++++ b/tests/functional/graphql/advanced_search/data.py
+@@ -157,6 +157,21 @@ es_aggregations = {
+             ]
+         },
+     ),
++    "grants": generate_base_aggregation(
++        facet_id=12,
++        facet_count=3,
++        top_hits_source={"funding_institution_defined": [{"id": 12, "title": "Funding Title"}]},
++    ),
++    "funders": generate_base_aggregation(
++        facet_id="grid.001",
++        facet_count=34,
++        top_hits_source={
++            "funding_institution_defined": [
++                {"grid_id": "grid.001", "funder_title": "Funder X"},
++                {"grid_id": "grid.002", "funder_title": "Funder Y"},
++            ]
++        },
++    ),
+     "licenses": generate_base_aggregation(facet_id=1, facet_count=90, top_hits_source={"license": {"name": "CC BY"}}),
+     "content_types": generate_base_aggregation(facet_id=8, facet_count=10, top_hits_source={"entity_type": "item"}),
+     "online_publish_date": generate_date_aggregation(),
+diff --git a/tests/functional/graphql/advanced_search/test_public_search.py b/tests/functional/graphql/advanced_search/test_public_search.py
+index 21625bec70..7221a5d320 100644
+--- a/tests/functional/graphql/advanced_search/test_public_search.py
++++ b/tests/functional/graphql/advanced_search/test_public_search.py
+@@ -93,8 +93,8 @@ def test_search_advanced_query(testapp, mock_es_search_client, mock_context_acco
+                 pubPublishDate: "2022-01-01,2022-12-30",
+                 pubAcceptDate: "2022-01-01,"
+                 groups: [1],
+-                grant: [25],
+-                funder: ["grant.123"]
++                grants: [25],
++                funders: ["grant.123"]
+              },
+              sort: {},
+              pageSize: 10,
+@@ -821,6 +821,22 @@ def test_search_empty_query_with_facets_noninstitutional(testapp, mock_es_search
+                     count
+                 }
+             }
++            grants (pageSize: 5, cursor: ""){
++                cursor
++                elements {
++                    name
++                    value
++                    count
++                }
++            }
++            funders (pageSize: 5, cursor: ""){
++                cursor
++                elements {
++                    name
++                    value
++                    count
++                }
++            }
+          }
+        }
+    """
+@@ -839,6 +855,12 @@ def test_search_empty_query_with_facets_noninstitutional(testapp, mock_es_search
+     assert response.json["data"]["getFacets"]["contentTypes"]["elements"] == [
+         {"count": 10, "value": "8", "name": "item"}
+     ]
++    assert response.json["data"]["getFacets"]["grants"]["elements"] == [
++        {"count": 3, "value": "12", "name": "Funding Title"}
++    ]
++    assert response.json["data"]["getFacets"]["funders"]["elements"] == [
++        {"count": 34, "value": "grid.001", "name": "Funder X"}
++    ]
+     assert response.json["data"]["getFacets"]["onlinePublishDate"] == [
+         {"count": 129, "name": "_all", "value": "2022-12-06,2023-01-31"},
+         {"count": 129, "name": "last-year", "value": "2022-02-10,2023-02-10"},
+@@ -928,6 +950,8 @@ def test_get_institutional_available_facets(testapp, mock_es_search_client):
+         "licenses",
+         "categories",
+         "sources",
++        "funders",
++        "grants",
+         "onlinePublishDate",
+         "pubPublishDate",
+         "pubAcceptDate",
+@@ -951,6 +975,8 @@ def test_get_noninstitutional_available_facets(testapp, mock_es_search_client):
+         "licenses",
+         "categories",
+         "groups",
++        "funders",
++        "grants",
+         "onlinePublishDate",
+         "pubPublishDate",
+         "pubAcceptDate",
+-- 
+2.25.1
+
