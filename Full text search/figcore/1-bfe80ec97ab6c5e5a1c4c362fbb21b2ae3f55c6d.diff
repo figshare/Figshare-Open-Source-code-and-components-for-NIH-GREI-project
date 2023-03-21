@@ -1,0 +1,49 @@
+diff --git a/src/figcore/graphql/__init__.py b/src/figcore/graphql/__init__.py
+index 2920c07a69..dfe13a6ac8 100644
+--- a/src/figcore/graphql/__init__.py
++++ b/src/figcore/graphql/__init__.py
+@@ -88,6 +88,12 @@ def __init__(self, schema, json_schema, options):
+             es_client_address = "{}:{}".format(es_client_host, es_client_port)
+             connections.create_connection(alias="es-connection", hosts=[es_client_address], timeout=20)
+ 
++        if options.get("file_content"):
++            es_client_host = options["file_content"].get("host")
++            es_client_port = options["file_content"].get("port")
++            es_client_address = f"{es_client_host}:{es_client_port}"
++            connections.create_connection(alias="file-content-es-connection", hosts=[es_client_address], timeout=20)
++
+     def query(self, query_name, params=None, fields=None, account_id=None, get_url_details=None, get_request_fn=None):
+         if not fields or not isinstance(fields, list):
+             raise TypeError("The 'fields' parameter should be list but is {}".format(type(fields)))
+@@ -176,7 +182,7 @@ def get_graphql_parser(module=None, extend_with=None, options=None):
+     :return: Scheama object that has the execute method.
+     """
+     options = options or {}
+-    allowed_options = set(["camel_case", "log_sql_queries", "new_search"])
++    allowed_options = set(["camel_case", "log_sql_queries", "new_search", "file_content"])
+     invalid_options = set(options.keys()) - allowed_options
+     if invalid_options:
+         raise ValueError("Invalid options {}".format(invalid_options))
+@@ -187,6 +193,7 @@ def get_graphql_parser(module=None, extend_with=None, options=None):
+         options.get("camel_case", ""),
+         options.get("log_sql_queries", ""),
+         options.get("new_search", ""),
++        options.get("file_content", ""),
+     )
+     parser = graphql_cache_api.get_parser_instance(cache_key)
+ 
+diff --git a/tests/graphql/internals/test_configure_es_server.py b/tests/graphql/internals/test_configure_es_server.py
+index 723c596a8a..dff24f5244 100644
+--- a/tests/graphql/internals/test_configure_es_server.py
++++ b/tests/graphql/internals/test_configure_es_server.py
+@@ -15,3 +15,10 @@ def test_es_connection_wrong_key(self, mock_create_connection):
+         with self.assertRaises(ValueError):
+             get_graphql_parser(options={"camel_case": True, "other_search": {"host": "localhost", "port": 1}})
+             assert not mock_create_connection.called
++
++    @mock.patch("figcore.graphql.connections.create_connection")
++    def test_file_content_es_connection(self, mock_create_connection):
++        get_graphql_parser(options={"camel_case": True, "file_content": {"host": "localhost", "port": 1}})
++        mock_create_connection.assert_called_once_with(
++            alias="file-content-es-connection", hosts=["localhost:1"], timeout=20
++        )

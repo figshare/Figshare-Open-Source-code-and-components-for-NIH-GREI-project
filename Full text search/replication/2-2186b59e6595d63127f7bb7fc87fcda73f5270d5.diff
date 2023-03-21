@@ -1,0 +1,282 @@
+diff --git a/.gitignore b/.gitignore
+index 65cc7f5..2c3ed1a 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -9,6 +9,7 @@
+ .cache/
+ .pytest_cache
+ .idea/
++venv/
+ 
+ # local config files
+ *.local.json
+diff --git a/src/replication/indexers/__init__.py b/src/replication/indexers/__init__.py
+index 7ebf3a5..34cd4b9 100644
+--- a/src/replication/indexers/__init__.py
++++ b/src/replication/indexers/__init__.py
+@@ -16,6 +16,18 @@ def get_first_by_params(database, params, query, db_fields):
+     return result
+ 
+ 
++def get_multiple_by_params(database, params, query, db_fields):
++    fields = alias_fields(db_fields)
++    query = query.format(fields=fields)
++    result = DbApi.get_multiple(
++        database,
++        query,
++        params,
++    )
++
++    return result
++
++
+ def get_by_id(database, entity_id, query, db_fields, params={}):
+     fields = alias_fields(db_fields)
+     query = query.format(fields=fields, **params)
+diff --git a/src/replication/indexers/file_content/__init__.py b/src/replication/indexers/file_content/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/src/replication/indexers/file_content/file_content.py b/src/replication/indexers/file_content/file_content.py
+new file mode 100644
+index 0000000..596e124
+--- /dev/null
++++ b/src/replication/indexers/file_content/file_content.py
+@@ -0,0 +1,25 @@
++from replication.indexers import Index
++from replication.indexers.lib.es_api import es_api
++from replication.lib.exceptions import ESException
++from replication.lib.logging import logger
++
++
++class FileContent(Index):
++    ES_INDEX = "file_content_{institution_id}"
++    STATS_DATABASE = "stats"
++
++    @classmethod
++    def delete_multiple_by_ids(cls, institution_id, file_ids):
++        index = cls.ES_INDEX.format(institution_id=institution_id)
++        for entity_id in file_ids:
++            try:
++                cls.delete_document(index, entity_id)
++            except ESException:
++                # majority of files are not added in this index
++                logger.info(f"Document '{entity_id}' was not deleted from index '{index}'")
++
++    @classmethod
++    def delete_multiple_by_article_id(cls, institution_id, article_id):
++        index = cls.ES_INDEX.format(institution_id=institution_id)
++        data = {"query": {"term": {"article_id": article_id}}}
++        es_api.delete_documents_by_query(index, data)
+diff --git a/src/replication/indexers/lib/es_api.py b/src/replication/indexers/lib/es_api.py
+index 1202d07..0e37eb4 100644
+--- a/src/replication/indexers/lib/es_api.py
++++ b/src/replication/indexers/lib/es_api.py
+@@ -50,5 +50,9 @@ def create_template(self, template, data):
+         es_url = f"{self.host}/_index_template/{template}"
+         return self._make_es_request(es_url, "PUT", data=data)
+ 
++    def delete_documents_by_query(self, index, data):
++        es_url = f"{self.host}/{index}/_delete_by_query"
++        return self._make_es_request(es_url, "POST", data=data)
++
+ 
+ es_api = EsApi()
+diff --git a/src/replication/indexers/public_item/db_queries.py b/src/replication/indexers/public_item/db_queries.py
+index 8ce1d39..94b258f 100644
+--- a/src/replication/indexers/public_item/db_queries.py
++++ b/src/replication/indexers/public_item/db_queries.py
+@@ -100,3 +100,36 @@
+     WHERE `article_version`.`is_last_version` = 1
+         AND `article_version`.`article_id` = :element_id
+ """
++
++"""
++EXPLAIN SELECT file_article_version.file_id, file_article_version.version, COUNT(file_article_version.file_id) AS no FROM file_article_version
++JOIN article_version
++   ON article_version.article_id = file_article_version.article_id
++   AND article_version.version = file_article_version.version
++WHERE article_version.article_id = 2008290
++   AND (article_version.version = 1
++        OR article_version.is_last_version = 1)
++GROUP BY file_article_version.file_id
++HAVING no = 1
++   AND file_article_version.version=1;
+++------+-------------+----------------------+------+--------------------+---------+---------+-----------------------------------------+------+--------------------------+
++| id   | select_type | table                | type | possible_keys      | key     | key_len | ref                                     | rows | Extra                    |
+++------+-------------+----------------------+------+--------------------+---------+---------+-----------------------------------------+------+--------------------------+
++|    1 | SIMPLE      | file_article_version | ref  | PRIMARY,article_id | PRIMARY | 8       | const                                   | 1    | Using where; Using index |
++|    1 | SIMPLE      | article_version      | ref  | PRIMARY            | PRIMARY | 12      | const,core.file_article_version.version | 1    | Using where; Using index |
+++------+-------------+----------------------+------+--------------------+---------+---------+-----------------------------------------+------+--------------------------+
++
++"""
++OLD_FILES_QUERY = """
++    SELECT `file_article_version`.`file_id`, `file_article_version`.`version`, COUNT(`file_article_version`.`file_id`) AS `no`
++    FROM `file_article_version
++    JOIN `article_version`
++        ON `article_version`.`article_id` = `file_article_version`.`article_id`
++        AND `article_version`.`version` = `file_article_version`.`version`
++    WHERE `article_version`.`article_id` = :element_id
++        AND (`article_version`.`version` = :version
++            OR `article_version`.`is_last_version` = 1)
++    GROUP BY `file_article_version`.`file_id`
++    HAVING no = 1
++        AND `file_article_version`.`version` = :version;
++"""
+diff --git a/src/replication/indexers/public_item/public_item.py b/src/replication/indexers/public_item/public_item.py
+index b972f88..391e1fd 100644
+--- a/src/replication/indexers/public_item/public_item.py
++++ b/src/replication/indexers/public_item/public_item.py
+@@ -1,7 +1,7 @@
+ import copy
+ import json
+ 
+-from replication.indexers import get_by_id, get_by_id_list, get_multiple_by_id
++from replication.indexers import get_by_id, get_by_id_list, get_multiple_by_id, get_multiple_by_params
+ from replication.indexers.common.db_queries import INSTITUTIONS_QUERY
+ from replication.indexers.common.common import (
+     get_authors,
+@@ -11,11 +11,13 @@
+     get_owner,
+     get_stats,
+ )
++from replication.indexers.file_content.file_content import FileContent
+ 
+ from .db_queries import (
+     PUBLIC_QUERY,
+     EMBARGO_CONFIG_QUERY,
+     FILES_QUERY,
++    OLD_FILES_QUERY,
+ )
+ from .mappings import (
+     public_article_es_to_db_mapping_public,
+@@ -51,6 +53,14 @@ def on_message_public_item(cls, data):
+ 
+         if message_type in ["update", "insert"]:
+             if not is_last_version:
++                if (
++                    data.get("old_data")
++                    and data["data"].get("institution_id")
++                    and data["old_data"].get("is_last_version", 0) == 1
++                ):
++                    cls.remove_file_content_from_previous_version(
++                        data["data"]["institution_id"], entity_id, data["data"]["version"]
++                    )
+                 return
+ 
+             db_data = get_by_id(cls.DATABASE, entity_id, PUBLIC_QUERY, public_article_db_fields_public)
+@@ -86,11 +96,22 @@ def on_message_public_item(cls, data):
+                 es_dict["stats"] = get_stats(cls.STATS_DATABASE, entity_id, "article")
+ 
+             cls.upsert_document(cls.ES_INDEX, entity_id, es_dict)
++
+         elif message_type == "delete":
+             cls.delete_document(cls.ES_INDEX, entity_id)
++            if is_last_version and data["data"].get("institution_id"):
++                FileContent.delete_multiple_by_article_id(data["data"]["institution_id"], entity_id)
+         else:
+             raise ValueError("Invalid message type")
+ 
++    @classmethod
++    def remove_file_content_from_previous_version(cls, institution_id, entity_id, version):
++        params = {"element_id": entity_id, "version": version}
++        data = get_multiple_by_params(cls.DATABASE, params, OLD_FILES_QUERY, [])
++        file_ids = [fle["file_id"] for fle in data]
++        if file_ids:
++            FileContent.delete_multiple_by_ids(institution_id, file_ids)
++
+     @classmethod
+     def get_associated_institutions(cls, assoc_inst):
+         assoc_inst = json.loads(copy.deepcopy(assoc_inst))
+diff --git a/tests/replication/file_content/__init__.py b/tests/replication/file_content/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/replication/file_content/test_file_content.py b/tests/replication/file_content/test_file_content.py
+new file mode 100644
+index 0000000..d0c1623
+--- /dev/null
++++ b/tests/replication/file_content/test_file_content.py
+@@ -0,0 +1,84 @@
++import json
++from mock import MagicMock
++
++from replication.indexers.file_content.file_content import FileContent
++from replication.indexers.lib.es_api import EsApi
++from replication.indexers.lib.db_api import DbApi
++from replication.indexers.lib.es_api import es_api
++from replication.indexers.public_item.db_queries import OLD_FILES_QUERY
++from replication.indexers.public_item import PublicItem
++from replication.lib.logging import logger
++
++from tests.replication.public_item import data as public_item_data
++
++
++def test_delete_multiple_by_ids(mocker):
++    mocker.patch.object(logger, "info")
++    FileContent.delete_multiple_by_ids(7, [12])
++    logger.info.assert_called_once_with("Document '12' was not deleted from index 'file_content_7'")
++
++    mocked_request = mocker.patch("replication.indexers.lib.es_api.Request")
++    mocked_urlopen = mocker.patch("replication.indexers.lib.es_api.urlopen")
++    FileContent.delete_multiple_by_ids(7, [12])
++    mocked_urlopen().read.assert_called_once_with()
++
++    es_url = f"{es_api.host}/file_content_7/_doc/12"
++    headers = {"Content-Type": "application/json"}
++    mocked_request.assert_called_once_with(es_url, method="DELETE", headers=headers, data=None)
++
++
++def test_delete_multiple_by_article_ids(mocker):
++    mocked_request = mocker.patch("replication.indexers.lib.es_api.Request")
++    mocked_urlopen = mocker.patch("replication.indexers.lib.es_api.urlopen")
++    FileContent.delete_multiple_by_article_id(7, 5432)
++
++    mocked_urlopen().read.assert_called_once_with()
++    es_url = f"{es_api.host}/file_content_7/_delete_by_query"
++    headers = {"Content-Type": "application/json"}
++    data = json.dumps({"query": {"term": {"article_id": 5432}}}).encode("utf-8")
++
++    mocked_request.assert_called_once_with(es_url, method="POST", headers=headers, data=data)
++
++
++def test_public_item_delete(mocker):
++    mocker.patch.object(EsApi, "delete_document")
++    mocked_request = mocker.patch("replication.indexers.lib.es_api.Request")
++    mocked_urlopen = mocker.patch("replication.indexers.lib.es_api.urlopen")
++
++    dispatcher_data = public_item_data.TestPublicItemDeleteData.dispatcher()
++    dispatcher_data["data"]["institution_id"] = 987
++    dispatcher_data["data"]["is_last_version"] = 0
++
++    PublicItem.on_message_public_item(dispatcher_data)
++    mocked_urlopen().read.assert_not_called()
++
++    dispatcher_data["data"]["is_last_version"] = 1
++    PublicItem.on_message_public_item(dispatcher_data)
++
++    es_url = f"{es_api.host}/file_content_987/_delete_by_query"
++    headers = {"Content-Type": "application/json"}
++    data = json.dumps({"query": {"term": {"article_id": 123}}}).encode("utf-8")
++    mocked_request.assert_called_once_with(es_url, method="POST", headers=headers, data=data)
++    mocked_urlopen().read.assert_called_once_with()
++
++
++def test_public_item_update(mocker):
++    test_data = public_item_data.TestPublicItemInsertData
++    mocker.patch.object(EsApi, "upsert_document")
++    db_mock = mocker.patch.object(
++        DbApi,
++        "get_multiple",
++        side_effect=[
++            [{"file_id": 123}, {"file_id": 234}],
++        ],
++    )
++
++    data = test_data.dispatcher()
++    data["old_data"] = {"is_last_version": 1}
++    data["data"]["institution_id"] = 987
++    data["data"]["is_last_version"] = 0
++    data["data"]["version"] = 658
++
++    PublicItem.on_message_public_item(data)
++    expected_call = mocker.call(PublicItem.DATABASE, OLD_FILES_QUERY, {"element_id": 123, "version": 658})
++    assert expected_call == db_mock.call_args_list[-1]

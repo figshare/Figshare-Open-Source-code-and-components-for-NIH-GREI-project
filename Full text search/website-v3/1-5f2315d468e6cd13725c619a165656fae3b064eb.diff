@@ -1,0 +1,3233 @@
+diff --git a/src/mainApp/app.jsx b/src/mainApp/app.jsx
+index 79b164e51..e55e05596 100644
+--- a/src/mainApp/app.jsx
++++ b/src/mainApp/app.jsx
+@@ -2,6 +2,7 @@ import classnames from "classnames";
+ import React, { Component } from "react";
+ import Content from "routes";
+ import { withTranslation } from "react-i18next";
++import { HighlightProvider } from "shared/ui/highlights/highlightProvider";
+ 
+ 
+ import Context from "./context";
+@@ -23,13 +24,15 @@ export class App extends Component {
+         <FavIcon />
+         <Analytics />
+ 
+-        <div ref={this.setMainAppRef} className={styles.upperContainerSection}>
+-          <Header className={classnames(styles.header, stackingContext.header)} />
++        <HighlightProvider>
++          <div ref={this.setMainAppRef} className={styles.upperContainerSection}>
++            <Header className={classnames(styles.header, stackingContext.header)} />
+ 
+-          <main className={classnames(styles.content, stackingContext.content)}>
+-            <Content className={styles.content} />
+-          </main>
+-        </div>
++            <main className={classnames(styles.content, stackingContext.content)}>
++              <Content className={styles.content} />
++            </main>
++          </div>
++        </HighlightProvider>
+ 
+         <Footer />
+       </div>
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/index.css b/src/pages/item/page/components/viewer/components/controlsBar/controlsBar.css
+similarity index 97%
+rename from src/pages/item/page/components/viewer/components/controlsBar/index.css
+rename to src/pages/item/page/components/viewer/components/controlsBar/controlsBar.css
+index a4e8ad9e3..9505405c1 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/index.css
++++ b/src/pages/item/page/components/viewer/components/controlsBar/controlsBar.css
+@@ -17,9 +17,9 @@
+ 
+   display: flex;
+   flex-direction: row;
++  align-items: center;
+ 
+   width: 100%;
+-
+   padding: 0 calc(2 * var(--gridSize));
+ 
+   background: var(--color-layout-primary-background);
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.css b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/fileControls.css
+similarity index 100%
+rename from src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.css
+rename to src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/fileControls.css
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx
+index 9f7be8030..28a03de1d 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx
+@@ -5,12 +5,15 @@ import InformationIcon from "@figshare/icons/info/medium";
+ import Exclamation from "@figshare/icons/warning/medium";
+ import { Trigger, UncontrolledToggletip as Toggletip } from "@figshare/components/ui/toggletip";
+ import filesize from "utils/filesize";
++import { HighlightContext } from "shared/ui/highlights/highlightContext";
++import { getHighlightsCount } from "shared/ui/highlights/utils";
+ 
+ import VirusTooltip from "../../../../../virusTooltip";
+ import { VIEW_MODES } from "../../../../constants";
+ import Context from "../../../../context";
+ 
+-import style from "./index.css";
++import SearchInfo from "./../searchInfo";
++import style from "./fileControls.css";
+ 
+ 
+ export default class FileControls extends Component {
+@@ -29,6 +32,9 @@ export default class FileControls extends Component {
+     return (
+       <div className={style.controls}>
+         {this.renderFileName()}
++        <HighlightContext.Consumer>
++          {({ highlights }) => this.renderSearchInfo(highlights)}
++        </HighlightContext.Consumer>
+         <IconButton
+           Icon={InformationIcon}
+           theme={buttonTheme}
+@@ -127,6 +133,14 @@ export default class FileControls extends Component {
+     );
+   }
+ 
++  renderSearchInfo = (highlights) => {
++    const { item: { id: itemId } } = this.context;
++
++    const highlightsCount = getHighlightsCount(itemId, highlights);
++
++    return <SearchInfo highlightsCount={highlightsCount} />;
++  }
++
+   onShowFileDetails = () => {
+     const { activeFileIndex, onShowFileDetails, showFileDetails } = this.context;
+     const newFile = showFileDetails === activeFileIndex ? undefined : activeFileIndex;
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
+index f0a97bbf6..87b00506e 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
+@@ -29,6 +29,7 @@ class Wrapped extends Component {
+       showFileDetails: undefined,
+       activeFileIndex: 0,
+       files,
++      item: { id: 1 },
+       ...this.props,
+     };
+ 
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/pagination/index.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/pagination/index.jsx
+index 889e60ee0..8740db35f 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/pagination/index.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/pagination/index.jsx
+@@ -6,7 +6,7 @@ import ArrowRight from "@figshare/icons/angle/right";
+ import { VIEW_MODES } from "../../../../constants";
+ import Context from "../../../../context";
+ 
+-import style from "./index.css";
++import style from "./pagination.css";
+ 
+ 
+ export default class Pagination extends Component {
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/pagination/index.css b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/pagination/pagination.css
+similarity index 100%
+rename from src/pages/item/page/components/viewer/components/controlsBar/genericControls/pagination/index.css
+rename to src/pages/item/page/components/viewer/components/controlsBar/genericControls/pagination/pagination.css
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx
+new file mode 100644
+index 000000000..5231b2dcb
+--- /dev/null
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx
+@@ -0,0 +1,43 @@
++import PropTypes from "prop-types";
++import React, { Component } from "react";
++
++import style from "./searchInfo.css";
++
++
++const MAX_COUNT = 20;
++
++export default class SearchInfo extends Component {
++  static propTypes = { highlightsCount: PropTypes.number }
++
++  static defaultProps = { highlightsCount: undefined }
++
++  render() {
++    const { highlightsCount: count } = this.props;
++
++    if (!count) {
++      return null;
++    }
++
++    if (count === 1) {
++      return (
++        <span className={style.searchInfo}>
++          ({count} file matches the search criteria)
++        </span>
++      );
++    }
++
++    if (count < MAX_COUNT) {
++      return (
++        <span className={style.searchInfo}>
++          ({count} files match the search criteria)
++        </span>
++      );
++    }
++
++    return (
++      <span className={style.searchInfo}>
++        (at least {MAX_COUNT} files match the search criteria, please be more specific)
++      </span>
++    );
++  }
++}
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx
+new file mode 100644
+index 000000000..3d20f8c36
+--- /dev/null
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx
+@@ -0,0 +1,41 @@
++import React from "react";
++import { mount } from "enzyme";
++
++import SearchInfo from "./index";
++
++
++const MAX_COUNT = 20;
++
++describe("<SearchInfo />", () => {
++  it("renders null if no count", () => {
++    const tested = mount(<SearchInfo highlightsCount={null} />);
++    expect(tested.isEmptyRender()).toEqual(true);
++  });
++
++  it("renders null if count is 0", () => {
++    const tested = mount(<SearchInfo highlightsCount={0} />);
++    expect(tested.isEmptyRender()).toEqual(true);
++  });
++
++  it("renders correct text when count is 1", () => {
++    const tested = mount(<SearchInfo highlightsCount={1} />);
++    expect(tested.isEmptyRender()).toEqual(false);
++
++    expect(tested.find(".searchInfo").text()).toEqual("(1 file matches the search criteria)");
++  });
++
++  it("renders correct text when count is smaller than max count", () => {
++    const tested = mount(<SearchInfo highlightsCount={2} />);
++    expect(tested.isEmptyRender()).toEqual(false);
++
++    expect(tested.find(".searchInfo").text()).toEqual("(2 files match the search criteria)");
++  });
++
++  it("renders correct text when count is bigger than max count", () => {
++    const tested = mount(<SearchInfo highlightsCount={21} />);
++    expect(tested.isEmptyRender()).toEqual(false);
++
++    expect(tested.find(".searchInfo").text()).toEqual(
++      `(at least ${MAX_COUNT} files match the search criteria, please be more specific)`);
++  });
++});
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/searchInfo.css b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/searchInfo.css
+new file mode 100644
+index 000000000..92c1a896f
+--- /dev/null
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/searchInfo.css
+@@ -0,0 +1,3 @@
++.searchInfo {
++  margin: 0 var(--gridSize);
++}
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewModeSelector/selector.css b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewModeSelector/selector.css
+index 18dce7693..ac93d0e76 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewModeSelector/selector.css
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewModeSelector/selector.css
+@@ -124,8 +124,6 @@
+ }
+ 
+ .filesCount {
+-  line-height: calc(6 * var(--gridSize));
+-
+   margin-left: calc(2 * var(--gridSize));
+ }
+ 
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewModeSelector/selector.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewModeSelector/selector.jsx
+index 8598746bd..b910406ab 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewModeSelector/selector.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewModeSelector/selector.jsx
+@@ -68,7 +68,7 @@ export default class ViewModeSelector extends Component {
+           {() => (
+             <>
+               <ToggleTipTrigger>
+-                {this.renderToggltTipTrigger}
++                {this.renderToggletipTrigger}
+               </ToggleTipTrigger>
+               <Content
+                 key={toggleTipContentKey}
+@@ -187,7 +187,7 @@ export default class ViewModeSelector extends Component {
+     );
+   }
+ 
+-  renderToggltTipTrigger = ({ ref }) => (
++  renderToggletipTrigger = ({ ref }) => (
+     <div ref={ref}>
+       <Dropdown
+         isVisible={this.state.isVisible}
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewerControls/index.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewerControls/index.jsx
+index 841152829..df86d52a5 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewerControls/index.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewerControls/index.jsx
+@@ -4,7 +4,7 @@ import { Controls as ViewerControls } from "@figshare/viewers";
+ import Context from "../../../../context";
+ import { VIEW_MODES } from "../../../../constants";
+ 
+-import style from "./index.css";
++import style from "./viewerControls.css";
+ 
+ 
+ export default class ViewerSpecificControls extends Component {
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewerControls/index.css b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewerControls/viewerControls.css
+similarity index 100%
+rename from src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewerControls/index.css
+rename to src/pages/item/page/components/viewer/components/controlsBar/genericControls/viewerControls/viewerControls.css
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/index.jsx b/src/pages/item/page/components/viewer/components/controlsBar/index.jsx
+index a83b67a0d..6e599b185 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/index.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/index.jsx
+@@ -1,14 +1,18 @@
+ import classnames from "classnames";
+ import React, { Component } from "react";
++import { HighlightContext } from "shared/ui/highlights/highlightContext";
++import { getHighlightsCount } from "shared/ui/highlights/utils";
+ 
++import { VIEW_MODES } from "../../constants";
+ import Context from "../../context";
+ 
+ import ViewModeSelector from "./genericControls/viewModeSelector";
+ import Pagination from "./genericControls/pagination";
+ import FileControls from "./genericControls/fileControls";
+ import Fullscreen from "./genericControls/fullscreen";
++import SearchInfo from "./genericControls/searchInfo";
+ import ViewerControls from "./genericControls/viewerControls";
+-import style from "./index.css";
++import style from "./controlsBar.css";
+ 
+ 
+ export default class Controls extends Component {
+@@ -33,6 +37,9 @@ export default class Controls extends Component {
+         <div className={style.controlsBarContainer}>
+           <ViewModeSelector />
+           <Pagination />
++          <HighlightContext.Consumer>
++            {({ highlights }) => this.renderSearchInfo(highlights)}
++          </HighlightContext.Consumer>
+           <FileControls />
+           <ViewerControls />
+           {this.renderFullScreen()}
+@@ -41,6 +48,18 @@ export default class Controls extends Component {
+     );
+   }
+ 
++  renderSearchInfo = (highlights) => {
++    const { item: { id: itemId }, viewMode } = this.context;
++
++    if (viewMode === VIEW_MODES.single) {
++      return null;
++    }
++
++    const highlightsCount = getHighlightsCount(itemId, highlights);
++
++    return <SearchInfo highlightsCount={highlightsCount} />;
++  }
++
+   renderFullScreen = () => {
+     const { files, activeFileIndex, filesCount } = this.context;
+     const file = files[activeFileIndex];
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/index.test.jsx b/src/pages/item/page/components/viewer/components/controlsBar/index.test.jsx
+index 4bee04d8f..84efa16d2 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/index.test.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/index.test.jsx
+@@ -56,6 +56,7 @@ describe("<ViewersSystemControlsBar />", () => {
+         viewerType: "image",
+         virusScanInfo: {},
+       }],
++      item: { id: 1 },
+     };
+     const mounted = mount(
+       <Context.Provider value={context}>
+@@ -84,6 +85,7 @@ describe("<ViewersSystemControlsBar />", () => {
+     const context = {
+       activeFileIndex: 0,
+       files: [{ isLinkOnly: true }],
++      item: { id: 1 },
+     };
+     const mounted = mount(
+       <Context.Provider value={context}>
+@@ -107,6 +109,7 @@ describe("<ViewersSystemControlsBar />", () => {
+         viewerType: "image",
+         virusScanInfo: {},
+       }],
++      item: { id: 1 },
+     };
+ 
+     const mounted = mount(
+@@ -125,6 +128,7 @@ describe("<ViewersSystemControlsBar />", () => {
+         viewerType: "image",
+         virusScanInfo: {},
+       }],
++      item: { id: 1 },
+     };
+ 
+     const mounted = mount(
+@@ -143,6 +147,7 @@ describe("<ViewersSystemControlsBar />", () => {
+         previewState: "",
+         virusScanInfo: { virusFound: true },
+       }],
++      item: { id: 1 },
+     };
+     const mounted = mount(
+       <Context.Provider value={context}>
+diff --git a/src/pages/item/page/components/viewer/components/listView/components/file/index.css b/src/pages/item/page/components/viewer/components/listView/components/file/index.css
+index 0795302b2..0aba1d1ec 100644
+--- a/src/pages/item/page/components/viewer/components/listView/components/file/index.css
++++ b/src/pages/item/page/components/viewer/components/listView/components/file/index.css
+@@ -10,6 +10,11 @@
+   border-radius: var(--gridSize);
+ }
+ 
++.searched {
++  border: 1px solid #008064;
++  background: rgba(0, 128, 100, 0.06);
++}
++
+ .button {
+   font-size: var(--typography-S-fontSize);
+   font-weight: bold;
+diff --git a/src/pages/item/page/components/viewer/components/listView/components/file/index.jsx b/src/pages/item/page/components/viewer/components/listView/components/file/index.jsx
+index f2b1ac843..1b8d3beb7 100644
+--- a/src/pages/item/page/components/viewer/components/listView/components/file/index.jsx
++++ b/src/pages/item/page/components/viewer/components/listView/components/file/index.jsx
+@@ -6,6 +6,7 @@ import EyeIcon from "@figshare/icons/eye/visible/medium";
+ import DownloadIcon from "@figshare/icons/download";
+ import Exclamation from "@figshare/icons/warning/small";
+ import { Trigger, UncontrolledToggletip as Toggletip } from "@figshare/components/ui/toggletip";
++import { isPartOfItemHighlight } from "shared/ui/highlights/utils";
+ import filesize from "utils/filesize";
+ 
+ import VirusTooltip from "../../../../../virusTooltip";
+@@ -20,18 +21,20 @@ export default class File extends Component {
+     onClick: PropTypes.func.isRequired,
+     onFocus: PropTypes.func.isRequired,
+     activeFileIndex: PropTypes.number,
++    highlights: PropTypes.array,
+     lastActiveFileIndex: PropTypes.number,
+   }
+ 
+   static defaultProps = {
+     activeFileIndex: undefined,
++    highlights: [],
+     lastActiveFileIndex: undefined,
+   }
+ 
+   state = { focused: false }
+ 
+   render() {
+-    const { file, onBlur, onFocus, activeFileIndex, lastActiveFileIndex } = this.props;
++    const { file, onBlur, onFocus, activeFileIndex, highlights, lastActiveFileIndex } = this.props;
+     const { name, extension, size, index } = file;
+     const filename = name.replace(`.${extension}`, "");
+     const tabIndex = lastActiveFileIndex === index ? "0" : "-1";
+@@ -39,6 +42,7 @@ export default class File extends Component {
+     const className = [
+       style.file,
+       { [style.focused]: activeFileIndex === index || this.state.focused },
++      { [style.searched]: isPartOfItemHighlight(file.id, highlights) },
+     ];
+ 
+     return (
+diff --git a/src/pages/item/page/components/viewer/components/listView/index.jsx b/src/pages/item/page/components/viewer/components/listView/index.jsx
+index 38394421a..92afa917b 100644
+--- a/src/pages/item/page/components/viewer/components/listView/index.jsx
++++ b/src/pages/item/page/components/viewer/components/listView/index.jsx
+@@ -3,6 +3,7 @@ import React, { Component } from "react";
+ import { IconButton } from "@figshare/ui/button";
+ import ArrowLeft from "@figshare/icons/angle/left";
+ import ArrowRight from "@figshare/icons/angle/right";
++import { HighlightContext } from "shared/ui/highlights/highlightContext";
+ 
+ import { VIEW_MODES, MAX_ITEMS_PER_PAGE } from "../../constants";
+ import Context from "../../context";
+@@ -142,17 +143,24 @@ export default class ListView extends Component {
+     const { index } = file;
+     const { activeFileIndex, lastActiveFileIndex } = this.state;
+ 
++    const key = `file-${index}`;
++
+     return (
+-      <File
+-        key={file.id}
+-        activeFileIndex={activeFileIndex}
+-        file={file}
+-        lastActiveFileIndex={lastActiveFileIndex}
+-        lastPage={lastPage}
+-        onBlur={this.onBlur}
+-        onClick={this.onChangeFile}
+-        onFocus={this.onFocus(index)}
+-      />
++      <HighlightContext.Consumer key={key}>
++        {({ highlights }) => (
++          <File
++            key={file.id}
++            activeFileIndex={activeFileIndex}
++            file={file}
++            highlights={highlights}
++            lastActiveFileIndex={lastActiveFileIndex}
++            lastPage={lastPage}
++            onBlur={this.onBlur}
++            onClick={this.onChangeFile}
++            onFocus={this.onFocus(index)}
++          />
++        )}
++      </HighlightContext.Consumer>
+     );
+   }
+ 
+@@ -183,10 +191,7 @@ export default class ListView extends Component {
+       return;
+     }
+ 
+-    const {
+-      offsetWidth: width,
+-      offsetHeight: height,
+-    } = this.viewport;
++    const { offsetWidth: width, offsetHeight: height } = this.viewport;
+ 
+     const viewportSize = { width, height };
+ 
+diff --git a/src/pages/item/page/components/viewer/components/sidebar/bar.jsx b/src/pages/item/page/components/viewer/components/sidebar/bar.jsx
+index 80e02c481..20527bf21 100644
+--- a/src/pages/item/page/components/viewer/components/sidebar/bar.jsx
++++ b/src/pages/item/page/components/viewer/components/sidebar/bar.jsx
+@@ -3,6 +3,7 @@ import classnames from "classnames";
+ import React, { Component, Fragment } from "react";
+ import { Button, GenericButton } from "@figshare/ui/button";
+ import ListIcon from "@figshare/icons/list/small";
++import { HighlightContext } from "shared/ui/highlights/highlightContext";
+ 
+ 
+ import { VIEW_MODES, DISPLAY_MODE } from "../../constants";
+@@ -111,22 +112,30 @@ export default class Sidebar extends Component {
+   }
+ 
+   renderFile = (file, index) => {
++    const { activeFileIndex } = this.context;
+     const isFocused = this.state.activeFileIndex === index;
+-    const isCurrentFile = this.context.activeFileIndex === index;
++    const isCurrentFile = activeFileIndex === index;
++
++    const key = `file-${index}`;
+ 
+     return (
+-      <File
+-        key={`file-${file.id}`}
+-        file={file}
+-        index={index}
+-        isCurrentFile={isCurrentFile}
+-        isFocused={isFocused}
+-        setFocus={this.setFocus}
+-        onChangeFile={this.onChangeFile}
+-        onFileBlur={this.onBlur}
+-        onFocus={this.onFocus}
+-        onShowFileDetails={this.onShowFileDetails}
+-      />
++      <HighlightContext.Consumer key={key}>
++        {({ highlights }) => (
++          <File
++            key={file.id}
++            file={file}
++            highlights={highlights}
++            index={index}
++            isCurrentFile={isCurrentFile}
++            isFocused={isFocused}
++            setFocus={this.setFocus}
++            onChangeFile={this.onChangeFile}
++            onFileBlur={this.onBlur}
++            onFocus={this.onFocus}
++            onShowFileDetails={this.onShowFileDetails}
++          />
++        )}
++      </HighlightContext.Consumer>
+     );
+   }
+ 
+diff --git a/src/pages/item/page/components/viewer/components/sidebar/components/file/index.css b/src/pages/item/page/components/viewer/components/sidebar/components/file/index.css
+index 4563d546a..37dc2a988 100644
+--- a/src/pages/item/page/components/viewer/components/sidebar/components/file/index.css
++++ b/src/pages/item/page/components/viewer/components/sidebar/components/file/index.css
+@@ -37,6 +37,11 @@
+   text-decoration: none;
+ }
+ 
++.searched {
++  border: 1px solid #008064;
++  background: rgba(0, 128, 100, 0.06);
++}
++
+ .fileDetails {
+   position: relative;
+ 
+diff --git a/src/pages/item/page/components/viewer/components/sidebar/components/file/index.jsx b/src/pages/item/page/components/viewer/components/sidebar/components/file/index.jsx
+index 6965a720b..712de5dd5 100644
+--- a/src/pages/item/page/components/viewer/components/sidebar/components/file/index.jsx
++++ b/src/pages/item/page/components/viewer/components/sidebar/components/file/index.jsx
+@@ -4,6 +4,7 @@ import React, { Component } from "react";
+ import { Button, IconButton } from "@figshare/ui/button";
+ import InformationIcon from "@figshare/icons/info/medium";
+ import { Thumbnail } from "@figshare/viewers";
++import { isPartOfItemHighlight } from "shared/ui/highlights/utils";
+ import filesize from "utils/filesize";
+ 
+ 
+@@ -21,14 +22,18 @@ export default class File extends Component {
+     onFileBlur: PropTypes.func.isRequired,
+     onFocus: PropTypes.func.isRequired,
+     onShowFileDetails: PropTypes.func.isRequired,
++    highlights: PropTypes.array,
+   }
+ 
++  static defaultProps = { highlights: [] }
++
+   fileButtonNode = null;
+   containerNode = null;
+ 
+   render() {
+     const {
+       file,
++      highlights,
+       index,
+       isCurrentFile,
+       isFocused,
+@@ -43,6 +48,7 @@ export default class File extends Component {
+       style.file,
+       { [style.focused]: isFocused },
+       { [style.currentFile]: isCurrentFile },
++      { [style.searched]: isPartOfItemHighlight(file.id, highlights) },
+     ];
+ 
+     return (
+diff --git a/src/pages/item/page/components/viewer/components/thumbnailView/app.jsx b/src/pages/item/page/components/viewer/components/thumbnailView/app.jsx
+index d490bfbbf..90476abb3 100644
+--- a/src/pages/item/page/components/viewer/components/thumbnailView/app.jsx
++++ b/src/pages/item/page/components/viewer/components/thumbnailView/app.jsx
+@@ -4,6 +4,7 @@ import React, { Component } from "react";
+ import { IconButton } from "@figshare/ui/button";
+ import ArrowLeft from "@figshare/icons/angle/left";
+ import ArrowRight from "@figshare/icons/angle/right";
++import { HighlightContext } from "shared/ui/highlights/highlightContext";
+ 
+ import RatingTooltip from "../../../ratingSystem/tooltip";
+ 
+@@ -172,17 +173,24 @@ export default class App extends Component {
+       onFocus,
+     } = this.props;
+ 
++    const key = `file-${index}`;
++
+     return (
+-      <File
+-        key={file.id}
+-        activeFileIndex={activeFileIndex}
+-        file={file}
+-        lastActiveFileIndex={lastActiveFileIndex}
+-        lastRow={lastRow}
+-        onBlur={onBlur}
+-        onClick={this.onClick}
+-        onFocus={onFocus(index)}
+-      />
++      <HighlightContext.Consumer key={key}>
++        {({ highlights }) => (
++          <File
++            key={file.id}
++            activeFileIndex={activeFileIndex}
++            file={file}
++            highlights={highlights}
++            lastActiveFileIndex={lastActiveFileIndex}
++            lastRow={lastRow}
++            onBlur={onBlur}
++            onClick={this.onClick}
++            onFocus={onFocus(index)}
++          />
++        )}
++      </HighlightContext.Consumer>
+     );
+   }
+ 
+diff --git a/src/pages/item/page/components/viewer/components/thumbnailView/components/file/index.css b/src/pages/item/page/components/viewer/components/thumbnailView/components/file/index.css
+index 83b83147d..314408471 100644
+--- a/src/pages/item/page/components/viewer/components/thumbnailView/components/file/index.css
++++ b/src/pages/item/page/components/viewer/components/thumbnailView/components/file/index.css
+@@ -64,6 +64,20 @@
+   }
+ }
+ 
++.searched {
++  border: 1px solid #008064;
++  border-radius: calc(0.5 * var(--gridSize));
++
++  background: rgba(0, 128, 100, 0.06);
++}
++
++.icons {
++  display: flex;
++  flex-direction: row;
++
++  margin-left: auto;
++}
++
+ .thumbnail {
+   position: relative;
+ 
+@@ -71,7 +85,35 @@
+ 
+   width: 100%;
+   height: calc(22 * var(--gridSize));
+-  margin-bottom: calc(2 * var(--gridSize));
++  margin-bottom: var(--gridSize);
++}
++
++.searched > .thumbnail {
++  padding: var(--gridSize);
++}
++
++.fileDetails {
++  font-size: var(--typography-S-fontSize);
++  line-height: var(--typography-S-lineHeight);
++
++  display: flex;
++  flex-direction: row;
++  align-items: center;
++
++  white-space: pre-wrap;
++
++  color: var(--color-typography-primary);
++}
++
++.searched > .fileDetails {
++  padding: 0 var(--gridSize);
++}
++
++.file:hover > .searched > .thumbnail,
++.file:focus > .searched > .thumbnail,
++.file:hover > .searched > .fileDetails,
++.file:focus > .searched > .fileDetails {
++  padding: 0;
+ }
+ 
+ .thumbnail div {
+@@ -90,7 +132,6 @@
+   width: calc(100% + calc(4 * var(--gridSize)));
+ 
+   padding: calc(2 * var(--gridSize));
+-  padding-bottom: calc(7 * var(--gridSize));
+ 
+   transform: translate(calc(-2 * var(--gridSize)), calc(-2 * var(--gridSize)));
+ 
+@@ -98,20 +139,6 @@
+   background: var(--color-layout-secondary-background);
+ }
+ 
+-.fileDetails {
+-  font-size: var(--typography-S-fontSize);
+-  line-height: var(--typography-S-lineHeight);
+-
+-  display: flex;
+-  flex-direction: row;
+-  justify-content: flex-start;
+-  align-items: center;
+-
+-  white-space: pre-wrap;
+-
+-  color: var(--color-typography-primary);
+-}
+-
+ .fileExtension,
+ .fileSize {
+   flex-shrink: 0;
+@@ -128,45 +155,6 @@
+   color: var(--color-typography-secondary);
+ }
+ 
+-.buttons {
+-  position: absolute;
+-  bottom: calc(-6 * var(--gridSize));
+-
+-  display: flex;
+-  visibility: hidden;
+-
+-  width: 100%;
+-  justify-content: center;
+-}
+-
+-.buttons a,
+-.buttons span,
+-.buttons button {
+-  display: flex;
+-  flex-direction: row;
+-  justify-content: center;
+-  align-items: center;
+-}
+-
+-.buttons button:first-child {
+-  margin-right: calc(4 * var(--gridSize));
+-}
+-
+-.file:hover .buttons,
+-.file:focus .buttons,
+-.file.focused .buttons {
+-  visibility: visible;
+-}
+-
+-.downloadWithVirus,
+-.downloadWithVirus:hover,
+-.downloadWithVirus:focus,
+-.downloadWithVirus:active {
+-  text-decoration: none;
+-
+-  color: var(--color-typography-tertiary);
+-}
+-
+ .virusWarning {
+   margin-left: var(--gridSize);
+   fill: var(--color-icon-error);
+diff --git a/src/pages/item/page/components/viewer/components/thumbnailView/components/file/index.jsx b/src/pages/item/page/components/viewer/components/thumbnailView/components/file/index.jsx
+index 060d14df8..a6ac8e379 100644
+--- a/src/pages/item/page/components/viewer/components/thumbnailView/components/file/index.jsx
++++ b/src/pages/item/page/components/viewer/components/thumbnailView/components/file/index.jsx
+@@ -1,10 +1,13 @@
+ import classnames from "classnames";
+ import PropTypes from "prop-types";
+ import React, { Component, Fragment } from "react";
+-import { GenericButton, Button } from "@figshare/ui/button";
++import { GenericButton, IconButton } from "@figshare/ui/button";
+ import Exclamation from "@figshare/icons/warning/small";
++import DownloadIcon from "@figshare/icons/download";
++import EyeIcon from "@figshare/icons/eye/visible/medium";
+ import { Thumbnail } from "@figshare/viewers";
+ import { Trigger, UncontrolledToggletip as Toggletip } from "@figshare/components/ui/toggletip";
++import { isPartOfItemHighlight } from "shared/ui/highlights/utils";
+ import filesize from "utils/filesize";
+ 
+ import VirusTooltip from "../../../../../virusTooltip";
+@@ -19,12 +22,14 @@ export default class File extends Component {
+     onClick: PropTypes.func.isRequired,
+     onFocus: PropTypes.func.isRequired,
+     activeFileIndex: PropTypes.number,
++    highlights: PropTypes.array,
+     lastActiveFileIndex: PropTypes.number,
+     lastRow: PropTypes.bool,
+   }
+ 
+   static defaultProps = {
+     activeFileIndex: undefined,
++    highlights: [],
+     lastActiveFileIndex: undefined,
+     lastRow: false,
+   }
+@@ -32,23 +37,28 @@ export default class File extends Component {
+   state = { focused: false }
+ 
+   render() {
+-    const { file, onBlur, onFocus, activeFileIndex, lastActiveFileIndex, lastRow } = this.props;
++    const { activeFileIndex, file, highlights, lastActiveFileIndex, lastRow, onBlur, onFocus } = this.props;
+     const { name, extension, size, index } = file;
+     const filename = name.replace(`.${extension}`, "");
+     const tabIndex = lastActiveFileIndex === index ? "0" : "-1";
+ 
+-    const className = [
++    const className = classnames(
+       style.file,
+       {
+         [style.focused]: activeFileIndex === index || this.state.focused,
+         [style.lastRow]: lastRow,
+       },
+-    ];
++    );
++
++    const buttonClassName = classnames(
++      style.button,
++      { [style.searched]: isPartOfItemHighlight(file.id, highlights) },
++    );
+ 
+     return (
+-      <div className={classnames(className)}>
++      <div className={className}>
+         <GenericButton
+-          className={style.button}
++          className={buttonClassName}
+           tabIndex={tabIndex}
+           onBlur={onBlur}
+           onClick={this.onClick}
+@@ -61,19 +71,19 @@ export default class File extends Component {
+             <span className={style.fileName}>{filename}.</span>
+             <span className={style.fileExtension}>{extension}</span>
+             <span className={style.fileSize}>{" "}({filesize(size).format()})</span>
++            <span className={style.icons}>
++              <IconButton
++                Icon={EyeIcon}
++                theme="tertiary"
++                onBlur={onBlur}
++                onClick={this.onClick}
++              >
++                View file
++              </IconButton>
++              {this.renderDownloadButton()}
++            </span>
+           </span>
+         </GenericButton >
+-        <div className={style.buttons}>
+-          <Button
+-            tabIndex={tabIndex}
+-            theme="tertiary"
+-            onBlur={onBlur}
+-            onClick={this.onClick}
+-          >
+-            view
+-          </Button>
+-          {this.renderDownloadButton()}
+-        </div>
+       </div>
+     );
+   }
+@@ -89,13 +99,20 @@ export default class File extends Component {
+     if (!downloadUrl) {
+       return (
+         <span title="Download is not available for this file">
+-          download
+           <Exclamation className={style.virusWarning} />
+         </span>
+       );
+     }
+ 
+-    return <Button href={downloadUrl} theme="tertiary" tooltip="Download file">download</Button>;
++    return (
++      <IconButton
++        Icon={DownloadIcon}
++        href={downloadUrl}
++        theme="tertiary"
++      >
++        Download file
++      </IconButton>
++    );
+   }
+ 
+   renderDownloadWithVirus = () => (
+@@ -117,15 +134,17 @@ export default class File extends Component {
+     const { ref, ...restProps } = triggerProps;
+ 
+     return (
+-      <GenericButton
+-        className={style.downloadWithVirus}
+-        innerRef={ref}
+-        tooltip="Download file"
+-        {...restProps}
+-      >
+-        download
++      <>
++        <IconButton
++          Icon={DownloadIcon}
++          innerRef={ref}
++          theme="tertiary"
++          {...restProps}
++        >
++          Download file
++        </IconButton>
+         <Exclamation className={style.virusWarning} />
+-      </GenericButton>
++      </>
+     );
+   }
+ 
+diff --git a/src/pages/item/page/components/viewer/index.test.jsx b/src/pages/item/page/components/viewer/index.test.jsx
+index ad84d361f..158653556 100644
+--- a/src/pages/item/page/components/viewer/index.test.jsx
++++ b/src/pages/item/page/components/viewer/index.test.jsx
+@@ -27,6 +27,9 @@ jest.mock("./components/errors/privateFile");
+ jest.mock("@figshare/components/base/popup");
+ 
+ 
++const JEST_TIMEOUT = 10000;
++jest.setTimeout(JEST_TIMEOUT);
++
+ let mocks = null;
+ let item = null;
+ 
+@@ -205,7 +208,6 @@ describe("<ViewerSystem />", () => {
+     const instance = tested.find(TestedComponent).instance();
+ 
+     instance.openFullScreen();
+-
+     instance.viewerNode.requestFullscreen = jest.fn();
+     instance.openFullScreen();
+     expect(instance.viewerNode.requestFullscreen).toHaveBeenCalled();
+diff --git a/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/index.test.jsx b/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/index.test.jsx
+index 88e3d9f00..e44ba31aa 100644
+--- a/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/index.test.jsx
++++ b/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/index.test.jsx
+@@ -201,7 +201,7 @@ describe("<SearchPageDateTypeSelector />", () => {
+     );
+ 
+     let instance = mounted.find(Trigger).instance();
+-    instance.onReset();
++    instance.onReset({ defaultPrevented: false });
+     expect(context.onChange).toHaveBeenCalledWith({
+       ...context.filters,
+       date: undefined,
+@@ -215,7 +215,7 @@ describe("<SearchPageDateTypeSelector />", () => {
+ 
+     mounted.setProps({ value: context });
+     instance = mounted.find(Trigger).instance();
+-    instance.onReset();
++    instance.onReset({ defaultPrevented: false });
+     expect(context.onChange).toHaveBeenCalledWith({
+       ...context.filters,
+       date: undefined,
+@@ -225,10 +225,22 @@ describe("<SearchPageDateTypeSelector />", () => {
+     context.facets = { publishedDate: "test" };
+     mounted.setProps({ value: context });
+     instance = mounted.find(Trigger).instance();
+-    instance.onReset();
++    instance.onReset({ defaultPrevented: false });
+     expect(context.onChange).toHaveBeenCalledWith({
+       ...context.filters,
+       date: undefined,
+     }, undefined);
+   });
++
++  it("do not trigger onReset if defaultPrevented is true", () => {
++    const mounted = mount(
++      <Context.Provider value={context}>
++        <Filter availableFacets={availableFacets} dates={dates} datesAvailable={datesAvailable} />
++      </Context.Provider>
++    );
++
++    const instance = mounted.find(Trigger).instance();
++    instance.onReset({ defaultPrevented: true });
++    expect(context.onChange).not.toHaveBeenCalled();
++  });
+ });
+diff --git a/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.css b/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.css
+index 5479ebd22..0c85f4f26 100644
+--- a/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.css
++++ b/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.css
+@@ -14,17 +14,6 @@
+   }
+ }
+ 
+-.triggerPlaceholder {
+-  position: relative;
+-
+-  display: flex;
+-  flex-direction: row;
+-  justify-content: center;
+-  align-items: center;
+-
+-  text-decoration: none;
+-}
+-
+ .triggerTitle {
+   color: var(--color-typography-primary);
+ }
+@@ -37,6 +26,27 @@
+   color: var(--color-button-tertiary-label);
+ }
+ 
++.trigger.disabled {
++  fill: var(--color-button-tertiary-icon_disabled);
++}
++
++.trigger.disabled > .triggerTitle,
++.trigger.disabled:hover > .triggerTitle,
++.trigger.disabled:focus > .triggerTitle {
++  color: var(--color-typography-disabled);
++}
++
++.triggerPlaceholder {
++  position: relative;
++
++  display: flex;
++  flex-direction: row;
++  justify-content: center;
++  align-items: center;
++
++  text-decoration: none;
++}
++
+ .resetButton {
+   display: flex;
+   flex-direction: row;
+diff --git a/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.jsx b/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.jsx
+index a76d3aef1..b5f65aa11 100644
+--- a/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.jsx
++++ b/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.jsx
+@@ -21,23 +21,26 @@ export default class Toggle extends Component {
+   static contextType = Context;
+ 
+   render() {
+-    const { facets, filters } = this.context;
+-    const { isVisible, onToggle, props } = this.props;
++    const { facets, filters, searchBy } = this.context;
++    const { isVisible, props } = this.props;
+ 
+     let text = "Select date";
+     if (filters.date) {
+       const selected = DATES.find(({ name }) => name === filters.date);
+       text = selected.displayName;
+     }
+-    const className = [style.trigger, { [style.triggerActive]: isVisible }];
++
++    const isDisabled = searchBy === "text";
++    const className = [style.trigger, { [style.triggerActive]: isVisible, [style.disabled]: isDisabled }];
+ 
+     let triggerComponent = (
+       <Button
+         Icon={Arrow}
+         className={classnames(className)}
++        disabled={isDisabled}
+         iconPlacement="right"
+         theme="tertiary"
+-        onClick={onToggle}
++        onClick={this.onToggle}
+         {...props}
+       >
+         <span className={style.triggerTitle}>{text}</span>
+@@ -61,18 +64,30 @@ export default class Toggle extends Component {
+   }
+ 
+   renderResetButton = () => {
+-    if (!this.context.filters.date) {
++    const { filters, searchBy } = this.context;
++
++    if (!filters.date) {
+       return null;
+     }
+ 
+     return (
+-      <IconButton Icon={CloseIcon} className={style.resetButton} theme="tertiary" onClick={this.onReset}>
++      <IconButton
++        Icon={CloseIcon}
++        className={style.resetButton}
++        disabled={searchBy === "text"}
++        theme="tertiary"
++        onClick={this.onReset}
++      >
+         Reset date filter
+       </IconButton>
+     );
+   }
+ 
+-  onReset = () => {
++  onReset = (event) => {
++    if (event?.defaultPrevented) {
++      return;
++    }
++
+     const { facets, filters, onChange } = this.context;
+ 
+     let newFacets = undefined;
+@@ -89,4 +104,12 @@ export default class Toggle extends Component {
+ 
+     onChange({ ...filters, date: undefined }, newFacets);
+   }
++
++  onToggle = (event) => {
++    if (event?.defaultPrevented) {
++      return;
++    }
++
++    this.props.onToggle?.();
++  }
+ }
+diff --git a/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.jsx b/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.jsx
+index b3de62e0b..837163cdd 100644
+--- a/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.jsx
++++ b/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.jsx
+@@ -27,7 +27,7 @@ export default class DateValueSelector extends Component {
+ 
+   renderDateValue = ({ name, displayName }) => {
+     const { dates } = this.props;
+-    const { facets, filters } = this.context;
++    const { facets, filters, searchBy } = this.context;
+     const dateRanges = dates[datesTranform[filters.date]];
+     if (!dateRanges) {
+ 
+@@ -57,6 +57,7 @@ export default class DateValueSelector extends Component {
+       <Button
+         key={name}
+         className={classnames(className)}
++        disabled={searchBy === "text"}
+         theme="tertiary"
+         onClick={this.onSelectValue(name)}
+       >
+@@ -66,7 +67,7 @@ export default class DateValueSelector extends Component {
+   }
+ 
+   renderRangePicker = () => {
+-    const { facets, filters } = this.context;
++    const { facets, filters, searchBy } = this.context;
+     const facet = datesTranform[filters.date];
+     let dateValue = facets?.[facet] || "";
+     let startDate = undefined;
+@@ -129,6 +130,7 @@ export default class DateValueSelector extends Component {
+           <Input
+             closeOnSelectDate={true}
+             dateFormat="yyyy-MM-dd"
++            disabled={searchBy === "text"}
+             isRangeStart={true}
+             maxDate={endDate || rangeLimits[1]}
+             minDate={rangeLimits[0]}
+@@ -143,6 +145,7 @@ export default class DateValueSelector extends Component {
+           <Input
+             closeOnSelectDate={true}
+             dateFormat="yyyy-MM-dd"
++            disabled={searchBy === "text"}
+             isRangeEnd={true}
+             maxDate={rangeLimits[1]}
+             minDate={startDate || rangeLimits[0]}
+@@ -156,7 +159,10 @@ export default class DateValueSelector extends Component {
+     );
+   }
+ 
+-  onSelectValue = (dateValue) => () => {
++  onSelectValue = (dateValue) => (event) => {
++    if (event?.defaultPrevented) {
++      return;
++    }
+     const { facets, filters, onChange } = this.context;
+ 
+     onChange(filters, { ...facets, [datesTranform[filters.date]]: dateValue });
+@@ -164,6 +170,7 @@ export default class DateValueSelector extends Component {
+ 
+   onChangeRangeStartDate = (value) => {
+     const { facets, filters, onChange } = this.context;
++
+     const facet = datesTranform[filters.date];
+     let dateValue = facets?.[facet] || "";
+ 
+@@ -183,6 +190,7 @@ export default class DateValueSelector extends Component {
+ 
+   onChangeRangeEndDate = (value) => {
+     const { facets, filters, onChange } = this.context;
++
+     const facet = datesTranform[filters.date];
+     let dateValue = facets?.[facet] || "";
+ 
+diff --git a/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.test.jsx b/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.test.jsx
+index ca1dd1d04..44cf263dd 100644
+--- a/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.test.jsx
++++ b/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.test.jsx
+@@ -287,11 +287,24 @@ describe("<SearchPageDateValueSelector />", () => {
+     );
+ 
+     const filter = mounted.find(Filter).instance();
+-    filter.onSelectValue("test")();
++    filter.onSelectValue("test")({ defaultPrevented: false });
+ 
+     expect(context.onChange).toHaveBeenCalledWith(context.filters, { publishedDate: "test" });
+   });
+ 
++  it("handles onSelectValue correctly when defaultPrevented is true", () => {
++    const mounted = mount(
++      <Context.Provider value={context}>
++        <Filter dates={dates} />
++      </Context.Provider>
++    );
++
++    const filter = mounted.find(Filter).instance();
++    filter.onSelectValue("test")({ defaultPrevented: true });
++
++    expect(context.onChange).not.toHaveBeenCalled();
++  });
++
+   it("handles onChangeRangeStartDate correctly", () => {
+     let mounted = mount(
+       <Context.Provider value={context}>
+diff --git a/src/pages/searchNew/components/facets/components/expandedFacet/components/listing/index.jsx b/src/pages/searchNew/components/facets/components/expandedFacet/components/listing/index.jsx
+index b86a80a2a..0397dcc2c 100644
+--- a/src/pages/searchNew/components/facets/components/expandedFacet/components/listing/index.jsx
++++ b/src/pages/searchNew/components/facets/components/expandedFacet/components/listing/index.jsx
+@@ -28,7 +28,12 @@ export default class FacetsListing extends Component {
+   static contextType = Context;
+ 
+   render() {
+-    const { domainData, variables: vars, facets, filters: { q, sortBy, sortType, ...restFilters } } = this.context;
++    const {
++      domainData,
++      variables: vars,
++      facets,
++      filters: { q, searchBy, sortBy, sortType, ...restFilters },
++    } = this.context;
+     const { facet, keyword } = this.props;
+     const institutionId = domainData?.institutionId;
+ 
+diff --git a/src/pages/searchNew/components/facets/components/facet/index.jsx b/src/pages/searchNew/components/facets/components/facet/index.jsx
+index 777658bbb..bd34b2dc7 100644
+--- a/src/pages/searchNew/components/facets/components/facet/index.jsx
++++ b/src/pages/searchNew/components/facets/components/facet/index.jsx
+@@ -92,6 +92,7 @@ export default class Facet extends Component {
+ 
+   renderShowMore = () => {
+     const { hasMore, elements } = this.props;
++    const { searchBy } = this.context;
+ 
+     if (!hasMore && elements.length <= 5) {
+       return null;
+@@ -100,6 +101,7 @@ export default class Facet extends Component {
+     return (
+       <Button
+         className={classnames([style.button, style.showMore])}
++        disabled={searchBy === "text"}
+         role="option"
+         theme="tertiary"
+         onClick={this.onToggleShowMore}
+@@ -109,7 +111,11 @@ export default class Facet extends Component {
+     );
+   }
+ 
+-  onToggleShowMore = () => {
++  onToggleShowMore = (event) => {
++    if (event?.defaultPrevented) {
++      return;
++    }
++
+     setTimeout(() => {
+       this.context.onShowExpandedFacet(this.props.facet);
+     }, 0);
+diff --git a/src/pages/searchNew/components/facets/components/facet/index.test.jsx b/src/pages/searchNew/components/facets/components/facet/index.test.jsx
+index c017b3aba..6401b050c 100644
+--- a/src/pages/searchNew/components/facets/components/facet/index.test.jsx
++++ b/src/pages/searchNew/components/facets/components/facet/index.test.jsx
+@@ -85,11 +85,26 @@ describe("<SearchPage.Facet />", () => {
+     const instance = mounted.find(Facet).instance();
+ 
+     jest.useFakeTimers();
+-    instance.onToggleShowMore();
++    instance.onToggleShowMore({ defaultPrevented: false });
+     jest.runAllTimers();
+     expect(context.onShowExpandedFacet).toHaveBeenCalled();
+   });
+ 
++  it("does not render expanded facet when defaultPrevented is true", () => {
++    const mounted = mount(
++      <Context.Provider value={context}>
++        <Facet elements={elements} facet="itemTypes" hasMore={false} />
++      </Context.Provider>
++    );
++
++    const instance = mounted.find(Facet).instance();
++
++    jest.useFakeTimers();
++    instance.onToggleShowMore({ defaultPrevented: true });
++    jest.runAllTimers();
++    expect(context.onShowExpandedFacet).not.toHaveBeenCalled();
++  });
++
+   it("returns null if facet value count = 1", () => {
+     context.facetsCount = { itemTypes: 1 };
+     const mounted = mount(
+diff --git a/src/pages/searchNew/components/facets/components/optionsList/index.jsx b/src/pages/searchNew/components/facets/components/optionsList/index.jsx
+index 02ce97eed..08f2677a7 100644
+--- a/src/pages/searchNew/components/facets/components/optionsList/index.jsx
++++ b/src/pages/searchNew/components/facets/components/optionsList/index.jsx
+@@ -69,7 +69,7 @@ export default class FacetOptions extends Component {
+   renderButton = (option, index) => ({ ...props }) => {
+     const { name, value, count } = option;
+     const { facet, showCount } = this.props;
+-    const { facets, facetsLoading, resultsLoading } = this.context;
++    const { facets, facetsLoading, resultsLoading, searchBy } = this.context;
+     const checked = facets?.[facet]?.includes?.(value);
+ 
+     let countNode = null;
+@@ -81,13 +81,14 @@ export default class FacetOptions extends Component {
+     const loading = facetsLoading || resultsLoading;
+     const maxValuesChecked = facets?.[facet]?.length === MAX_VALUES;
+ 
+-    const disabled = loading || (maxValuesChecked && !checked);
++    const disabled = loading || (maxValuesChecked && !checked) || searchBy === "text";
+     const className = [style.button, { [style.disabled]: disabled }];
+ 
+     return (
+       <Button
+         key={value}
+         className={classnames(className)}
++        disabled={disabled}
+         role="option"
+         tabIndex="-1"
+         onClick={this.onClick(value)}
+diff --git a/src/pages/searchNew/components/facets/index.css b/src/pages/searchNew/components/facets/facets.css
+similarity index 100%
+rename from src/pages/searchNew/components/facets/index.css
+rename to src/pages/searchNew/components/facets/facets.css
+diff --git a/src/pages/searchNew/components/facets/index.jsx b/src/pages/searchNew/components/facets/index.jsx
+index 288aa2145..173bf5046 100644
+--- a/src/pages/searchNew/components/facets/index.jsx
++++ b/src/pages/searchNew/components/facets/index.jsx
+@@ -12,7 +12,7 @@ import { getFacets } from "../../queryString";
+ import DatesFacet from "./components/dates";
+ import Facet from "./components/facet";
+ import { facetsValues, institutionalFacetsValues } from "./index.gql";
+-import style from "./index.css";
++import style from "./facets.css";
+ 
+ 
+ export default class Facets extends Component {
+@@ -113,7 +113,8 @@ export default class Facets extends Component {
+ 
+   get variables() {
+     const { variables, facets } = this.context;
++    const { searchBy, ...restVars } = variables;
+ 
+-    return { ...variables, facets: { ...getFacets(facets) } };
++    return { ...restVars, facets: { ...getFacets(facets) } };
+   }
+ }
+diff --git a/src/pages/searchNew/components/header/index.css b/src/pages/searchNew/components/header/header.css
+similarity index 83%
+rename from src/pages/searchNew/components/header/index.css
+rename to src/pages/searchNew/components/header/header.css
+index 39357ea27..2121e5b7c 100644
+--- a/src/pages/searchNew/components/header/index.css
++++ b/src/pages/searchNew/components/header/header.css
+@@ -37,21 +37,6 @@
+   justify-content: flex-start;
+ }
+ 
+-.buttonsContainer {
+-  position: relative;
+-
+-  display: flex;
+-  flex-direction: row;
+-
+-  width: 100%;
+-  max-width: calc(164 * var(--gridSize));
+-  margin: 0 auto;
+-  padding: 0 calc(2 * var(--gridSize));
+-  flex: 1;
+-  justify-content: space-between;
+-  align-items: center;
+-}
+-
+ .inputContainer {
+   position: relative;
+   flex: 1;
+@@ -117,7 +102,7 @@
+   align-items: center;
+ }
+ 
+-.links {
++.underSearchSection {
+   position: relative;
+ 
+   display: flex;
+@@ -129,12 +114,38 @@
+   margin-top: calc(2 * var(--gridSize));
+ }
+ 
+-.needHelp {
+-  color: var(--color-button-tertiaryAlt-label);
++.searchOptions {
++  display: flex;
++  flex-direction: row;
++  align-items: center;
++  justify-content: space-between;
++
++  width: 100%;
++  max-width: calc(164 * var(--gridSize));
++  padding: 0 calc(2 * var(--gridSize));
++
++  @media (max-width: 690px) {
++    flex-direction: column;
++    align-items: unset;
++  }
++}
++
++.links {
++  display: flex;
++  flex-direction: row;
++  justify-content: flex-end;
++  gap: calc(5 * var(--gridSize));
++
++  margin-left: auto;
++
++  @media (max-width: 690px) {
++    margin: var(--gridSize) 0;
++  }
+ 
+-  &:hover,
+-  &:focus {
+-    color: var(--color-button-tertiaryAlt-label_hover);
++  @media (max-width: 360px) {
++    flex-direction: column;
++    align-items: flex-end;
++    gap: unset;
+   }
+ }
+ 
+diff --git a/src/pages/searchNew/components/header/index.jsx b/src/pages/searchNew/components/header/index.jsx
+index d706b7da6..4690477c9 100644
+--- a/src/pages/searchNew/components/header/index.jsx
++++ b/src/pages/searchNew/components/header/index.jsx
+@@ -10,7 +10,8 @@ import ErrorMessage from "@figshare/components/ui/errorMessage";
+ import Context from "../../context";
+ import { getQueryFromFiltersAndFacets } from "../../queryString";
+ 
+-import style from "./index.css";
++import SearchBy from "./searchBy";
++import style from "./header.css";
+ 
+ 
+ export default class Header extends PureComponent {
+@@ -82,15 +83,18 @@ export default class Header extends PureComponent {
+           </div>
+         </div>
+         {this.renderError(searchQueryError)}
+-        <div className={style.links}>
+-          <div className={style.buttonsContainer}>
+-            <Button className={style.needHelp} href={helpUrl} theme="tertiary">
+-              need help?
+-            </Button>
+-            <FollowButton
+-              name="search-follow"
+-              {...followData}
+-            />
++        <div className={style.underSearchSection}>
++          <div className={style.searchOptions}>
++            <SearchBy />
++            <div className={style.links}>
++              <Button href={helpUrl} theme="tertiary">
++                Need help?
++              </Button>
++              <FollowButton
++                name="search-follow"
++                {...followData}
++              />
++            </div>
+           </div>
+         </div>
+       </div>
+@@ -139,7 +143,6 @@ export default class Header extends PureComponent {
+   onClear = () => {
+     this.onChange({ target: { value: "" } });
+     this.input.focus();
+-    setTimeout(this.context.onApplyKeyword, 0);
+   }
+ 
+   onKeyPress = (event) => {
+diff --git a/src/pages/searchNew/components/header/index.test.jsx b/src/pages/searchNew/components/header/index.test.jsx
+index c380003ea..24a709fb9 100644
+--- a/src/pages/searchNew/components/header/index.test.jsx
++++ b/src/pages/searchNew/components/header/index.test.jsx
+@@ -19,6 +19,7 @@ import Header from "./index";
+ 
+ 
+ jest.mock("shared/apps/follow");
++jest.mock("./searchBy");
+ 
+ const tooLongQuery = Array(SEARCH_QUERY_MAX_CHARS + 2).join("x");
+ const defaultLocation = "/search";
+@@ -33,21 +34,24 @@ describe("<SearchHeader />", () => {
+   const variables = getVariablesFromFiltersAndFacets(getDefaultFilters());
+   beforeEach(() => {
+     context = {
++      canApply: jest.fn(() => true),
++      canReset: jest.fn(() => true),
++      domainData: { knowledgeUrl: "//knowledge.figshare.com" },
+       facets: undefined,
+       filters: {
+         ...getDefaultFilters(),
+         q: "",
++        searchBy: null,
+       },
+-      onChange: jest.fn(),
+-      onApplyKeyword: jest.fn(),
+-      onReset: jest.fn(),
+-      canApply: jest.fn(() => true),
+-      canReset: jest.fn(() => true),
+-      variables,
+-      domainData: { knowledgeUrl: "//knowledge.figshare.com" },
++      searchBy: "metadata",
+       searchQuery: "",
+       searchQueryError: null,
++      variables,
++      onApplyKeyword: jest.fn(),
++      onChange: jest.fn(),
++      onChangeSearchBy: jest.fn(),
+       onChangeSearchQuery: jest.fn(),
++      onReset: jest.fn(),
+     };
+   });
+ 
+@@ -143,8 +147,6 @@ describe("<SearchHeader />", () => {
+       ...context.filters,
+       q: "",
+     }, undefined);
+-
+-    expect(context.onApplyKeyword).toHaveBeenCalled();
+   });
+ 
+   it("triggers submit on enter", () => {
+diff --git a/src/pages/searchNew/components/header/searchBy/index.gql b/src/pages/searchNew/components/header/searchBy/index.gql
+new file mode 100644
+index 000000000..364d2a8ad
+--- /dev/null
++++ b/src/pages/searchNew/components/header/searchBy/index.gql
+@@ -0,0 +1,5 @@
++query activeFeature {
++  activeFeature(feature: "file_content_search") {
++    ok
++  }
++}
+diff --git a/src/pages/searchNew/components/header/searchBy/index.jsx b/src/pages/searchNew/components/header/searchBy/index.jsx
+new file mode 100644
+index 000000000..71b4a0813
+--- /dev/null
++++ b/src/pages/searchNew/components/header/searchBy/index.jsx
+@@ -0,0 +1,72 @@
++import React, { Component } from "react";
++import { Query } from "@apollo/react-components";
++
++import Context from "../../../context";
++
++import { activeFeature } from "./index.gql";
++import style from "./searchBy.css";
++
++
++export default class SearchBy extends Component {
++  static contextType = Context;
++
++  render() {
++    return (
++      <Query query={activeFeature}>
++        {this.renderWithData}
++      </Query>
++    );
++  }
++
++  renderWithData = ({ loading, error, data }) => {
++    if (loading || error) {
++      return null;
++    }
++
++    const { ok: hasFullTextFeature } = data.activeFeature;
++
++    if (!hasFullTextFeature) {
++      return null;
++    }
++
++    const { searchBy } = this.context;
++
++    return (
++      <div className={style.searchBy}>
++        <span>Search by:</span>
++        <input
++          checked={searchBy === "metadata"}
++          id="search-by-metadata-only"
++          name="search-by"
++          type="radio"
++          value="metadata"
++          onChange={this.onChangeSearchBy}
++        />
++        <label className={style.label} htmlFor="search-by-metadata-only">
++          metadata only
++        </label>
++        <input
++          checked={searchBy === "text"}
++          id="search-by-text-only"
++          name="search-by"
++          type="radio"
++          value="text"
++          onChange={this.onChangeSearchBy}
++        />
++        <label className={style.label} htmlFor="search-by-text-only">
++          file content
++        </label>
++      </div>
++    );
++  }
++
++  onChangeSearchBy = (event) => {
++    const { filters, onChangeSearchBy } = this.context;
++    const newFilters = {
++      ...filters,
++      searchBy: event.target.value,
++    };
++
++    onChangeSearchBy(newFilters);
++  }
++}
+diff --git a/src/pages/searchNew/components/header/searchBy/index.test.jsx b/src/pages/searchNew/components/header/searchBy/index.test.jsx
+new file mode 100644
+index 000000000..b5c152b56
+--- /dev/null
++++ b/src/pages/searchNew/components/header/searchBy/index.test.jsx
+@@ -0,0 +1,99 @@
++import React, { Component } from "react";
++import { mount } from "enzyme";
++import { MockedProvider } from "utils/apollo/testing";
++
++import Context from "../../../context";
++
++import SearchBy from "./index";
++import { activeFeature } from "./index.gql";
++
++
++const context = {
++  filters: [],
++  searchBy: "metadata",
++  onChangeSearchBy: jest.fn(),
++};
++let mocks = [];
++
++class Wrapped extends Component {
++  render() {
++    return (
++      <Context.Provider value={context}>
++        <MockedProvider addTypename={false} mocks={mocks}>
++          <SearchBy />
++        </MockedProvider>
++      </Context.Provider>
++    );
++  }
++}
++
++describe("<SearchBy />", () => {
++  beforeEach(() => {
++    mocks = [{
++      request: { query: activeFeature },
++      result: { data: { activeFeature: { ok: false } } },
++    }];
++  });
++
++  it("renders null when activeFeature is false", async() => {
++    mocks[0].result.data.activeFeature.ok = false;
++    const tested = mount(<Wrapped />);
++
++    await mocks[0].response();
++    tested.update();
++
++    expect(tested.isEmptyRender()).toEqual(true);
++  });
++
++  it("renders correctly when activeFeature is true", async() => {
++    mocks[0].result.data.activeFeature.ok = true;
++    const tested = mount(<Wrapped />);
++
++    await mocks[0].response();
++    tested.update();
++
++    expect(tested.isEmptyRender()).toEqual(false);
++    expect(tested.find("input")).toHaveLength(2);
++    expect(tested.find("label")).toHaveLength(2);
++    expect(tested.find("label").at(0).props().children).toEqual("metadata only");
++    expect(tested.find("label").at(1).props().children).toEqual("file content");
++  });
++
++
++  it("renders medatada only radio input checked", async() => {
++    mocks[0].result.data.activeFeature.ok = true;
++    context.searchBy = "metadata";
++
++    const tested = mount(<Wrapped />);
++
++    await mocks[0].response();
++    tested.update();
++
++    expect(tested.find("input").at(0).props().checked).toEqual(true);
++    expect(tested.find("input").at(1).props().checked).toEqual(false);
++
++  });
++
++  it("renders file content radio input checked", async() => {
++    mocks[0].result.data.activeFeature.ok = true;
++    context.searchBy = "text";
++
++    const tested = mount(<Wrapped />);
++
++    await mocks[0].response();
++    tested.update();
++
++    expect(tested.find("input").at(0).props().checked).toEqual(false);
++    expect(tested.find("input").at(1).props().checked).toEqual(true);
++  });
++
++  it("calls onChangeSearchBy", async() => {
++    const tested = mount(<Wrapped />);
++
++    await mocks[0].response();
++    tested.update();
++
++    tested.find(SearchBy).instance().onChangeSearchBy({ target: { value: "metadata" } });
++    expect(context.onChangeSearchBy).toHaveBeenCalledWith({ searchBy: "metadata" });
++  });
++});
+diff --git a/src/pages/searchNew/components/header/searchBy/searchBy.css b/src/pages/searchNew/components/header/searchBy/searchBy.css
+new file mode 100644
+index 000000000..0f209c1dc
+--- /dev/null
++++ b/src/pages/searchNew/components/header/searchBy/searchBy.css
+@@ -0,0 +1,21 @@
++.searchBy {
++  display: flex;
++  flex-direction: row;
++  gap: var(--gridSize);
++
++  @media (max-width: 360px) {
++    flex-wrap: wrap;
++  }
++}
++
++.searchBy > span {
++  margin-right: var(--gridSize);
++
++  @media (max-width: 360px) {
++    width: 100%;
++  }
++}
++
++.label {
++  margin-right: var(--gridSize);
++}
+diff --git a/src/pages/searchNew/components/listing/index.gql b/src/pages/searchNew/components/listing/index.gql
+index d7eab1605..90857526e 100644
+--- a/src/pages/searchNew/components/listing/index.gql
++++ b/src/pages/searchNew/components/listing/index.gql
+@@ -8,7 +8,7 @@ query advancedSearch(
+   $checkForAdvancedSearch: Boolean
+   $institutionId: Int
+ ) {
+-  searchAdvanced(
++  search: searchAdvanced(
+     searchQuery: $q,
+     scope: "public_search",
+     cursor: $cursor,
+@@ -94,3 +94,56 @@ query advancedSearch(
+     }
+   }
+ }
++
++query searchFileContent(
++  $q: String!,
++  $institutionId: Int!,
++  $groupId: Int,
++  $pageSize: Int,
++  $cursor: String
++) {
++  search: searchFileContent(
++    searchTerm: $q,
++    institutionId: $institutionId,
++    groupId: $groupId,
++    pageSize: $pageSize,
++    cursor: $cursor
++  ) {
++    cursor
++    count
++    elements {
++      totalFilesCount
++      fileData {
++        pageNo
++        fileId
++      }
++      id
++      title
++      contentType: entityType
++      institution: institutionName
++      definedType: itemType {
++        id
++        icon
++        name
++      }
++      authors {
++        id: userId
++        isPublic
++        isActive
++        name
++        url
++      }
++      publishedDate
++      revisionDate
++      submissionDate
++      pubAcceptDate
++      onlinePublishDate
++      pubPublishDate
++      isEmbargoed
++      embargoDate
++      embargoType
++      thumb
++      url
++    }
++  }
++}
+diff --git a/src/pages/searchNew/components/listing/index.jsx b/src/pages/searchNew/components/listing/index.jsx
+index a5c949564..2ab9fc20c 100644
+--- a/src/pages/searchNew/components/listing/index.jsx
++++ b/src/pages/searchNew/components/listing/index.jsx
+@@ -1,3 +1,4 @@
++/* eslint-disable complexity */
+ import PropTypes from "prop-types";
+ import React, { Component, Fragment } from "react";
+ import { Query } from "@apollo/react-components";
+@@ -8,11 +9,12 @@ import { withCookieJar } from "utils/cookie/context";
+ import AppContext from "mainApp/context";
+ import FollowButton from "shared/apps/follow";
+ import getErrorMessage from "utils/search/parseError";
++import getIn from "utils/getIn";
+ 
+ import Context from "../../context";
+ 
+-import { advancedSearch } from "./index.gql";
+-import style from "./index.css";
++import { advancedSearch, searchFileContent } from "./index.gql";
++import style from "./listing.css";
+ 
+ 
+ const ITEMS_PER_PAGE = 40;
+@@ -53,7 +55,7 @@ export class ItemListing extends Component {
+   }
+ 
+   renderWithAppContext = ({ mainAppContainer }) => {
+-    const { variables: { facets, filters, q, sort }, domainData: { institutionId } } = this.context;
++    const { domainData: { institutionId }, variables: { facets, filters, q, searchBy, sort } } = this.context;
+ 
+     this.mainAppContainer = mainAppContainer;
+     if (!this.isSortDefined && sort) {
+@@ -62,7 +64,11 @@ export class ItemListing extends Component {
+       this.isSortDefined = true;
+     }
+ 
+-    const variables = {
++    const queryVariables = searchBy === "text" ? {
++      q,
++      institutionId,
++      pageSize: ITEMS_PER_PAGE,
++    } : {
+       q,
+       facets,
+       filters,
+@@ -72,8 +78,16 @@ export class ItemListing extends Component {
+       institutionId,
+     };
+ 
++    const query = searchBy === "text" ? searchFileContent : advancedSearch;
++
+     return (
+-      <Query fetchPolicy="network-only" notifyOnNetworkStatusChange={true} query={advancedSearch} variables={variables}>
++      <Query
++        fetchPolicy="network-only"
++        notifyOnNetworkStatusChange={true}
++        query={query}
++        variables={queryVariables}
++        onCompleted={this.onUpdateHighlightsData}
++      >
+         {this.renderWithQuery}
+       </Query>
+     );
+@@ -97,7 +111,7 @@ export class ItemListing extends Component {
+       errorComponent = this.renderError(error);
+     }
+ 
+-    const { domainData, variables: { q, facets, filters } } = this.context;
++    const { domainData, searchBy, variables: { q, facets, filters, searchBy: searchByGlobal } } = this.context;
+     // old follow filters shape for backwards compatibility
+     const followData = {
+       type: "search",
+@@ -110,9 +124,12 @@ export class ItemListing extends Component {
+       },
+     };
+ 
+-    const searchResult = data?.searchAdvanced;
++    const isFullTextSearch = searchBy === "text";
++    const isFullTextSearchGlobal = searchByGlobal === "text";
++
++    const searchResult = data?.search;
+     const { results, suggestions } = searchResult || {};
+-    const { cursor, count, elements } = results || {};
++    const { cursor, count, elements } = (isFullTextSearchGlobal ? searchResult : results) || {};
+ 
+     this.canLoadMore = !!cursor;
+     const hasItems = !!elements?.length;
+@@ -126,7 +143,16 @@ export class ItemListing extends Component {
+         });
+       }
+ 
+-      const { elements: sortOptions, selected: { by: sortedBy, type: sortedType } } = data?.getSortOptions;
++      let sortedBy = null;
++      let sortedType = null;
++      let sortOptions = null;
++
++      if (!isFullTextSearchGlobal) {
++        sortedBy = data?.getSortOptions?.selected?.by;
++        sortedType = data?.getSortOptions?.selected?.type;
++        sortOptions = data?.getSortOptions?.elements;
++      }
++
+       if (!this.isSortDefined) {
+         this.sortedBy = sortedBy;
+         this.sortedType = sortedType;
+@@ -135,9 +161,14 @@ export class ItemListing extends Component {
+ 
+       const onLoadMore = this.onLoadMore(fetchMore, cursor);
+ 
++      const warningText = `Filters and attributes are not available when searching by file content.
++        Any filter or attribute applied will be left out.`;
++
+       listingComponent = (
+         <Listing
++          allowSorting={!isFullTextSearch && !!sortOptions}
+           count={count}
++          hasWarning={isFullTextSearch}
+           items={items}
+           loading={loading}
+           optimizeOnScroll={items.length > ITEMS_PER_PAGE}
+@@ -146,6 +177,7 @@ export class ItemListing extends Component {
+           sortedBy={this.sortedBy}
+           sortedType={this.sortedType}
+           viewMode={this.state.viewMode}
++          warningText={warningText}
+           onLoadMore={onLoadMore}
+           onSort={this.onSort}
+           onSwitchViewMode={this.onSwitchViewMode}
+@@ -186,7 +218,7 @@ export class ItemListing extends Component {
+         </div>
+       );
+ 
+-      suggestionsComponent = (
++      suggestionsComponent = isFullTextSearch ? null : (
+         <Fragment>
+           {suggestionsTitle}
+           <Listing
+@@ -284,6 +316,39 @@ export class ItemListing extends Component {
+     }
+   }
+ 
++  onUpdateHighlightsData = (data) => {
++    const { variables } = this.context;
++
++    const isFullTextSearch = variables.searchBy === "text";
++    const items = isFullTextSearch ? getIn(data, "search.elements", []) : getIn(data, "search.results.elements", []);
++
++    let highlights = null;
++
++    if (isFullTextSearch) {
++      highlights = items.map((item) => {
++
++        return {
++          type: "file-highlights",
++          value: { files: item.fileData ?? [], item: item.id },
++        };
++      });
++    } else {
++      highlights = [{
++        type: "metadata-highlights",
++        value: variables.q,
++      }];
++    }
++
++    document.dispatchEvent(
++      new CustomEvent("highlights:update", {
++        detail: {
++          type: "set",
++          value: highlights,
++        },
++      })
++    );
++  }
++
+   processFetchMoreResult = (prev, { fetchMoreResult }) => {
+     if (!fetchMoreResult) {
+       this.canLoadMore = false;
+@@ -291,24 +356,37 @@ export class ItemListing extends Component {
+       return prev;
+     }
+ 
+-    if (fetchMoreResult.searchAdvanced.results.count < ITEMS_PER_PAGE) {
++    const isFullTextSearchGlobal = this.context.variables.searchBy === "text";
++    const count = isFullTextSearchGlobal ? fetchMoreResult.search.count : fetchMoreResult.search.results.count;
++
++    if (count < ITEMS_PER_PAGE) {
+       this.canLoadMore = false;
+     } else {
+       this.canLoadMore = true;
+     }
+ 
++    const results = isFullTextSearchGlobal ? {
++      cursor: fetchMoreResult.search.cursor,
++      elements: [
++        ...prev.search.elements,
++        ...fetchMoreResult.search.elements,
++      ],
++    } : {
++      results: {
++        ...prev.search.results,
++        cursor: fetchMoreResult.search.results.cursor,
++        elements: [
++          ...prev.search.results.elements,
++          ...fetchMoreResult.search.results.elements,
++        ],
++      },
++    };
++
+     return {
+       ...prev,
+-      searchAdvanced: {
+-        ...prev.searchAdvanced,
+-        results: {
+-          ...prev.searchAdvanced.results,
+-          cursor: fetchMoreResult.searchAdvanced.results.cursor,
+-          elements: [
+-            ...prev.searchAdvanced.results.elements,
+-            ...fetchMoreResult.searchAdvanced.results.elements,
+-          ],
+-        },
++      search: {
++        ...prev.search,
++        ...results,
+       },
+     };
+   }
+diff --git a/src/pages/searchNew/components/listing/index.test.jsx b/src/pages/searchNew/components/listing/index.test.jsx
+index 4f1086308..88c43cfa5 100644
+--- a/src/pages/searchNew/components/listing/index.test.jsx
++++ b/src/pages/searchNew/components/listing/index.test.jsx
+@@ -40,10 +40,12 @@ describe("<SearchPageListing />", () => {
+   let mocks = [];
+   let context = {};
+   const variables = getVariablesFromFiltersAndFacets(getDefaultFilters(), {});
++  const { searchBy, ...restVars } = variables;
+   const ITEMS_PER_PAGE = 40;
+ 
+   beforeEach(() => {
+     context = {
++      domainData: { institutionId: 1 },
+       facets: {},
+       filters: {
+         ...getDefaultFilters(),
+@@ -55,22 +57,24 @@ describe("<SearchPageListing />", () => {
+       onReset: jest.fn(),
+       canApply: jest.fn(() => true),
+       canReset: jest.fn(() => true),
++      onChangeSearchBy: jest.fn(),
++      searchBy: "metadata",
+       variables,
+-      domainData: {},
+     };
+ 
+     mocks = [{
+       request: {
+         query: advancedSearch,
+         variables: {
+-          ...variables,
++          ...restVars,
+           cursor: "",
+           pageSize: ITEMS_PER_PAGE,
++          institutionId: 1,
+         },
+       },
+       result: {
+         data: {
+-          searchAdvanced: {
++          search: {
+             results: {
+               count: 10,
+               cursor: "test",
+@@ -84,11 +88,16 @@ describe("<SearchPageListing />", () => {
+     }, {
+       request: {
+         query: advancedSearch,
+-        variables: { ...variables, cursor: "test", pageSize: ITEMS_PER_PAGE },
++        variables: {
++          ...restVars,
++          cursor: "test",
++          pageSize: ITEMS_PER_PAGE,
++          institutionId: 1,
++        },
+       },
+       result: {
+         data: {
+-          searchAdvanced: {
++          search: {
+             results: {
+               count: 1,
+               cursor: "test2",
+@@ -126,7 +135,7 @@ describe("<SearchPageListing />", () => {
+   it("renders listing component", async() => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+               <Listing />
+@@ -152,7 +161,7 @@ describe("<SearchPageListing />", () => {
+     }];
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={emptyMocks}>
+             <CookieContextProvider>
+               <Listing />
+@@ -182,7 +191,7 @@ describe("<SearchPageListing />", () => {
+   it("loads more items", async() => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+               <Listing />
+@@ -214,7 +223,7 @@ describe("<SearchPageListing />", () => {
+   it("switches view mode", async() => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+               <Listing />
+@@ -239,7 +248,7 @@ describe("<SearchPageListing />", () => {
+   it("changes the sort", async() => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+               <Listing />
+@@ -273,7 +282,10 @@ describe("<SearchPageListing />", () => {
+ 
+     const mounted = mount(
+       <Context.Provider value={contextWithSort}>
+-        <StaticRouter context={ {} } location="/search/new?q=test2&sortBy=published_date&sortType=asc">
++        <StaticRouter
++          context={ {} }
++          location="/search/new?q=test2&searchBy=metadata&sortBy=published_date&sortType=asc"
++        >
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+               <Listing />
+@@ -295,7 +307,7 @@ describe("<SearchPageListing />", () => {
+     context.domainData = { institutionId: 1 };
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+               <Listing />
+@@ -316,7 +328,7 @@ describe("<SearchPageListing />", () => {
+ 
+     const lessThenItemsPerPage = {
+       fetchMoreResult: {
+-        searchAdvanced: {
++        search: {
+           results: {
+             count: 39,
+             cursor: "39",
+@@ -331,7 +343,7 @@ describe("<SearchPageListing />", () => {
+ 
+     const moreThenItemsPerPage = {
+       fetchMoreResult: {
+-        searchAdvanced: {
++        search: {
+           results: {
+             count: 41,
+             cursor: "41",
+@@ -347,7 +359,7 @@ describe("<SearchPageListing />", () => {
+   });
+ 
+   it("displays no results message", async() => {
+-    mocks[0].result.data.searchAdvanced = {
++    mocks[0].result.data.search = {
+       results: {
+         count: 0,
+         cursor: null,
+@@ -358,7 +370,7 @@ describe("<SearchPageListing />", () => {
+ 
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+               <Listing />
+@@ -393,7 +405,7 @@ describe("<SearchPageListing />", () => {
+     expect(mounted.find(".noContent p").text()).toEqual("Suggested content");
+     expect(mounted.find(FollowButton)).toHaveLength(0);
+ 
+-    mocks[0].result.data.searchAdvanced.results = { count: 0, cursor: null, elements: [] };
++    mocks[0].result.data.search.results = { count: 0, cursor: null, elements: [] };
+     mounted = mount(
+       <Context.Provider value={context}>
+         <StaticRouter context={ {} } location="/search/new?q=">
+@@ -419,7 +431,7 @@ describe("<SearchPageListing />", () => {
+ 
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+               <Listing />
+diff --git a/src/pages/searchNew/components/listing/index.css b/src/pages/searchNew/components/listing/listing.css
+similarity index 100%
+rename from src/pages/searchNew/components/listing/index.css
+rename to src/pages/searchNew/components/listing/listing.css
+diff --git a/src/pages/searchNew/components/sidebar/index.jsx b/src/pages/searchNew/components/sidebar/index.jsx
+index e5d34c554..b25c7eca4 100644
+--- a/src/pages/searchNew/components/sidebar/index.jsx
++++ b/src/pages/searchNew/components/sidebar/index.jsx
+@@ -11,7 +11,7 @@ import AppContext from "mainApp/context";
+ import Context from "../../context";
+ import Facets from "../facets";
+ 
+-import style from "./index.css";
++import style from "./sidebar.css";
+ 
+ 
+ const MOBILE_BREAKPOINT = 880;
+@@ -64,6 +64,8 @@ export default class Sidebar extends Component {
+   }
+ 
+   renderWithAppContext = ({ mainAppContainer }) => {
++    const { searchBy, onToggleSidebar } = this.context;
++
+     this.scrollContainer = mainAppContainer;
+ 
+     return (
+@@ -71,9 +73,10 @@ export default class Sidebar extends Component {
+         <IconButton
+           Icon={FiltersIcon}
+           className={style.filtersButton}
++          disabled={searchBy === "text"}
+           innerRef={this.setFiltersButtonRef}
+           theme="tertiary"
+-          onClick={this.context.onToggleSidebar}
++          onClick={onToggleSidebar}
+         >
+           Show filters
+         </IconButton>
+@@ -124,7 +127,7 @@ export default class Sidebar extends Component {
+   }
+ 
+   renderButtons = () => {
+-    const { canApply, canReset, onApplyFilters, onReset, facetsLoading, resultsLoading } = this.context;
++    const { canApply, canReset, onApplyFilters, onReset, facetsLoading, resultsLoading, searchBy } = this.context;
+     const loading = facetsLoading || resultsLoading;
+     let applyDisabled = !canApply();
+     let resetDisabled = !canReset();
+@@ -133,8 +136,9 @@ export default class Sidebar extends Component {
+       return null;
+     }
+ 
+-    applyDisabled = loading || applyDisabled;
+-    resetDisabled = loading || resetDisabled;
++    const isFullTextSearch = searchBy === "text";
++    applyDisabled = loading || applyDisabled || isFullTextSearch;
++    resetDisabled = loading || resetDisabled || isFullTextSearch;
+ 
+     const buttonsClassName = [style.buttons];
+ 
+@@ -144,7 +148,7 @@ export default class Sidebar extends Component {
+           className={style.applyButton}
+           disabled={applyDisabled}
+           theme="primary"
+-          onClick={onApplyFilters}
++          onClick={onApplyFilters()}
+         >
+           Apply filters
+         </Button>
+diff --git a/src/pages/searchNew/components/sidebar/index.test.jsx b/src/pages/searchNew/components/sidebar/index.test.jsx
+index 2e5d087e6..3c6c0ab6e 100644
+--- a/src/pages/searchNew/components/sidebar/index.test.jsx
++++ b/src/pages/searchNew/components/sidebar/index.test.jsx
+@@ -98,7 +98,7 @@ describe("<SearchPageSidebar />", () => {
+ 
+   it("correctly renders buttons", () => {
+     let localContext = {
+-      ...appContext,
++      ...context,
+       canApply: () => true,
+       canReset: () => true,
+     };
+@@ -114,7 +114,7 @@ describe("<SearchPageSidebar />", () => {
+ 
+ 
+     localContext = {
+-      ...appContext,
++      ...context,
+       canApply: () => false,
+       canReset: () => true,
+     };
+@@ -130,7 +130,7 @@ describe("<SearchPageSidebar />", () => {
+ 
+ 
+     localContext = {
+-      ...appContext,
++      ...context,
+       canApply: () => true,
+       canReset: () => false,
+     };
+diff --git a/src/pages/searchNew/components/sidebar/index.css b/src/pages/searchNew/components/sidebar/sidebar.css
+similarity index 100%
+rename from src/pages/searchNew/components/sidebar/index.css
+rename to src/pages/searchNew/components/sidebar/sidebar.css
+diff --git a/src/pages/searchNew/page.jsx b/src/pages/searchNew/page.jsx
+index 1a6666f61..8abc5cf33 100644
+--- a/src/pages/searchNew/page.jsx
++++ b/src/pages/searchNew/page.jsx
+@@ -49,17 +49,18 @@ export class Search extends PureComponent {
+     const searchQueryError = tooLongMessage ? initialQueryErrorMessage : null;
+ 
+     this.state = {
+-      filters,
+-      facets,
+       appliedFilters: filters,
+       appliedFacets: facets,
+-      showSidebar: false,
+       expandedFacet: null,
++      facets,
++      facetsCount: undefined,
+       facetsLoading: false,
++      filters,
+       resultsLoading: false,
+-      facetsCount: undefined,
++      searchBy: filters.searchBy || "metadata",
+       searchQuery: filters.q,
+       searchQueryError,
++      showSidebar: false,
+     };
+   }
+ 
+@@ -108,7 +109,11 @@ export class Search extends PureComponent {
+   setCloseSidebarRef = (node) => this.closeSidebarButton = node;
+   setSearchInputRef = (node) => this.searchInput = node;
+ 
+-  onToggleSidebar = () => {
++  onToggleSidebar = (event) => {
++    if (event?.defaultPrevented) {
++      return;
++    }
++
+     this.setState(({ showSidebar }) => {
+       return { showSidebar: !showSidebar };
+     }, () => {
+@@ -120,6 +125,14 @@ export class Search extends PureComponent {
+     });
+   }
+ 
++  onChangeSearchBy = (newFilters) => {
++    const filters = { ...newFilters };
++    const { searchBy } = newFilters;
++
++    this.setState({ searchBy });
++    this.onChange(filters);
++  }
++
+   onChangeSearchQuery = (newFilters, newFacets) => {
+     const filters = { ...newFilters };
+ 
+@@ -182,8 +195,8 @@ export class Search extends PureComponent {
+   onApplyKeyword = () => {
+     const { location, history } = this.props;
+ 
+-    const { filters: { q }, appliedFacets } = this.state;
+-    const appliedFilters = { ...this.state.appliedFilters, q };
++    const { filters: { q, searchBy }, appliedFacets } = this.state;
++    const appliedFilters = { ...this.state.appliedFilters, q, searchBy };
+     const query = getQueryFromFiltersAndFacets(appliedFilters, appliedFacets);
+     const to = `${location.pathname}${query}`;
+ 
+@@ -223,7 +236,11 @@ export class Search extends PureComponent {
+     }, this.scrollToTop);
+   }
+ 
+-  onApplyFilters = (pushToNewLocation = true) => {
++  onApplyFilters = (pushToNewLocation = true) => (event) => {
++    if (event?.defaultPrevented) {
++      return;
++    }
++
+     const { location, history } = this.props;
+     const { appliedFilters, filters: { institutionId, date }, facets } = this.state;
+ 
+@@ -257,15 +274,19 @@ export class Search extends PureComponent {
+   onPopChange = () => {
+     const { location: { search }, availableFacets, domainData } = this.props;
+     const [filters, facets] = getFiltersAndFacetsFromQuery(search, availableFacets, domainData);
+-    this.setState({ facets, filters, resultsLoading: true }, () => this.onApplyFilters(false));
++    this.setState({ facets, filters, resultsLoading: true }, () => this.onApplyFilters(false)());
+   }
+ 
+-  onReset = () => {
++  onReset = (event) => {
++    if (event?.defaultPrevented) {
++      return;
++    }
++
+     const { q, sortBy, ...filters } = getDefaultFilters();
+     const { appliedFilters } = this.state;
+     filters.q = appliedFilters.q;
+     filters.sortBy = appliedFilters.sortBy;
+-    this.setState({ facets: undefined, filters, resultsLoading: true }, this.onApplyFilters);
++    this.setState({ facets: undefined, filters, resultsLoading: true }, this.onApplyFilters());
+   }
+ 
+   onFacetsLoaded = () => {
+@@ -296,43 +317,46 @@ export class Search extends PureComponent {
+ 
+   getContext = () => {
+     const {
+-      facets,
+-      filters,
+-      showSidebar,
+       expandedFacet,
+       facetsLoading,
+-      resultsLoading,
++      facets,
+       facetsCount,
++      filters,
++      resultsLoading,
++      searchBy,
+       searchQuery,
+       searchQueryError,
++      showSidebar,
+     } = this.state;
+     const { domainData } = this.props;
+ 
+     return {
++      canApply: this.canApply,
++      canReset: this.canReset,
++      domainData,
++      expandedFacet,
+       facets: facets || {},
+-      filters,
++      facetsCount,
+       facetsLoading,
+-      resultsLoading,
+-      onFacetsLoaded: this.onFacetsLoaded,
+-      onResultsLoaded: this.onResultsLoaded,
+-      onChange: this.onChange,
+-      onChangeSearchQuery: this.onChangeSearchQuery,
+-      onApplyKeyword: this.onApplyKeyword,
++      filters,
+       onApplyFilters: this.onApplyFilters,
++      onApplyKeyword: this.onApplyKeyword,
+       onApplySort: this.onApplySort,
+-      onToggleSidebar: this.onToggleSidebar,
+-      onShowExpandedFacet: this.onShowExpandedFacet,
+-      updateFacetsCount: this.updateFacetsCount,
+-      showSidebar,
+-      expandedFacet,
++      onChange: this.onChange,
++      onChangeSearchBy: this.onChangeSearchBy,
++      onChangeSearchQuery: this.onChangeSearchQuery,
++      onFacetsLoaded: this.onFacetsLoaded,
+       onReset: this.onReset,
+-      canApply: this.canApply,
+-      canReset: this.canReset,
+-      variables: this.variables,
+-      domainData,
+-      facetsCount,
++      onResultsLoaded: this.onResultsLoaded,
++      onShowExpandedFacet: this.onShowExpandedFacet,
++      onToggleSidebar: this.onToggleSidebar,
++      resultsLoading,
++      searchBy,
+       searchQuery,
+       searchQueryError,
++      showSidebar,
++      updateFacetsCount: this.updateFacetsCount,
++      variables: this.variables,
+     };
+   }
+ 
+diff --git a/src/pages/searchNew/page.test.jsx b/src/pages/searchNew/page.test.jsx
+index 1093efe72..5d1c51261 100644
+--- a/src/pages/searchNew/page.test.jsx
++++ b/src/pages/searchNew/page.test.jsx
+@@ -64,7 +64,7 @@ describe("<SearchPage />", () => {
+   it("renders the search page", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -79,18 +79,39 @@ describe("<SearchPage />", () => {
+   it("toggles the sidebar", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+     );
+ 
+     const search = mounted.find(Search).instance();
+-    search.onToggleSidebar();
++    search.onToggleSidebar({ defaultPrevented: false });
+     expect(search.state.showSidebar).toEqual(true);
+     jest.runAllTimers();
+ 
+-    search.onToggleSidebar();
++    search.onToggleSidebar({ defaultPrevented: false });
++    expect(search.state.showSidebar).toEqual(false);
++    jest.runAllTimers();
++
++    mounted.unmount();
++  });
++
++  it("do not toggle the sidebar when defaultPrevented is true", () => {
++    const mounted = mount(
++      <Context.Provider value={context}>
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=text">
++          <SearchPage availableFacets={availableFacets} domainData={domainData} />
++        </StaticRouter>
++      </Context.Provider>
++    );
++
++    const search = mounted.find(Search).instance();
++    search.onToggleSidebar({ defaultPrevented: true });
++    expect(search.state.showSidebar).toEqual(false);
++    jest.runAllTimers();
++
++    search.onToggleSidebar({ defaultPrevented: true });
+     expect(search.state.showSidebar).toEqual(false);
+     jest.runAllTimers();
+ 
+@@ -100,7 +121,7 @@ describe("<SearchPage />", () => {
+   it("correctly sets queryErrorMessage if accessing an url that is too long", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location={`/search/new?q=${tooLongQuery}`}>
++        <StaticRouter context={ {} } location={`/search/new?q=${tooLongQuery}&searchBy=metadata`}>
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -114,7 +135,7 @@ describe("<SearchPage />", () => {
+   it("correctly changes filters", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -139,7 +160,7 @@ describe("<SearchPage />", () => {
+   it("correctly applies searchQuery", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -156,7 +177,7 @@ describe("<SearchPage />", () => {
+   it("does not change query within filters, if query is too long", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -174,7 +195,7 @@ describe("<SearchPage />", () => {
+   it("correctly updates facets count", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -191,7 +212,7 @@ describe("<SearchPage />", () => {
+   it("correctly resets facets and filters", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -199,7 +220,7 @@ describe("<SearchPage />", () => {
+ 
+     const search = mounted.find(Search).instance();
+ 
+-    search.onReset();
++    search.onReset({ defaultPrevented: false });
+     const defaultFilters = getDefaultFilters();
+ 
+     const { contentTypes, date, dateValue, institutionId } = defaultFilters;
+@@ -217,13 +238,12 @@ describe("<SearchPage />", () => {
+ 
+     expect(facets).toEqual(undefined);
+     expect(appliedFacets).toEqual({});
+-
+   });
+ 
+   it("correctly applies keyword", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -238,7 +258,7 @@ describe("<SearchPage />", () => {
+   it("correctly applies sort", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -253,7 +273,7 @@ describe("<SearchPage />", () => {
+   it("correctly applies filters and facets", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -266,7 +286,7 @@ describe("<SearchPage />", () => {
+       date: "test",
+       dateValue: "test",
+     }, { test: ["test"], publishedDate: "test" });
+-    search.onApplyFilters();
++    search.onApplyFilters()({ defaultPrevented: false });
+ 
+     const { appliedFilters: { institutionId, date }, appliedFacets } = search.state;
+     expect(institutionId).toEqual("test");
+@@ -274,7 +294,7 @@ describe("<SearchPage />", () => {
+     expect(appliedFacets).toEqual({ test: ["test"], publishedDate: "test" });
+ 
+     search.onChange({ contentTypes: undefined });
+-    search.onApplyFilters();
++    search.onApplyFilters()({ defaultPrevented: false });
+     expect(search.state.appliedFilters.contentTypes).toEqual(undefined);
+     expect(search.state.appliedFacets).toEqual({});
+   });
+@@ -282,7 +302,7 @@ describe("<SearchPage />", () => {
+   it("renders expanded facet", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -300,7 +320,7 @@ describe("<SearchPage />", () => {
+   it("resets date filter when project content type is selected", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -316,7 +336,7 @@ describe("<SearchPage />", () => {
+   it("correctly sets facets loading state", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new  ?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -330,7 +350,7 @@ describe("<SearchPage />", () => {
+   it("correctly sets results loading state", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -344,7 +364,7 @@ describe("<SearchPage />", () => {
+   it("cannot apply facets if only one date is selected", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -366,7 +386,7 @@ describe("<SearchPage />", () => {
+     const searchInput = { focus: jest.fn() };
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+@@ -377,12 +397,12 @@ describe("<SearchPage />", () => {
+     search.setSearchInputRef(searchInput);
+     jest.useFakeTimers();
+ 
+-    search.onToggleSidebar();
++    search.onToggleSidebar({ defaultPrevented: false });
+     jest.runAllTimers();
+ 
+     expect(closeButton.focus).toHaveBeenCalled();
+ 
+-    search.onToggleSidebar();
++    search.onToggleSidebar({ defaultPrevented: false });
+     jest.runAllTimers();
+ 
+     expect(searchInput.focus).toHaveBeenCalled();
+@@ -391,7 +411,7 @@ describe("<SearchPage />", () => {
+   it("correctly calls onApplyFilters when triggering onPopChange", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test">
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <SearchPage availableFacets={availableFacets} domainData={domainData} />
+         </StaticRouter>
+       </Context.Provider>
+diff --git a/src/pages/searchNew/queryString.js b/src/pages/searchNew/queryString.js
+index c7897d8f9..d28d4c577 100644
+--- a/src/pages/searchNew/queryString.js
++++ b/src/pages/searchNew/queryString.js
+@@ -11,6 +11,7 @@ const initialAvailableFacets = ["itemTypes", "licenses", "categories", "groups",
+ export const getDefaultFilters = () => {
+   return {
+     q: "",
++    searchBy: null,
+     sortBy: null,
+     sortType: null,
+     date: undefined,
+@@ -22,6 +23,7 @@ export const getFiltersAndFacetsFromQuery = (search, availableFacets = initialAv
+ 
+   const {
+     q = "",
++    searchBy = null,
+     sortBy = null,
+     sortType = null,
+   } = query;
+@@ -86,7 +88,7 @@ export const getFiltersAndFacetsFromQuery = (search, availableFacets = initialAv
+     });
+   }
+ 
+-  return [{ q, sortBy, date, sortType }, facets];
++  return [{ q, searchBy, sortBy, date, sortType }, facets];
+ };
+ 
+ export const getQueryFromFiltersAndFacets = (filters, facets) => {
+@@ -180,9 +182,9 @@ export const haveFacetsChanged = (newFacets, oldFacets) =>
+ 
+ export const getVariablesFromFiltersAndFacets = (filters, facets, domainData) => {
+   const institutionId = domainData?.institutionId;
+-  const { q, sortBy, sortType } = filters;
++  const { q, searchBy, sortBy, sortType } = filters;
+ 
+-  const vars = { q, facets: getFacets(facets) };
++  const vars = { q, searchBy, facets: getFacets(facets) };
+ 
+   if (institutionId) {
+     vars.filters = { institutionId };
+diff --git a/src/pages/searchNew/queryString.test.js b/src/pages/searchNew/queryString.test.js
+index 22db57b1b..9516644b3 100644
+--- a/src/pages/searchNew/queryString.test.js
++++ b/src/pages/searchNew/queryString.test.js
+@@ -24,21 +24,23 @@ describe("Filters misc functions", () => {
+   });
+ 
+   it("gets facets and filters from query string", () => {
+-    const search = "?q=test&sortBy=posted&sortType=desc&categories=1,2&types=1,2&publishedDate=test";
++    const search = "?q=test&searchBy=metadata&sortBy=posted&sortType=desc&categories=1,2&types=1,2&publishedDate=test";
+ 
+     const [filters, facets] = getFiltersAndFacetsFromQuery(search);
+ 
+     expect(filters.q).toEqual("test");
++    expect(filters.searchBy).toEqual("metadata");
+     expect(filters.sortBy).toEqual("posted");
+     expect(filters.sortType).toEqual("desc");
+     expect(facets).toEqual({ categories: ["1", "2"], itemTypes: ["1", "2"], publishedDate: "test" });
+   });
+ 
+   it("returns filters with default order type", () => {
+-    const search = "?q=test&categories=1,2&types=1,2&publishedDate=test";
++    const search = "?q=test&searchBy=metadata&categories=1,2&types=1,2&publishedDate=test";
+     const [filters, facets] = getFiltersAndFacetsFromQuery(search);
+ 
+     expect(filters.q).toEqual("test");
++    expect(filters.searchBy).toEqual("metadata");
+     expect(filters.sortBy).toEqual(null);
+     expect(filters.sortType).toEqual(null);
+     expect(facets).toEqual({ categories: ["1", "2"], itemTypes: ["1", "2"], publishedDate: "test" });
+diff --git a/src/shared/ui/highlights/highlightContext.jsx b/src/shared/ui/highlights/highlightContext.jsx
+new file mode 100644
+index 000000000..a03b9b575
+--- /dev/null
++++ b/src/shared/ui/highlights/highlightContext.jsx
+@@ -0,0 +1,4 @@
++import { createContext } from "react";
++
++
++export const HighlightContext = createContext({ highlights: [] });
+diff --git a/src/shared/ui/highlights/highlightProvider.jsx b/src/shared/ui/highlights/highlightProvider.jsx
+new file mode 100644
+index 000000000..925ec3ed6
+--- /dev/null
++++ b/src/shared/ui/highlights/highlightProvider.jsx
+@@ -0,0 +1,33 @@
++import React, { useEffect, useMemo, useState } from "react";
++import PropTypes from "prop-types";
++
++import { HighlightContext } from "./highlightContext";
++import { useGlobalHighlights } from "./useGlobalHighlights";
++
++
++export const HighlightProvider = ({ children }) => {
++  const global = useGlobalHighlights();
++  const [highlights, setHighlights] = useState([]);
++
++  useEffect(() => {
++    setHighlights(global[0]);
++  }, [global]);
++
++  const ctx = useMemo(() => {
++    return {
++      highlights,
++      setHighlights,
++    };
++  }, [highlights, setHighlights]);
++
++  return (
++    <HighlightContext.Provider value={ctx}>
++      {children}
++    </HighlightContext.Provider>
++  );
++};
++
++HighlightProvider.propTypes = { children: PropTypes.any };
++HighlightProvider.defaultProps = { children: undefined };
++
++export default HighlightProvider;
+diff --git a/src/shared/ui/highlights/useGlobalHighlights.jsx b/src/shared/ui/highlights/useGlobalHighlights.jsx
+new file mode 100644
+index 000000000..099f82a18
+--- /dev/null
++++ b/src/shared/ui/highlights/useGlobalHighlights.jsx
+@@ -0,0 +1,33 @@
++import { useCallback, useEffect, useMemo, useState } from "react";
++
++import { useReadValueFromSession } from "./useReadValueFromSession";
++
++
++export function useGlobalHighlights() {
++  const { initial } = useReadValueFromSession("global-highlights");
++  const [highlights, setHighlights] = useState(initial);
++  const handleUpdateThroughEvent = useCallback(
++    (event) => {
++      const { type, value } = event.detail;
++
++      if (type === "set") {
++        setHighlights(value);
++        window.sessionStorage.setItem("global-highlights", JSON.stringify(value));
++      }
++    },
++    [setHighlights]
++  );
++
++  useEffect(() => {
++    document.addEventListener("highlights:update", handleUpdateThroughEvent);
++
++    return () => {
++      document.removeEventListener(
++        "highlights:update",
++        handleUpdateThroughEvent
++      );
++    };
++  }, [handleUpdateThroughEvent]);
++
++  return useMemo(() => [highlights, setHighlights], [highlights]);
++}
+diff --git a/src/shared/ui/highlights/useReadValueFromSession.jsx b/src/shared/ui/highlights/useReadValueFromSession.jsx
+new file mode 100644
+index 000000000..0fe4f15d7
+--- /dev/null
++++ b/src/shared/ui/highlights/useReadValueFromSession.jsx
+@@ -0,0 +1,42 @@
++import { useCallback, useEffect, useMemo, useState } from "react";
++
++
++export function useReadValueFromSession(key) {
++  // this value will only change once, at mount
++  const initial = useMemo(() => {
++    const value = window?.sessionStorage?.getItem(key);
++
++    if (value) {
++      return JSON.parse(value);
++    }
++
++    return [];
++  }, [key]);
++
++  // we will keep this value live, and responding to storage events
++  const [current, setCurrent] = useState(initial);
++
++  const handleValueChangeOnStorageEvent = useCallback(
++    () => {
++      const meetsConditionToChange = false;
++      const newParsedValue = [];
++
++      if (meetsConditionToChange) {
++        setCurrent(newParsedValue);
++      }
++    },
++    [setCurrent]
++  );
++
++  useEffect(() => {
++    document.addEventListener("storage", handleValueChangeOnStorageEvent);
++
++    return () => {
++      document.removeEventListener("storage", handleValueChangeOnStorageEvent);
++    };
++  }, [handleValueChangeOnStorageEvent]);
++
++  return useMemo(() => {
++    return { initial, current };
++  }, [initial, current]);
++}
+diff --git a/src/shared/ui/highlights/utils.js b/src/shared/ui/highlights/utils.js
+new file mode 100644
+index 000000000..e9d678c3c
+--- /dev/null
++++ b/src/shared/ui/highlights/utils.js
+@@ -0,0 +1,13 @@
++export const isPartOfItemHighlight = (fileId, highlights) => {
++  const fileHighlights = highlights.filter((h) => h.type === "file-highlights");
++
++  return fileHighlights.some(((highlight) => {
++    const exists = highlight.value.files.find((f) => f.fileId === fileId);
++
++    return !!exists;
++  }));
++};
++
++
++export const getHighlightsCount = (itemId, highlights) =>
++  highlights?.filter((el) => el.value?.item === itemId)[0]?.value?.files?.length;
+diff --git a/src/shared/ui/highlights/utils.test.js b/src/shared/ui/highlights/utils.test.js
+new file mode 100644
+index 000000000..cf4170dcf
+--- /dev/null
++++ b/src/shared/ui/highlights/utils.test.js
+@@ -0,0 +1,36 @@
++import { isPartOfItemHighlight, getHighlightsCount } from "./utils";
++
++
++const itemId = 1;
++const fileId1 = 100;
++const fileId2 = 200;
++const highlights1 = [{
++  type: "file-highlights",
++  value: {
++    files: [{ pageNo: 1, fileId: 100 }, { pageNo: 1, fileId: 300 }],
++    item: itemId,
++  },
++}];
++
++describe("isPartOfItemHighlight", () => {
++  it("should return true", () => {
++    const response = isPartOfItemHighlight(fileId1, highlights1);
++
++    expect(response).toEqual(true);
++  });
++
++  it("should return false", () => {
++    const response = isPartOfItemHighlight(fileId2, highlights1);
++
++    expect(response).toEqual(false);
++  });
++});
++
++
++describe("getHighlightsCount", () => {
++  it("shold return correct count", () => {
++    const response = getHighlightsCount(itemId, highlights1);
++
++    expect(response).toEqual(2);
++  });
++});
+diff --git a/src/shared/ui/listing/components/sort/index.jsx b/src/shared/ui/listing/components/sort/index.jsx
+index 302be7359..27c63d9a3 100644
+--- a/src/shared/ui/listing/components/sort/index.jsx
++++ b/src/shared/ui/listing/components/sort/index.jsx
+@@ -27,7 +27,7 @@ export default class Sort extends Component {
+       <div key={key} className={style.sort}>
+         <span>sort by:</span>
+         <UncontrolledDropdown itemSelector={":scope > button"}>
+-          {this.renderDropdown}
++          {(dropdownProps) => this.renderDropdown(dropdownProps)}
+         </UncontrolledDropdown>
+       </div>
+     );
+diff --git a/src/shared/ui/listing/index.css b/src/shared/ui/listing/index.css
+index 218c17da5..8939e4736 100644
+--- a/src/shared/ui/listing/index.css
++++ b/src/shared/ui/listing/index.css
+@@ -30,6 +30,27 @@
+   color: var(--color-typography-tertiary);
+ }
+ 
++.warning {
++  display: flex;
++  flex-direction: row;
++  align-items: center;
++
++  width: 100%;
++  margin-bottom: calc(6 * var(--gridSize));
++  padding: var(--gridSize) calc(2 * var(--gridSize));
++
++  background-color: var(--color-layout-secondary-background);
++}
++
++.warningIcon {
++  margin-right: var(--gridSize);
++  fill: var(--color-icon-successAlt);
++}
++
++.warningText {
++  flex: 1;
++}
++
+ @media (max-width: 640px) {
+   .header {
+     padding-bottom: calc(6 * var(--gridSize));
+diff --git a/src/shared/ui/listing/index.jsx b/src/shared/ui/listing/index.jsx
+index b2ca3c4cc..5907f70c9 100644
+--- a/src/shared/ui/listing/index.jsx
++++ b/src/shared/ui/listing/index.jsx
+@@ -1,5 +1,6 @@
+ import PropTypes from "prop-types";
+ import React, { Component } from "react";
++import InfoIcon from "@figshare/icons/info/medium";
+ 
+ import Sort from "./components/sort";
+ import SwitchView from "./components/switchView";
+@@ -17,6 +18,7 @@ export default class Listing extends Component {
+     allowSwitchView: PropTypes.bool,
+     count: PropTypes.number,
+     countLabel: PropTypes.string,
++    hasWarning: PropTypes.bool,
+     listViewClassName: PropTypes.string,
+     loading: PropTypes.bool,
+     optimizeOnScroll: PropTypes.bool,
+@@ -25,6 +27,7 @@ export default class Listing extends Component {
+     sortedBy: PropTypes.string,
+     sortedType: PropTypes.string,
+     viewMode: PropTypes.oneOf(["list", "grid"]),
++    warningText: PropTypes.string,
+     onLoadMore: PropTypes.func,
+     onSort: PropTypes.func,
+     onSwitchViewMode: PropTypes.func,
+@@ -35,17 +38,19 @@ export default class Listing extends Component {
+     allowSwitchView: true,
+     count: undefined,
+     countLabel: "",
++    hasWarning: false,
++    listViewClassName: undefined,
++    loading: false,
+     optimizeOnScroll: true,
+     scrollContainer: undefined,
+     sortOptions: [],
+     sortedBy: "relevance",
+     sortedType: "desc",
+-    onSort: () => undefined,
+-    onSwitchViewMode: () => undefined,
+     viewMode: "grid",
+-    loading: false,
+-    listViewClassName: undefined,
++    warningText: undefined,
+     onLoadMore: () => undefined,
++    onSort: () => undefined,
++    onSwitchViewMode: () => undefined,
+   }
+ 
+   render() {
+@@ -62,6 +67,7 @@ export default class Listing extends Component {
+ 
+     return (
+       <div className={style.container}>
++        {this.renderWarning()}
+         <div className={style.header}>
+           {this.renderCount()}
+           {this.renderSort()}
+@@ -109,7 +115,14 @@ export default class Listing extends Component {
+       return null;
+     }
+ 
+-    return <Sort sortOptions={sortOptions} sortedBy={sortedBy} sortedType={sortedType} onSort={onSort} />;
++    return (
++      <Sort
++        sortOptions={sortOptions}
++        sortedBy={sortedBy}
++        sortedType={sortedType}
++        onSort={onSort}
++      />
++    );
+   }
+ 
+   renderSwitchView = () => {
+@@ -121,4 +134,19 @@ export default class Listing extends Component {
+ 
+     return <SwitchView viewMode={viewMode} onSwitchViewMode={onSwitchViewMode} />;
+   }
++
++  renderWarning = () => {
++    const { hasWarning, warningText } = this.props;
++
++    if (!hasWarning) {
++      return null;
++    }
++
++    return (
++      <div className={style.warning}>
++        <InfoIcon className={style.warningIcon} />
++        <div className={style.warningText}>{warningText}</div>
++      </div>
++    );
++  }
+ }
+diff --git a/src/shared/ui/listing/index.test.jsx b/src/shared/ui/listing/index.test.jsx
+index 81aea02e8..734ee4c19 100644
+--- a/src/shared/ui/listing/index.test.jsx
++++ b/src/shared/ui/listing/index.test.jsx
+@@ -1,5 +1,6 @@
+ import React from "react";
+ import { mount } from "enzyme";
++import InfoIcon from "@figshare/icons/info/medium";
+ 
+ import items from "./mocks/items";
+ import Sort from "./components/sort";
+@@ -87,6 +88,17 @@ describe("<Listing />", () => {
+     expect(mounted.find(".count")).toHaveLength(0);
+   });
+ 
++  it("renders warning correctly", () => {
++    const warninTextProp = "test";
++
++    const mounted = mount(<Listing hasWarning={false} items={items} warningText={warninTextProp} />);
++    expect(mounted.isEmptyRender()).toEqual(true);
++
++    mounted.setProps({ hasWarning: true });
++    expect(mounted.find(InfoIcon)).toHaveLength(1);
++    expect(mounted.find(".warning .warningText").text()).toEqual(warninTextProp);
++  });
++
+   it("renders count correctly", () => {
+     const mounted = mount(<Listing count={1} items={items} />);
+     expect(mounted.find(".count").text()).toEqual("1 result found");

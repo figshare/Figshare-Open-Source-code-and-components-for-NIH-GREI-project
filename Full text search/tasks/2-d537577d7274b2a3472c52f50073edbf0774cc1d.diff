@@ -1,0 +1,37 @@
+diff --git a/src/figtasks/tasks/article/base.py b/src/figtasks/tasks/article/base.py
+index 9c88e9f2b..ab870ccab 100644
+--- a/src/figtasks/tasks/article/base.py
++++ b/src/figtasks/tasks/article/base.py
+@@ -79,9 +79,9 @@ def run(self, article_id):
+             FigcoreLogger.info("Launch file make public for {}".format(afile.id))
+             afile.runtask_make_public()
+ 
+-            if fc_flag and file_content_search:
++            if fc_ocr_flag and file_content_ocr_search:
+                 FileContentExtractorTask.queue(afile.id)
+-            elif fc_ocr_flag and file_content_ocr_search:
++            elif fc_flag and file_content_search:
+                 FileContentOCRExtractorTask.queue(afile.id)
+ 
+ 
+diff --git a/tests/tasks/article/test_article_publish_files.py b/tests/tasks/article/test_article_publish_files.py
+index a0fecdfbe..47aa16a21 100644
+--- a/tests/tasks/article/test_article_publish_files.py
++++ b/tests/tasks/article/test_article_publish_files.py
+@@ -32,7 +32,7 @@ def mocked_ocr_fc_queue(mocker):
+ def test_file_content_called(mocker, mocked_article_find, mocked_feature_flag, mocked_fc_queue, mocked_ocr_fc_queue):
+     file_obj = mocker.Mock()
+     Article.find.return_value.get_files_to_publish.return_value = [file_obj]
+-    mocked_feature_flag.check_flag.side_effect = [True, False]
++    mocked_feature_flag.check_flag.side_effect = [False, True]
+ 
+     ArticlePublishFilesTaskImplementation().run(1234)
+ 
+@@ -46,7 +46,7 @@ def test_ocr_file_content_called(
+ ):
+     file_obj = mocker.Mock()
+     Article.find.return_value.get_files_to_publish.return_value = [file_obj]
+-    mocked_feature_flag.check_flag.side_effect = [False, True]
++    mocked_feature_flag.check_flag.side_effect = [True, False]
+ 
+     ArticlePublishFilesTaskImplementation().run(1234)

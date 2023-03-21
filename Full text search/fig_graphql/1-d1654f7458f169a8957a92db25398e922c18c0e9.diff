@@ -1,0 +1,503 @@
+diff --git a/figshare/config/__init__.py b/figshare/config/__init__.py
+index d7bb4b14b..96c132739 100644
+--- a/figshare/config/__init__.py
++++ b/figshare/config/__init__.py
+@@ -14,7 +14,7 @@ def get_context_parameter():
+     request = get_current_request()
+     account = request.session.get_active_account()
+ 
+-    domain_info = InstitutionCustomDomainsMappingSingleton.get_domain_info(request.domain)
++    domain_info = InstitutionCustomDomainsMappingSingleton.get_domain_info(request.domain) or {}
+     if not domain_info.get("isolated_domain"):
+         fig_session = request.session.get_figshare_session()
+         if fig_session:
+diff --git a/figshare/config/config.json b/figshare/config/config.json
+index 166200ce7..ab1f8578c 100644
+--- a/figshare/config/config.json
++++ b/figshare/config/config.json
+@@ -309,6 +309,10 @@
+     "new_search": {
+       "host": "ETCD:/graphql/search/new_search/host",
+       "port": "ETCD:/graphql/search/new_search/port"
++    },
++    "file_content": {
++      "host": "ETCD:/graphql/search/file_content/host",
++      "port": "ETCD:/graphql/search/file_content/port"
+     }
+   },
+   "shibboleth_login_url": "ETCD:/graphql/shibboleth_login_url",
+diff --git a/figshare/graphql/pyramid_view.py b/figshare/graphql/pyramid_view.py
+index 8ad39caa6..42b331554 100644
+--- a/figshare/graphql/pyramid_view.py
++++ b/figshare/graphql/pyramid_view.py
+@@ -41,6 +41,7 @@ def _get_ql_parser(self):
+                 "camel_case": True,
+                 "log_sql_queries": config.get("debug_log_sql_queries"),
+                 "new_search": config.get("search", {}).get("new_search", {}),
++                "file_content": config.get("search", {}).get("file_content", {}),
+             },
+         )
+         self.QL = gql_parser
+diff --git a/figshare/graphql/v2_resolvers/new_search.py b/figshare/graphql/v2_resolvers/new_search.py
+index 91e1fb946..51d311d6e 100644
+--- a/figshare/graphql/v2_resolvers/new_search.py
++++ b/figshare/graphql/v2_resolvers/new_search.py
+@@ -1,13 +1,16 @@
+ from typing import Dict
+-from elasticsearch_dsl import Search
++from elasticsearch_dsl import A, Q, Search
+ 
+ from figcore.api import CustomField, Group, Institution
+ from figcore.graphql.utils.elasticsearch.client import elasticsearch_client
++from figcore.graphql.utils.elasticsearch.encrypt import decrypt_search_after_token, encrypt_search_after_token
+ from figcore.lib.data.custom_field_static import CustomFieldStatic
+ 
++
+ from figshare.app import exceptions
+ from figshare.app.views.shared.base import ensure_active_account_inline_method
+ from figshare.graphql.util.request import util_get_request_institution
++from figshare.graphql.v2_resolvers.es_search.utils import entity_mapping
+ from figshare.lib import logger
+ 
+ 
+@@ -145,3 +148,62 @@ def get_category_parents(category):
+         logger.error("Wrong path format for category with id {}".format(category["id"]))
+ 
+     return []
++
++
++def search_file_content(
++    obj,
++    info,
++    search_term: str,
++    institution_id: int,
++    group_id: int = None,
++    cursor: str = None,
++    page_size: int = 15,
++) -> Dict[str, any]:
++
++    index = f"file_content_{institution_id}"
++    search = Search()
++    if group_id:
++        group = Group.find(group_id)
++        search = search.query(
++            Q("bool", must=Q("match", content=search_term), filter=Q("term", group_path={"value": group.path}))
++        )
++    else:
++        search = search.query("match", content=search_term)
++
++    offset = decrypt_search_after_token(cursor) if cursor else 0
++    search.aggs.metric("articles_count", "cardinality", field="article_id")
++    search.aggs.bucket("article", A("terms", field="article_id"))
++    search.aggs["article"].bucket(
++        "sorting", A("bucket_sort", size=page_size, sort=[{"_count": "desc", "_key": "asc"}], **{"from": offset})
++    )
++    search.aggs["article"].bucket("file", A("terms", field="file_id", size=20))
++    search.aggs["article"].metric("files_count", "cardinality", field="file_id")
++    search.aggs["article"]["file"].bucket("page_no", A("terms", field="page_no", size=1))
++    es_result = elasticsearch_client.execute(
++        index=index, search=search, page_size=0, connection_alias="file-content-es-connection"
++    )
++    article_order = []
++    article_mapping = {}
++    for article_bucket in es_result["aggregations"]["article"]["buckets"]:
++        article_id = article_bucket["key"]
++        article_order.append(article_id)
++        article_mapping[article_id] = {"file_data": [], "total_files_count": article_bucket["files_count"]["value"]}
++        for file_bucket in article_bucket["file"]["buckets"]:
++            file_data = {"file_id": file_bucket["key"], "page_no": file_bucket["page_no"]["buckets"][0]["key"]}
++            article_mapping[article_id]["file_data"].append(file_data)
++
++    es_articles = {}
++    if article_order:
++        search = Search()
++        search = search.query("terms", id=article_order)
++        items = elasticsearch_client.execute(index="public_item", search=search, page_size=len(article_order))
++        for raw_item in items["hits"]:
++            item = entity_mapping(info, raw_item["_source"])
++            es_articles[item["id"]] = article_mapping[item["id"]]
++            es_articles[item["id"]].update(item)
++
++    total_count = es_result["aggregations"]["articles_count"]["value"]
++    cursor = encrypt_search_after_token(offset + page_size) if offset + page_size < total_count else ""
++    elements = [es_articles[aid] for aid in article_order if aid in es_articles]
++
++    return {"cursor": cursor, "count": total_count, "elements": elements}
+diff --git a/figshare/graphql/v2_schema/queries.py b/figshare/graphql/v2_schema/queries.py
+index 32a6b8191..2e847c8dc 100644
+--- a/figshare/graphql/v2_schema/queries.py
++++ b/figshare/graphql/v2_schema/queries.py
+@@ -656,3 +656,21 @@ def get_sort_options(cls):
+             "type": SearchSortOrder,
+             "resolver": sort_options_resolver.get_sort_options,
+         }
++
++    @classmethod
++    def search_file_content(cls):
++        return {
++            "params": [
++                {"name": "search_term", "type": "String", "mandatory": True},
++                {"name": "institution_id", "type": "Int", "mandatory": True},
++                {"name": "group_id", "type": "Int", "mandatory": False},
++                {"name": "page_size", "type": "Int", "mandatory": False},
++                {"name": "cursor", "type": "String", "mandatory": False},
++            ],
++            "type": {
++                "implements": "cursorCountPagination",
++                "name": "FileContentSearchArticle",
++                "type": "FileContentSearchArticleListing",
++            },
++            "resolver": new_search_resolvers.search_file_content,
++        }
+diff --git a/figshare/graphql/v2_schema/types/__init__.py b/figshare/graphql/v2_schema/types/__init__.py
+index d2d26851b..3eeee1be7 100644
+--- a/figshare/graphql/v2_schema/types/__init__.py
++++ b/figshare/graphql/v2_schema/types/__init__.py
+@@ -11,6 +11,7 @@
+ from figshare.graphql.v2_schema.types.advanced_search_facets import AdvancedSearchFacets
+ from figshare.graphql.v2_schema.types.advanced_search_filter import AdvancedSearchFilter
+ from figshare.graphql.v2_schema.types.advanced_search_filter_facet import AdvancedSearchFilterFacet
++from figshare.graphql.v2_schema.types.file_content_search_entity import FileResultData, FileContentSearchArticleListing
+ from figshare.graphql.v2_schema.types.audit_call import AuditCall
+ from figshare.graphql.v2_schema.types.banners import Banners
+ from figshare.graphql.v2_schema.types.blog import Blog
+@@ -99,6 +100,8 @@
+     AdvancedSearchFacets,
+     AdvancedSearchFilter,
+     AdvancedSearchFilterFacet,
++    FileContentSearchArticleListing,
++    FileResultData,
+     AuditCall,
+     Banners,
+     Blog,
+diff --git a/figshare/graphql/v2_schema/types/file_content_search_entity.py b/figshare/graphql/v2_schema/types/file_content_search_entity.py
+new file mode 100644
+index 000000000..6f19c9885
+--- /dev/null
++++ b/figshare/graphql/v2_schema/types/file_content_search_entity.py
+@@ -0,0 +1,23 @@
++from figcore.graphql.internals import GqlType
++
++from figshare.graphql.v2_schema.types.advanced_search_entity import AdvancedSearchEntity
++
++
++class FileResultData(GqlType):
++    @classmethod
++    def file_id(cls):
++        return {"type": "Int"}
++
++    @classmethod
++    def page_no(cls):
++        return {"type": "Int"}
++
++
++class FileContentSearchArticleListing(AdvancedSearchEntity):
++    @classmethod
++    def file_data(cls):
++        return {"type": ["FileResultData"]}
++
++    @classmethod
++    def total_files_count(cls):
++        return {"type": "Int"}
+diff --git a/tests/functional/graphql/test_search_file_content.py b/tests/functional/graphql/test_search_file_content.py
+new file mode 100644
+index 000000000..986c53a70
+--- /dev/null
++++ b/tests/functional/graphql/test_search_file_content.py
+@@ -0,0 +1,296 @@
++import pytest
++from unittest.mock import ANY, call, MagicMock
++
++from elasticsearch_dsl.utils import AttrDict
++
++from figcore.api import Group
++from figcore.graphql.utils.elasticsearch.client import elasticsearch_client
++
++from tests.functional.graphql import send_graphql_request
++
++
++es_result_1 = {
++    "aggregations": {
++        "articles_count": {"value": 2},
++        "article": {
++            "doc_count_error_upper_bound": 0,
++            "sum_other_doc_count": 0,
++            "buckets": [
++                {
++                    "key": 3294073,
++                    "doc_count": 62,
++                    "files_count": {"value": 2},
++                    "file": {
++                        "doc_count_error_upper_bound": 0,
++                        "sum_other_doc_count": 0,
++                        "buckets": [
++                            {
++                                "key": 465,
++                                "doc_count": 9,
++                                "page_no": {
++                                    "doc_count_error_upper_bound": 0,
++                                    "sum_other_doc_count": 8,
++                                    "buckets": [{"key": 1, "doc_count": 1}],
++                                },
++                            },
++                            {
++                                "key": 3774400,
++                                "doc_count": 8,
++                                "page_no": {
++                                    "doc_count_error_upper_bound": 0,
++                                    "sum_other_doc_count": 7,
++                                    "buckets": [{"key": 1, "doc_count": 1}],
++                                },
++                            },
++                        ],
++                    },
++                },
++                {
++                    "key": 3275698,
++                    "doc_count": 1,
++                    "files_count": {"value": 1},
++                    "file": {
++                        "doc_count_error_upper_bound": 0,
++                        "sum_other_doc_count": 0,
++                        "buckets": [
++                            {
++                                "key": 3764564,
++                                "doc_count": 1,
++                                "page_no": {
++                                    "doc_count_error_upper_bound": 0,
++                                    "sum_other_doc_count": 0,
++                                    "buckets": [{"key": 1, "doc_count": 1}],
++                                },
++                            }
++                        ],
++                    },
++                },
++            ],
++        },
++    }
++}
++
++es_result_2 = {
++    "total": {"<value": 2, "relation": "eq"},
++    "max_score": 1.0,
++    "hits": [
++        {
++            "_index": "public_item_070319",
++            "_id": "3294073",
++            "_score": 1.0,
++            "_source": AttrDict(
++                {
++                    "id": 3294073,
++                    "version": 1,
++                    "item_type": {"id": 3, "name": "dataset", "icon": "dataset"},
++                    "title": "Untitled Item test",
++                    "url_name": "Untitled_Item_test",
++                    "description": "<p>test</p>",
++                    "group_id": 1,
++                    "institution": {"id": 1, "name": "Monash JOÚRNALS 网络迷踪 在线", "type": "institution"},
++                    "doi": "10.0166/FK2.develop.3302099.v1",
++                    "handle": "",
++                    "tags": ["test"],
++                    "thumb": "https://s3-eu-west-1.amazonaws.com/figshare-dev-previews-eu-west-1/3779085/thumb.png",
++                    "license": {"id": 1, "name": "CC BY 4.0", "url": "https://creativecommons.org/licenses/by/4.0/"},
++                    "custom_fields": [],
++                    "resource": {"id": "", "title": "asdasd", "doi": "10.6084/m9.figshare.1407025dasdasd", "link": ""},
++                    "dates": {
++                        "created": "2023-02-06 09:36:10",
++                        "modified": "2023-02-06 09:36:20",
++                        "revision": "2023-02-06 09:36:20",
++                        "published": "2023-02-06 09:36:10",
++                        "online_publish": "2023-02-06 09:36:10",
++                        "submission": "2023-02-06 09:35:38",
++                    },
++                    "authors": [
++                        {
++                            "user_id": 1014419,
++                            "account_id": 1002365,
++                            "is_active": 1,
++                            "is_public": 1,
++                            "url_name": "ciprian_admin_monash",
++                            "name": "ciprian admin monash",
++                            "orcid_id": "",
++                            "affiliations": ["grid.02"],
++                        }
++                    ],
++                    "owner": {
++                        "user_id": 1014419,
++                        "account_id": 1002365,
++                        "is_active": 1,
++                        "is_public": 1,
++                        "url_name": "ciprian_admin_monash",
++                        "name": "ciprian admin monash",
++                        "orcid_id": "",
++                    },
++                    "categories": [],
++                    "references": [],
++                    "funding": [],
++                    "associated_institutions": [{"id": 1, "string_id": "monash"}],
++                    "entity_type": "item",
++                    "files": [
++                        {"id": 3779083, "name": "pdffile.pdf", "extension": "pdf"},
++                        {"id": 3779084, "name": "ŢĘŠŤヘアない溝.pdf", "extension": "pdf"},
++                        {"id": 3779085, "name": "aŢaĘaŠaŤaヘaアaなaいa溝a.pdf", "extension": "pdf"},
++                    ],
++                    "restrictions": {
++                        "active": 0,
++                        "rules": {
++                            "on_files": 0,
++                            "on_item_admins": 0,
++                            "on_item_from_groups": [],
++                            "on_item_from_institution": 0,
++                            "on_item_from_ip_range": [],
++                        },
++                    },
++                    "categories_nested": [],
++                    "funding_institution_defined": [],
++                    "funding_institution_defined_nested": [],
++                    "content_groups": [{"id": 1, "name": "Monash Group", "is_public": 1, "is_associated": 1}],
++                    "public_content_groups": [{"id": 1, "name": "Monash Group"}],
++                    "public_content_groups_nested": [{"id": 1, "name": "Monash Group"}],
++                    "custom_fields_facets": {"text": {}, "date": {}},
++                    "stats": {"views": 2, "downloads": 1, "cites": 0, "shares": 0, "altmetric": 0.0},
++                }
++            ),
++        },
++        {
++            "_index": "public_item_070319",
++            "_id": "3275698",
++            "_score": 1.0,
++            "_source": AttrDict(
++                {
++                    "id": 3275698,
++                    "version": 1,
++                    "item_type": {"id": 3, "name": "dataset", "icon": "dataset"},
++                    "title": "Untitled Item",
++                    "url_name": "Untitled_Item",
++                    "description": "<p>asdfasdf</p>",
++                    "group_id": 1,
++                    "institution": {"id": 1, "name": "Monash JOÚRNALS 网络迷踪 在线", "type": "institution"},
++                    "doi": "10.0166/FK2.develop.3351699.v1",
++                    "handle": "",
++                    "tags": ["asdfasdfa"],
++                    "thumb": "https://s3-eu-west-1.amazonaws.com/figshare-dev-previews-eu-west-1/3809812/thumb.png",
++                    "license": {"id": 1, "name": "CC BY 4.0", "url": "https://creativecommons.org/licenses/by/4.0/"},
++                    "custom_fields": [],
++                    "resource": {"id": "", "title": "asdf", "doi": "10.6084/m9.figshare.1407024", "link": ""},
++                    "dates": {
++                        "created": "2023-03-08 08:41:14",
++                        "modified": "2023-03-08 08:41:30",
++                        "revision": "2023-03-08 08:41:30",
++                        "published": "2023-03-08 08:41:14",
++                        "online_publish": "2023-03-08 08:41:14",
++                        "submission": "2023-03-08 08:40:52",
++                    },
++                    "authors": [
++                        {
++                            "user_id": 1000012,
++                            "account_id": 1000003,
++                            "is_active": 1,
++                            "is_public": 1,
++                            "url_name": "figshare_admin_monash",
++                            "name": "figshare admin monash",
++                            "orcid_id": "0000-0001-8754-9001",
++                            "affiliations": ["grid.02"],
++                        }
++                    ],
++                    "owner": {
++                        "user_id": 1000012,
++                        "account_id": 1000003,
++                        "is_active": 1,
++                        "is_public": 1,
++                        "url_name": "figshare_admin_monash",
++                        "name": "figshare admin monash",
++                        "orcid_id": "0000-0001-8754-9001",
++                    },
++                    "categories": [],
++                    "references": [],
++                    "funding": [],
++                    "associated_institutions": [{"id": 1, "string_id": "monash"}],
++                    "entity_type": "item",
++                    "files": [{"id": 3809812, "name": "lorem ipsum.pdf", "extension": "pdf"}],
++                    "restrictions": {
++                        "active": 0,
++                        "rules": {
++                            "on_files": 0,
++                            "on_item_admins": 0,
++                            "on_item_from_groups": [],
++                            "on_item_from_institution": 0,
++                            "on_item_from_ip_range": [],
++                        },
++                    },
++                    "categories_nested": [],
++                    "funding_institution_defined": [],
++                    "funding_institution_defined_nested": [],
++                    "content_groups": [{"id": 1, "name": "Monash Group", "is_public": 1, "is_associated": 1}],
++                    "public_content_groups": [{"id": 1, "name": "Monash Group"}],
++                    "public_content_groups_nested": [{"id": 1, "name": "Monash Group"}],
++                    "custom_fields_facets": {"text": {}, "date": {}},
++                }
++            ),
++        },
++    ],
++}
++
++
++@pytest.fixture
++def mock_group_find(patcher):
++    return patcher.object(Group, "find")
++
++
++@pytest.fixture
++def mock_es_search_client(patcher):
++    obj = patcher.object(elasticsearch_client, "execute")
++    obj.side_effect = [es_result_1, es_result_2]
++    return obj
++
++
++def test_search_file_content(testapp, mock_group_find, mock_es_search_client):
++    query = """
++       query {
++        searchFileContent(searchTerm: "test page", institutionId: 1234, groupId: 543, pageSize: 20, cursor: "") {
++              cursor
++              count
++              elements {
++                id
++                title
++                contentType: entityType
++                institution: institutionName
++                definedType: itemType {
++                  id
++                  icon
++                  name
++                }
++                authors {
++                  id: userId
++                  isPublic
++                  isActive
++                  name
++                  url
++                }
++                publishedDate
++                revisionDate
++                submissionDate
++                pubAcceptDate
++                onlinePublishDate
++                pubPublishDate
++                isEmbargoed
++                embargoDate
++                embargoType
++                thumb
++                url
++              }
++           }
++        }
++   """
++
++    response = send_graphql_request(testapp, query)
++    elasticsearch_client.execute.assert_any_call(
++        index="file_content_1234", search=ANY, page_size=0, connection_alias="file-content-es-connection"
++    )
++    elasticsearch_client.execute.assert_called_with(index="public_item", search=ANY, page_size=2)
++
++    assert response.json["data"]["searchFileContent"]["count"] == 2
++    assert len(response.json["data"]["searchFileContent"]["elements"]) == 2

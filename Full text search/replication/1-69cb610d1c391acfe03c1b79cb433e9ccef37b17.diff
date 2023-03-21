@@ -1,0 +1,171 @@
+diff --git a/README.md b/README.md
+index 204565d..a0f0afc 100644
+--- a/README.md
++++ b/README.md
+@@ -124,6 +124,37 @@ Reindex the `author` and `user` tables:
+ python reindex.py author,user
+ ```
+ 
++### template.py
++
++The template script creates new template based on the mappings and settings declared in the [templates](src/replication/templates)
++
++**A full description of the script and all of its arguments can be obtained by running `template.py --help`.**
++
++The most common/useful arguments that can be run with the script are:
++
++* `<templates>` - The template or templates (separated by ',') on which to execute the command.
++* `-R(--replicas) <int>` - Number of replicas for indexes created using the template.
++* `-H(--host) <str>` - Set a host other than the one in config file.
++* `-y(--yes) <str>` - Answer yes to all destructive actions.
++
++Before the call, the environment variable `APP_ENV` should be set (`export APP_ENV="development`").
++
++**_Examples:_**
++
++_All the examples will be run assuming `APP_ENV` has been set and that the `pwd` is `${PROJ_ROOT}/scripts`_
++
++Create template
++
++```shell
++python template.py file_content
++```
++
++Create 2 templates in a remote host with 3 replicas
++
++```shell
++python template.py file_content,sherpa_journals -R 3 -H 192.168.1.168
++```
++
+ ### Useful `make` commands
+ 
+ | command          | description                                                                                           |
+diff --git a/scripts/migrations/02-2023.sh b/scripts/migrations/02-2023.sh
+new file mode 100644
+index 0000000..3e5560a
+--- /dev/null
++++ b/scripts/migrations/02-2023.sh
+@@ -0,0 +1,43 @@
++curl -XPUT ${ES_URL}/_index_template/file_content \
++--header 'Content-Type: application/json' \
++--data-raw '{
++   "index_patterns": "file_content_*_070319",
++   "template": {
++      "mappings": {
++         "dynamic": "strict",
++         "properties": {
++            "article_id": {"type": "integer"},
++            "file_id": {"type": "integer"},
++            "institution_id": {"type": "integer"},
++            "page_no": {"type": "integer"},
++            "content": {
++                "type": "text",
++                "analyzer": "fig_lower"
++            },
++            "group_path": {
++                "type": "text",
++                "analyzer": "fig_path_hierarchy",
++                "search_analyzer": "fig_path_keyword"
++            }
++        }
++      },
++      "settings":{
++         "index":{
++            "analysis":{
++               "analyzer":{
++                  "fig_path_hierarchy": {"tokenizer": "path_hierarchy"},
++                  "fig_path_keyword": {"tokenizer": "keyword"},
++                  "fig_lower":{
++                     "filter":["asciifolding", "lowercase"],
++                     "char_filter":["html_strip"],
++                     "tokenizer": "whitespace"
++                  }
++               }
++            }
++         }
++      }
++   }
++}'
++
++# Aliases will be created using "add_file_content_search_to_institution" script
++# https://github.com/figshare/scripts/blob/master/scripts/standard/add_file_content_search_to_institution.py
+diff --git a/scripts/schema.py b/scripts/schema.py
+index 4d1a6ea..2ea4b22 100755
+--- a/scripts/schema.py
++++ b/scripts/schema.py
+@@ -13,7 +13,7 @@
+ 
+ 
+ def configure_env():
+-    environment = None
++    environment = "development"
+     if "APP_ENV" in os.environ:
+         environment = os.environ["APP_ENV"]
+ 
+diff --git a/scripts/template.py b/scripts/template.py
+index dd4aeee..01b5279 100644
+--- a/scripts/template.py
++++ b/scripts/template.py
+@@ -15,6 +15,8 @@
+     mappings as sherpa_publishers_mappings,
+     settings as sherpa_publishers_settings,
+ )
++from replication.templates import file_content
++
+ 
+ TEMPLATES = {
+     "sherpa_journals": {
+@@ -27,11 +29,16 @@
+         "mappings": sherpa_publishers_mappings,
+         "settings": sherpa_publishers_settings,
+     },
++    "file_content": {
++        "index_patterns": file_content.index_patterns,
++        "mappings": file_content.mappings,
++        "settings": file_content.settings,
++    },
+ }
+ 
+ 
+ def configure_env():
+-    environment = None
++    environment = "development"
+     if "APP_ENV" in os.environ:
+         environment = os.environ["APP_ENV"]
+ 
+diff --git a/src/replication/templates/file_content.py b/src/replication/templates/file_content.py
+new file mode 100644
+index 0000000..79e3f3a
+--- /dev/null
++++ b/src/replication/templates/file_content.py
+@@ -0,0 +1,30 @@
++index_patterns = "file_content_*"
++
++
++mappings = {
++    "dynamic": "strict",
++    "properties": {
++        "article_id": {"type": "integer"},
++        "file_id": {"type": "integer"},
++        "institution_id": {"type": "integer"},
++        "page_no": {"type": "integer"},
++        "content": {"type": "text", "analyzer": "fig_lower"},
++        "group_path": {"type": "text", "analyzer": "fig_path_hierarchy", "search_analyzer": "fig_path_keyword"},
++    },
++}
++
++settings = {
++    "index": {
++        "analysis": {
++            "analyzer": {
++                "fig_path_hierarchy": {"tokenizer": "path_hierarchy"},
++                "fig_path_keyword": {"tokenizer": "keyword"},
++                "fig_lower": {
++                    "filter": ["asciifolding", "lowercase"],
++                    "char_filter": ["html_strip"],
++                    "tokenizer": "whitespace",
++                },
++            },
++        }
++    }
++}
