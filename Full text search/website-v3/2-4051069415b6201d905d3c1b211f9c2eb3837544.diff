@@ -1,0 +1,451 @@
+diff --git a/src/pages/search/index.gql b/src/pages/search/index.gql
+index 551bafa62..b1c074106 100644
+--- a/src/pages/search/index.gql
++++ b/src/pages/search/index.gql
+@@ -13,6 +13,11 @@ query getInitialData {
+       plural
+     }
+   }
++  session {
++    account {
++      institutionId
++    }
++  }
+ }
+ 
+ query getAllAvailableFacets($filters: SearchFiltersInput) {
+diff --git a/src/pages/search/index.jsx b/src/pages/search/index.jsx
+index b38575a86..2054c2ab0 100644
+--- a/src/pages/search/index.jsx
++++ b/src/pages/search/index.jsx
+@@ -32,10 +32,10 @@ export default class Search extends PureComponent {
+     }
+ 
+     const { match } = this.props;
+-    const { domainData } = data;
++    const { domainData, session } = data;
+ 
+     if (match.params?.useVersion === "new") {
+-      return <SearchNew domainData={domainData} />;
++      return <SearchNew domainData={domainData} session={session} />;
+     }
+ 
+     const institutionId = domainData?.institutionId;
+diff --git a/src/pages/search/index.test.jsx b/src/pages/search/index.test.jsx
+index 31f052055..ca3ae3ebb 100644
+--- a/src/pages/search/index.test.jsx
++++ b/src/pages/search/index.test.jsx
+@@ -29,6 +29,8 @@ const domainData = {
+   },
+ };
+ 
++const session = { account: null };
++
+ describe("<SearchPage.Facets />", () => {
+   let mocks = [];
+ 
+@@ -37,7 +39,7 @@ describe("<SearchPage.Facets />", () => {
+   beforeEach(() => {
+     mocks = [{
+       request: { query: getInitialData },
+-      result: { data: { domainData } },
++      result: { data: { domainData, session } },
+     }, {
+       request: {
+         query: getAllAvailableFacets,
+@@ -127,7 +129,7 @@ describe("<SearchPage.Facets />, on institutional domain", () => {
+   beforeEach(() => {
+     mocks = [{
+       request: { query: getInitialData },
+-      result: { data: { domainData: domainDataWithInstitutionId } },
++      result: { data: { domainData: domainDataWithInstitutionId, session } },
+     }, {
+       request: {
+         query: getAllAvailableFacetsAndViewType,
+diff --git a/src/pages/searchNew/components/header/index.jsx b/src/pages/searchNew/components/header/index.jsx
+index 4690477c9..dec36238d 100644
+--- a/src/pages/searchNew/components/header/index.jsx
++++ b/src/pages/searchNew/components/header/index.jsx
+@@ -15,8 +15,17 @@ import style from "./header.css";
+ 
+ 
+ export default class Header extends PureComponent {
+-  static propTypes = { searchInputRef: PropTypes.func }
+-  static defaultProps = { searchInputRef: () => undefined }
++  static propTypes = {
++    domainData: PropTypes.object.isRequired,
++    searchInputRef: PropTypes.func,
++    session: PropTypes.object,
++  }
++
++  static defaultProps = {
++    searchInputRef: () => undefined,
++    session: {},
++  }
++
+   static contextType = Context;
+ 
+   input = null;
+@@ -85,7 +94,7 @@ export default class Header extends PureComponent {
+         {this.renderError(searchQueryError)}
+         <div className={style.underSearchSection}>
+           <div className={style.searchOptions}>
+-            <SearchBy />
++            { this.renderSearchBy() }
+             <div className={style.links}>
+               <Button href={helpUrl} theme="tertiary">
+                 Need help?
+@@ -125,6 +134,17 @@ export default class Header extends PureComponent {
+     );
+   }
+ 
++  renderSearchBy = () => {
++    const { domainData, session } = this.props;
++    const { account } = session || {};
++
++    if (!domainData?.institutionId || !account?.institutionId || domainData?.institutionId !== account?.institutionId) {
++      return null;
++    }
++
++    return <SearchBy />;
++  }
++
+   setInputRef = (node) => {
+     this.props.searchInputRef(node);
+     this.input = node;
+diff --git a/src/pages/searchNew/components/header/index.test.jsx b/src/pages/searchNew/components/header/index.test.jsx
+index 24a709fb9..3bd08f272 100644
+--- a/src/pages/searchNew/components/header/index.test.jsx
++++ b/src/pages/searchNew/components/header/index.test.jsx
+@@ -15,6 +15,7 @@ import {
+   queryErrorMessage,
+ } from "../../constants";
+ 
++import SearchBy from "./searchBy";
+ import Header from "./index";
+ 
+ 
+@@ -26,14 +27,34 @@ const defaultLocation = "/search";
+ 
+ 
+ describe("<SearchHeader />", () => {
+-  let context = {};
++  let baselineContext = {};
++
+   const appContext = {
+     setValue: jest.fn(),
+     getValue: jest.fn(),
+   };
++
+   const variables = getVariablesFromFiltersAndFacets(getDefaultFilters());
++
++  const baselineProps = {
++    domainData: { institutionId: 1 },
++    session: { account: { institutionId: 1 } },
++  };
++
++  function mountHeader({ context, props, location }) {
++    return mount(
++      <AppContext.Provider value={appContext}>
++        <Context.Provider value={context}>
++          <StaticRouter context={ {} } location={location || defaultLocation}>
++            <Header {...baselineProps} {...props} />
++          </StaticRouter>
++        </Context.Provider>
++      </AppContext.Provider>
++    );
++  }
++
+   beforeEach(() => {
+-    context = {
++    baselineContext = {
+       canApply: jest.fn(() => true),
+       canReset: jest.fn(() => true),
+       domainData: { knowledgeUrl: "//knowledge.figshare.com" },
+@@ -60,47 +81,22 @@ describe("<SearchHeader />", () => {
+ 
+   it("renders ErrorMessage", () => {
+     const newContext = {
+-      ...context,
++      ...baselineContext,
+       searchQuery: tooLongQuery,
+       searchQueryError: queryErrorMessage,
+     };
+-    const mounted = mount(
+-      <AppContext.Provider value={appContext}>
+-        <Context.Provider value={newContext}>
+-          <StaticRouter context={ {} } location={defaultLocation}>
+-            <Header />
+-          </StaticRouter>
+-        </Context.Provider>
+-      </AppContext.Provider>
+-    );
++    const mounted = mountHeader({ context: newContext });
+ 
+     expect(mounted.find(ErrorMessage)).toHaveLength(1);
+   });
+ 
+   it("renders clear search button", () => {
+-    let mounted = mount(
+-      <AppContext.Provider value={appContext}>
+-        <Context.Provider value={context}>
+-          <StaticRouter context={ {} } location={defaultLocation}>
+-            <Header />
+-          </StaticRouter>
+-        </Context.Provider>
+-      </AppContext.Provider>
+-    );
++    let mounted = mountHeader({ context: baselineContext });
+ 
+     expect(mounted.find(CloseIcon)).toHaveLength(0);
+ 
+-
+-    context.searchQuery = "test";
+-    mounted = mount(
+-      <AppContext.Provider value={appContext}>
+-        <Context.Provider value={context}>
+-          <StaticRouter context={ {} } location="/search?q=test">
+-            <Header />
+-          </StaticRouter>
+-        </Context.Provider>
+-      </AppContext.Provider>
+-    );
++    baselineContext.searchQuery = "test";
++    mounted = mountHeader({ context: baselineContext, location: "/search?q=test" });
+ 
+     expect(mounted.find(CloseIcon)).toHaveLength(1);
+     mounted.find(Header).instance().focusInput();
+@@ -109,75 +105,71 @@ describe("<SearchHeader />", () => {
+   });
+ 
+   it("triggers onChangeSearchQuery", () => {
+-    const mounted = mount(
+-      <AppContext.Provider value={appContext}>
+-        <Context.Provider value={context}>
+-          <StaticRouter context={ {} } location={defaultLocation}>
+-            <Header />
+-          </StaticRouter>
+-        </Context.Provider>
+-      </AppContext.Provider>
+-    );
++    const mounted = mountHeader({ context: baselineContext });
+ 
+     const instance = mounted.find(Header).instance();
+ 
+     instance.onChange({ target: { value: "test" } });
+-    expect(context.onChangeSearchQuery).toHaveBeenCalledWith({
+-      ...context.filters,
++    expect(baselineContext.onChangeSearchQuery).toHaveBeenCalledWith({
++      ...baselineContext.filters,
+       q: "test",
+     }, undefined);
+   });
+ 
+   it("triggers onClear", () => {
+-    const mounted = mount(
+-      <AppContext.Provider value={appContext}>
+-        <Context.Provider value={context}>
+-          <StaticRouter context={ {} } location={defaultLocation}>
+-            <Header />
+-          </StaticRouter>
+-        </Context.Provider>
+-      </AppContext.Provider>
+-    );
++    const mounted = mountHeader({ context: baselineContext });
+ 
+     const instance = mounted.find(Header).instance();
+ 
+     instance.onClear();
+     jest.runAllTimers();
+-    expect(context.onChangeSearchQuery).toHaveBeenCalledWith({
+-      ...context.filters,
++    expect(baselineContext.onChangeSearchQuery).toHaveBeenCalledWith({
++      ...baselineContext.filters,
+       q: "",
+     }, undefined);
+   });
+ 
+   it("triggers submit on enter", () => {
+-    const mounted = mount(
+-      <AppContext.Provider value={appContext}>
+-        <Context.Provider value={context}>
+-          <StaticRouter context={ {} } location={defaultLocation}>
+-            <Header />
+-          </StaticRouter>
+-        </Context.Provider>
+-      </AppContext.Provider>
+-    );
++    const mounted = mountHeader({ context: baselineContext });
+ 
+     const instance = mounted.find(Header).instance();
+     instance.onKeyPress({ preventDefault: () => null, key: "Enter" });
+-    expect(context.onApplyKeyword).toHaveBeenCalled();
++    expect(baselineContext.onApplyKeyword).toHaveBeenCalled();
+   });
+ 
+   it("does not trigger submit on other key than enter", () => {
+-    const mounted = mount(
+-      <AppContext.Provider value={appContext}>
+-        <Context.Provider value={context}>
+-          <StaticRouter context={ {} } location={defaultLocation}>
+-            <Header />
+-          </StaticRouter>
+-        </Context.Provider>
+-      </AppContext.Provider>
+-    );
++    const mounted = mountHeader({ context: baselineContext });
+ 
+     const instance = mounted.find(Header).instance();
+     instance.onKeyPress({ preventDefault: () => null, key: "E" });
+-    expect(context.onApplyKeyword).not.toHaveBeenCalled();
++    expect(baselineContext.onApplyKeyword).not.toHaveBeenCalled();
++  });
++
++  it("renders SearchBy component when user is logged in to the current institution", () => {
++    const mounted = mountHeader({ context: baselineContext });
++
++    expect(mounted.find(SearchBy)).toHaveLength(1);
++  });
++
++  it("doesn't render SearchBy component when user is not logged in to the current institution", () => {
++    const newProps = {
++      ...baselineProps,
++      session: { account: { institutionId: 2 } },
++    };
++
++    const mounted = mountHeader({ context: baselineContext, props: newProps });
++
++    expect(mounted.find(SearchBy)).toHaveLength(0);
++  });
++
++  it("doesn't render SearchBy component when no user is logged in", () => {
++    const newProps = {
++      ...baselineProps,
++      session: { account: null },
++    };
++
++    const mounted = mountHeader({ context: baselineContext, props: newProps });
++
++    expect(mounted.find(SearchBy)).toHaveLength(0);
+   });
+ });
+diff --git a/src/pages/searchNew/index.jsx b/src/pages/searchNew/index.jsx
+index 2b8fc7b3b..6730688ff 100644
+--- a/src/pages/searchNew/index.jsx
++++ b/src/pages/searchNew/index.jsx
+@@ -10,7 +10,12 @@ import style from "./index.css";
+ 
+ 
+ export default class SearchNew extends PureComponent {
+-  static propTypes = { domainData: PropTypes.object.isRequired }
++  static propTypes = {
++    domainData: PropTypes.object.isRequired,
++    session: PropTypes.object,
++  }
++
++  static defaultProps = { session: {} }
+ 
+   render() {
+     const { domainData: { institutionId } } = this.props;
+@@ -41,7 +46,7 @@ export default class SearchNew extends PureComponent {
+       return null;
+     }
+ 
+-    const { domainData } = this.props;
++    const { domainData, session } = this.props;
+     const { branding: { pageTitle } } = domainData;
+     const {
+       getAvailableFacets: availableFacets,
+@@ -59,6 +64,7 @@ export default class SearchNew extends PureComponent {
+           availableFacets={availableFacets}
+           domainData={domainData}
+           listingViewType={listingViewType}
++          session={session}
+         />
+       </Fragment>
+     );
+diff --git a/src/pages/searchNew/page.jsx b/src/pages/searchNew/page.jsx
+index df05837b3..6d6055024 100644
+--- a/src/pages/searchNew/page.jsx
++++ b/src/pages/searchNew/page.jsx
+@@ -1,6 +1,6 @@
+ import PropTypes from "prop-types";
+ import React, { PureComponent } from "react";
+-import { withRouter } from "react-router";
++import { withRouter, Redirect } from "react-router";
+ import Modal from "@figshare/components/base/modal";
+ import BackToTop from "shared/ui/backToTop";
+ import AppContext from "mainApp/context";
+@@ -33,9 +33,13 @@ export class Search extends PureComponent {
+     history: PropTypes.object.isRequired,
+     location: PropTypes.object.isRequired,
+     listingViewType: PropTypes.string,
++    session: PropTypes.object,
+   }
+ 
+-  static defaultProps = { listingViewType: undefined }
++  static defaultProps = {
++    listingViewType: undefined,
++    session: {},
++  }
+ 
+   static contextType = AppContext;
+ 
+@@ -80,12 +84,24 @@ export class Search extends PureComponent {
+   }
+ 
+   render() {
+-    const { availableFacets, listingViewType } = this.props;
++    const { availableFacets, domainData, listingViewType, session } = this.props;
++    const { searchBy } = this.state;
++    const { account } = session || {};
++
++    if ((!domainData?.institutionId || !account?.institutionId ||
++      domainData?.institutionId !== account?.institutionId) && searchBy === "text") {
++
++      return <Redirect to={ { pathname: "/account/login" } } />;
++    }
+ 
+     return (
+       <Context.Provider value={this.getContext()}>
+         <div className={style.page}>
+-          <Header searchInputRef={this.setSearchInputRef} />
++          <Header
++            domainData={domainData}
++            searchInputRef={this.setSearchInputRef}
++            session={session}
++          />
+           <div className={style.container}>
+             <Sidebar availableFacets={availableFacets} closeButtonRef={this.setCloseSidebarRef} />
+             {this.renderExpandedFacet()}
+diff --git a/src/pages/searchNew/page.test.jsx b/src/pages/searchNew/page.test.jsx
+index 5cc6a9f10..3d5dd1433 100644
+--- a/src/pages/searchNew/page.test.jsx
++++ b/src/pages/searchNew/page.test.jsx
+@@ -1,5 +1,5 @@
+ import React from "react";
+-import { StaticRouter } from "react-router";
++import { Redirect, StaticRouter } from "react-router";
+ import { mount } from "enzyme";
+ import Context from "mainApp/context";
+ 
+@@ -442,4 +442,19 @@ describe("<SearchPage />", () => {
+     result = search.onGetNewOnChangeParameters({}, {}, true);
+     expect(result.newState.facetsLoading).toEqual(false);
+   });
++
++  it("redirects to login page when the user isn't logged in to the current institution and he searches by text", () => {
++    const session = { account: null };
++
++    const mounted = mount(
++      <Context.Provider value={context}>
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=text">
++          <SearchPage availableFacets={availableFacets} domainData={domainData} session={session} />
++        </StaticRouter>
++      </Context.Provider>
++    );
++
++    expect(mounted.find(Redirect)).toHaveLength(1);
++    expect(mounted.find(Redirect).props().to).toMatchObject({ pathname: "/account/login" });
++  });
+ });
