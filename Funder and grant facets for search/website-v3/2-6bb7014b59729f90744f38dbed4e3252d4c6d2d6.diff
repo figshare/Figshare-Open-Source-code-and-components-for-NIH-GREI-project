@@ -1,0 +1,35 @@
+diff --git a/src/pages/searchNew/components/facets/components/optionsList/index.css b/src/pages/searchNew/components/facets/components/optionsList/index.css
+index 470cbb9f1..6454bf508 100644
+--- a/src/pages/searchNew/components/facets/components/optionsList/index.css
++++ b/src/pages/searchNew/components/facets/components/optionsList/index.css
+@@ -73,14 +73,6 @@
+   margin: calc(0.5 * var(--gridSize)) 0;
+ }
+ 
+-.disabled .checkbox {
+-  fill: var(--color-button-secondary-icon_disabled);
+-}
+-
+-.disabled .label {
+-  color: var(--color-typography-disabled);
+-}
+-
+ .count {
+   color: var(--color-typography-disabled);
+   flex-shrink: 0;
+@@ -114,6 +106,16 @@
+   color: var(--color-typography-primary);
+ }
+ 
++.disabled .checkbox,
++.disabled .grantCheckbox {
++  fill: var(--color-button-secondary-icon_disabled);
++}
++
++.disabled .label,
++.disabled .grant {
++  color: var(--color-typography-disabled);
++}
++
+ .grantLabelContainer {
+   display: flex;
