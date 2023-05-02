@@ -1,0 +1,175 @@
+diff --git a/src/pages/searchNew/components/facets/index.jsx b/src/pages/searchNew/components/facets/index.jsx
+index c4e38a272..98fe6f304 100644
+--- a/src/pages/searchNew/components/facets/index.jsx
++++ b/src/pages/searchNew/components/facets/index.jsx
+@@ -24,19 +24,43 @@ export default class Facets extends Component {
+ 
+   facetValues = null;
+ 
++  componentDidMount() {
++    const { searchBy: searchByGlobal } = this.context.variables;
++
++    if (searchByGlobal === "text") {
++      this.queryFacetsByForce = true;
++    }
++  }
++
+   render() {
+-    const { hasAppliedFilters, domainData: { institutionId }, searchBy } = this.context;
++    const {
++      hasAppliedFilters,
++      domainData: { institutionId },
++      searchBy,
++      variables: { searchBy: searchByGlobal },
++    } = this.context;
++
+     const query = institutionId ? institutionalFacetsValues : facetsValues;
+ 
+-    if (!hasAppliedFilters || searchBy === "text") {
+-      return this.renderFacetsValues();
++    /** NOTE: for the current implementation, we want to query facet values only if we are on metadata search
++      (and, as an exception, when the user loads for the first time the page with "file content only" already selected)
++      When switching search types, if "some" facets are already loaded, we do not want to refresh the facet list
++      if we switch to "file content only". Facets do not matter for file content, but we do not want the user to see an
++      empty facets list even if they cannot interact with said list.
++    **/
++
++    if ((searchByGlobal === "text" && this.queryFacetsByForce) ||
++      ((hasAppliedFilters || searchByGlobal !== "text") && searchBy !== "text")) {
++      this.queryFacetsByForce = false;
++
++      return (
++        <Query fetchPolicy="network-only" query={query} variables={ { ...this.variables, pageSize: MAX_VALUES } }>
++          {this.renderWithFacets}
++        </Query>
++      );
+     }
+ 
+-    return (
+-      <Query fetchPolicy="network-only" query={query} variables={ { ...this.variables, pageSize: MAX_VALUES } }>
+-        {this.renderWithFacets}
+-      </Query>
+-    );
++    return this.renderFacetsValues();
+   }
+ 
+   renderWithFacets = ({ data, loading, error, refetch }) => {
+diff --git a/src/pages/searchNew/components/facets/index.test.jsx b/src/pages/searchNew/components/facets/index.test.jsx
+index 82ae8ab74..c53ef6883 100644
+--- a/src/pages/searchNew/components/facets/index.test.jsx
++++ b/src/pages/searchNew/components/facets/index.test.jsx
+@@ -341,6 +341,24 @@ describe("<SearchPage.Facets />", () => {
+     expect(typeof instance.onRetry).toEqual("function");
+   });
+ 
++  it("sets queryFacetsByForce true when component is mount and searchBy is text", async() => {
++    context.variables.searchBy = "text";
++
++    const mounted = mount(
++      <MockedProvider mocks={mocks}>
++        <Context.Provider value={context}>
++          <Facets availableFacets={availableFacets} />
++        </Context.Provider>
++      </MockedProvider>
++    );
++
++    await mocks[0].response();
++    mounted.update();
++
++    const instance = mounted.find(Facets).instance();
++    expect(instance.queryFacetsByForce).toEqual(true);
++  });
++
+   it("triggers onLoad", async() => {
+     context.facetsLoading = true;
+     context.onFacetsLoaded = jest.fn();
+diff --git a/src/pages/searchNew/components/header/searchBy/index.jsx b/src/pages/searchNew/components/header/searchBy/index.jsx
+index 56ed52b91..16c5e2372 100644
+--- a/src/pages/searchNew/components/header/searchBy/index.jsx
++++ b/src/pages/searchNew/components/header/searchBy/index.jsx
+@@ -61,12 +61,12 @@ export default class SearchBy extends Component {
+   }
+ 
+   onChangeSearchBy = (event) => {
+-    const { filters, onChangeSearchBy } = this.context;
++    const { facets, filters, onChangeSearchBy } = this.context;
+     const newFilters = {
+       ...filters,
+       searchBy: event.target.value,
+     };
+ 
+-    onChangeSearchBy(newFilters);
++    onChangeSearchBy(newFilters, facets);
+   }
+ }
+diff --git a/src/pages/searchNew/components/header/searchBy/index.test.jsx b/src/pages/searchNew/components/header/searchBy/index.test.jsx
+index 8c9ddfda4..e2104dc51 100644
+--- a/src/pages/searchNew/components/header/searchBy/index.test.jsx
++++ b/src/pages/searchNew/components/header/searchBy/index.test.jsx
+@@ -9,6 +9,7 @@ import { activeFeature } from "./index.gql";
+ 
+ 
+ const context = {
++  facets: {},
+   filters: [],
+   searchBy: "metadata",
+   onChangeSearchBy: jest.fn(),
+@@ -94,6 +95,9 @@ describe("<SearchBy />", () => {
+     tested.update();
+ 
+     tested.find(SearchBy).instance().onChangeSearchBy({ target: { value: "metadata" } });
+-    expect(context.onChangeSearchBy).toHaveBeenCalledWith({ searchBy: "metadata" });
++    expect(context.onChangeSearchBy).toHaveBeenCalledWith({ searchBy: "metadata" }, context.facets);
++
++    tested.find(SearchBy).instance().onChangeSearchBy({ target: { value: "text" } });
++    expect(context.onChangeSearchBy).toHaveBeenCalledWith({ searchBy: "text" }, context.facets);
+   });
+ });
+diff --git a/src/pages/searchNew/page.jsx b/src/pages/searchNew/page.jsx
+index 6d6055024..de22b1ef1 100644
+--- a/src/pages/searchNew/page.jsx
++++ b/src/pages/searchNew/page.jsx
+@@ -144,12 +144,11 @@ export class Search extends PureComponent {
+     });
+   }
+ 
+-  onChangeSearchBy = (newFilters) => {
+-    const filters = { ...newFilters };
++  onChangeSearchBy = (newFilters, newFacets) => {
+     const { searchBy } = newFilters;
+ 
+     this.setState({ searchBy });
+-    this.onChange(filters);
++    this.onChange(newFilters, newFacets);
+   }
+ 
+   onChangeSearchQuery = (newFilters, newFacets) => {
+diff --git a/src/pages/searchNew/page.test.jsx b/src/pages/searchNew/page.test.jsx
+index 3d5dd1433..cf3ef8f5e 100644
+--- a/src/pages/searchNew/page.test.jsx
++++ b/src/pages/searchNew/page.test.jsx
+@@ -157,6 +157,24 @@ describe("<SearchPage />", () => {
+     expect(Object.keys(search.state.facets)).toHaveLength(0);
+   });
+ 
++  it("correctly applies searchBy", () => {
++    const mounted = mount(
++      <Context.Provider value={context}>
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
++          <SearchPage availableFacets={availableFacets} domainData={domainData} />
++        </StaticRouter>
++      </Context.Provider>
++    );
++
++    const search = mounted.find(Search).instance();
++    const onChange = jest.spyOn(search, "onChange");
++
++    search.onChangeSearchBy({ searchBy: "text" });
++    expect(search.state.filters).toEqual({ searchBy: "text" });
++    expect(search.state.searchBy).toEqual("text");
++    expect(onChange).toHaveBeenCalledWith({ "searchBy": "text" }, undefined);
++  });
++
+   it("correctly applies searchQuery", () => {
+     const mounted = mount(
+       <Context.Provider value={context}>

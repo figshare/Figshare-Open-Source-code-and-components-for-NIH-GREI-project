@@ -1,0 +1,15 @@
+diff --git a/figshare/graphql/v2_resolvers/es_search/advanced_search.py b/figshare/graphql/v2_resolvers/es_search/advanced_search.py
+index bb0c880f2..ccffd2010 100644
+--- a/figshare/graphql/v2_resolvers/es_search/advanced_search.py
++++ b/figshare/graphql/v2_resolvers/es_search/advanced_search.py
+@@ -94,8 +94,8 @@ def get_facets(
+     search = search.query(Q("bool", must=es_query, filter=es_filters))
+     search = get_search_aggs_facets(nested_query, search, facets)
+ 
+-    result = elasticsearch_client.execute(index=index, search=search, page_size=1)
+-    results_facets = facets_mapping(nested_query, result["aggregations"]) if len(result["hits"]) else None
++    result = elasticsearch_client.execute(index=index, search=search, page_size=0)
++    results_facets = facets_mapping(nested_query, result["aggregations"]) if result["total"] else None
+ 
+     return results_facets
+ 

@@ -1,0 +1,115 @@
+diff --git a/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.css b/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.css
+index 0c85f4f26..fb8aaca40 100644
+--- a/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.css
++++ b/src/pages/searchNew/components/facets/components/dates/components/dateTypeSelector/toggle.css
+@@ -56,6 +56,6 @@
+   justify-content: center;
+   align-items: center;
+ 
+-  margin-right: calc(2 * var(--gridSize));
++  margin-right: calc(4 * var(--gridSize));
+   flex-shrink: 0;
+ }
+diff --git a/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.css b/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.css
+index 764c2b61c..4b7e6862a 100644
+--- a/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.css
++++ b/src/pages/searchNew/components/facets/components/dates/components/dateValueSelector/index.css
+@@ -47,7 +47,7 @@
+ }
+ 
+ .rangeStart {
+-  margin-right: calc(5 * var(--gridSize));
++  margin-right: calc(3 * var(--gridSize));
+ }
+ 
+ @media (max-width: 320px) {
+diff --git a/src/pages/searchNew/components/facets/components/optionsList/index.jsx b/src/pages/searchNew/components/facets/components/optionsList/index.jsx
+index ff700e6e7..e8eef3b96 100644
+--- a/src/pages/searchNew/components/facets/components/optionsList/index.jsx
++++ b/src/pages/searchNew/components/facets/components/optionsList/index.jsx
+@@ -186,9 +186,9 @@ export default class FacetOptions extends Component {
+       return;
+     }
+ 
+-    const newFacets = { ...facets };
++    const newFacets = JSON.parse(JSON.stringify(facets));
+ 
+-    if (!newFacets?.[facet]) {
++    if (!facetValues) {
+       newFacets[facet] = [];
+     }
+ 
+diff --git a/src/pages/searchNew/components/listing/index.jsx b/src/pages/searchNew/components/listing/index.jsx
+index 0e36a53be..b30280175 100644
+--- a/src/pages/searchNew/components/listing/index.jsx
++++ b/src/pages/searchNew/components/listing/index.jsx
+@@ -11,7 +11,7 @@ import FollowButton from "shared/apps/follow";
+ import getIn from "utils/getIn";
+ 
+ import Context from "../../context";
+-import { INVALID_OPERATORS_ERROR, INVALID_SYNTAX_ERROR } from "../../constants";
++import { INVALID_OPERATORS_ERROR, INVALID_ADVANCED_SEARCH_ERRORS } from "../../constants";
+ 
+ import { advancedSearch, searchFileContent } from "./index.gql";
+ import style from "./listing.css";
+@@ -255,10 +255,12 @@ export class SearchItemsListing extends Component {
+ 
+     if (getErrorClass(error, INVALID_OPERATORS_ERROR)) {
+       errorContent = "The query has more than 10 logical operators: \"OR\".";
+-    } else if (getErrorClass(error, INVALID_SYNTAX_ERROR)) {
++    } else if (INVALID_ADVANCED_SEARCH_ERRORS.includes(getErrorClass(error))) {
++      const errMessage = error.graphQLErrors?.[0]?.message || "Incorrect syntax";
++
+       errorContent = (
+         <Fragment>
+-          Incorrect syntax, please check the{" "}
++          {`${errMessage}. Please check the `}
+           <GenericButton
+             href="https://help.figshare.com/article/how-to-find-and-reuse-data-on-figshare"
+             target="_blank"
+diff --git a/src/pages/searchNew/components/listing/index.test.jsx b/src/pages/searchNew/components/listing/index.test.jsx
+index cea17f550..afaa57b62 100644
+--- a/src/pages/searchNew/components/listing/index.test.jsx
++++ b/src/pages/searchNew/components/listing/index.test.jsx
+@@ -1,4 +1,5 @@
+ import React from "react";
++import { GraphQLError } from "graphql";
+ import ListingComponent from "shared/ui/listing";
+ import Logo from "@figshare/icons/figshare/logo";
+ import { act } from "react-dom/test-utils";
+@@ -189,7 +190,34 @@ describe("<SearchPageListing />", () => {
+     mounted.update();
+ 
+     expect(mounted.find(ListingComponent)).toHaveLength(0);
+-    expect(mounted.find(".error").text()).toEqual("Incorrect syntax, please check the help guide.");
++    expect(mounted.find(".error").text()).toEqual("Incorrect syntax. Please check the help guide.");
++    expect(mounted.find(GenericButton).at(0).props().href).toEqual(
++      "https://help.figshare.com/article/how-to-find-and-reuse-data-on-figshare"
++    );
++
++    const dateErrMsg = "Invalid date format ISO 8601 format is needed";
++    const dateErr = new GraphQLError(dateErrMsg);
++    dateErr.errorClass = "InvalidQueryDateFormat";
++
++    errMocks[0].result = { errors: [dateErr] };
++
++    mounted = mount(
++      <Context.Provider value={context}>
++        <StaticRouter context={ {} } location="/search/new">
++          <MockedProvider mocks={errMocks}>
++            <CookieContextProvider>
++              <Listing {...props} />
++            </CookieContextProvider>
++          </MockedProvider>
++        </StaticRouter>
++      </Context.Provider>
++    );
++
++    await errMocks[0].response();
++    mounted.update();
++
++    expect(mounted.find(ListingComponent)).toHaveLength(0);
++    expect(mounted.find(".error").text()).toEqual(`${dateErrMsg}. Please check the help guide.`);
+     expect(mounted.find(GenericButton).at(0).props().href).toEqual(
+       "https://help.figshare.com/article/how-to-find-and-reuse-data-on-figshare"
+     );

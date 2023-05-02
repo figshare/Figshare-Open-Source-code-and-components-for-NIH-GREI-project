@@ -1,0 +1,119 @@
+diff --git a/src/pages/searchNew/components/header/header.css b/src/pages/searchNew/components/header/header.css
+index 46ba4a50e..d973f1bc3 100644
+--- a/src/pages/searchNew/components/header/header.css
++++ b/src/pages/searchNew/components/header/header.css
+@@ -117,7 +117,7 @@
+ 
+   width: 100%;
+ 
+-  @media (max-width: 690px) {
++  @media (max-width: 910px) {
+     flex-direction: column;
+     align-items: unset;
+   }
+@@ -131,14 +131,10 @@
+ 
+   margin-left: auto;
+ 
+-  @media (max-width: 690px) {
+-    margin: var(--gridSize) 0;
+-  }
++  @media (max-width: 910px) {
++    justify-content: flex-start;
+ 
+-  @media (max-width: 360px) {
+-    flex-direction: column;
+-    align-items: flex-end;
+-    gap: unset;
++    margin: var(--gridSize) 0;
+   }
+ }
+ 
+diff --git a/src/pages/searchNew/components/header/searchBy/index.jsx b/src/pages/searchNew/components/header/searchBy/index.jsx
+index 85a753aef..2033d9bf5 100644
+--- a/src/pages/searchNew/components/header/searchBy/index.jsx
++++ b/src/pages/searchNew/components/header/searchBy/index.jsx
+@@ -34,28 +34,32 @@ export default class SearchBy extends Component {
+     return (
+       <div className={style.searchBy}>
+         <span>Search by:</span>
+-        <input
+-          checked={searchBy === "metadata"}
+-          id="search-by-metadata-only"
+-          name="search-by"
+-          type="radio"
+-          value="metadata"
+-          onChange={this.onChangeSearchBy}
+-        />
+-        <label className={style.label} htmlFor="search-by-metadata-only">
+-          metadata only
+-        </label>
+-        <input
+-          checked={searchBy === "text"}
+-          id="search-by-text-only"
+-          name="search-by"
+-          type="radio"
+-          value="text"
+-          onChange={this.onChangeSearchBy}
+-        />
+-        <label className={style.label} htmlFor="search-by-text-only">
+-          file content only (.pdf)
+-        </label>
++        <div className={style.searchElement}>
++          <input
++            checked={searchBy === "metadata"}
++            id="search-by-metadata-only"
++            name="search-by"
++            type="radio"
++            value="metadata"
++            onChange={this.onChangeSearchBy}
++          />
++          <label className={style.label} htmlFor="search-by-metadata-only">
++            metadata only
++          </label>
++        </div>
++        <div className={style.searchElement}>
++          <input
++            checked={searchBy === "text"}
++            id="search-by-text-only"
++            name="search-by"
++            type="radio"
++            value="text"
++            onChange={this.onChangeSearchBy}
++          />
++          <label className={style.label} htmlFor="search-by-text-only">
++            file content only (.pdf)
++          </label>
++        </div>
+       </div>
+     );
+   }
+diff --git a/src/pages/searchNew/components/header/searchBy/searchBy.css b/src/pages/searchNew/components/header/searchBy/searchBy.css
+index e54a214a5..bd4e7af9d 100644
+--- a/src/pages/searchNew/components/header/searchBy/searchBy.css
++++ b/src/pages/searchNew/components/header/searchBy/searchBy.css
+@@ -4,15 +4,22 @@
+   align-items: center;
+   gap: var(--gridSize);
+ 
+-  @media (max-width: 360px) {
++  @media (max-width: 500px) {
+     flex-wrap: wrap;
+   }
+ }
+ 
++.searchElement {
++  display: flex;
++  align-items: center;
++  gap: var(--gridSize);
++  flex-wrap: nowrap;
++}
++
+ .searchBy > span {
+   margin-right: var(--gridSize);
+ 
+-  @media (max-width: 360px) {
++  @media (max-width: 500px) {
+     width: 100%;
+   }
+ }

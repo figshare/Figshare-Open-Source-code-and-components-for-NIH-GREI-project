@@ -1,0 +1,100 @@
+diff --git a/figshare/graphql/v2_resolvers/new_search.py b/figshare/graphql/v2_resolvers/new_search.py
+index ed0de43a8..999184f22 100644
+--- a/figshare/graphql/v2_resolvers/new_search.py
++++ b/figshare/graphql/v2_resolvers/new_search.py
+@@ -168,11 +168,12 @@ def search_file_content(
+     search = Search()
+     if group_id:
+         group = Group.find(group_id)
+-        search = search.query(
+-            Q("bool", must=Q("match", content=search_term), filter=Q("term", group_path={"value": group.path}))
+-        )
+-    else:
++        query = Q("match", content=search_term) if search_term else Q("match_all")
++        search = search.query(Q("bool", must=query, filter=Q("term", group_path={"value": group.path})))
++    elif search_term:
+         search = search.query("match", content=search_term)
++    else:
++        search = search.query("match_all")
+ 
+     offset = decrypt_search_after_token(cursor) if cursor else 0
+     search.aggs.metric("articles_count", "cardinality", field="article_id")
+diff --git a/tests/functional/graphql/test_search_file_content.py b/tests/functional/graphql/test_search_file_content.py
+index 22e2f8825..00f6d3ad5 100644
+--- a/tests/functional/graphql/test_search_file_content.py
++++ b/tests/functional/graphql/test_search_file_content.py
+@@ -348,3 +348,74 @@ def test_search_file_content_account_logged_in(testapp, mock_group_find, mock_es
+     response = send_graphql_request(testapp, query)
+     errors = response.json.get("errors", [])
+     assert len(errors) == 0
++
++
++def test_search_file_content_all_with_group(testapp, mock_group_find, mock_es_search_client, account, login):
++    query = """
++       query {
++        searchFileContent(searchTerm: "", institutionId: 1234, groupId: 543, pageSize: 20, cursor: "") {
++              cursor
++              count
++           }
++        }
++   """
++
++    expected_search_call = {
++        "query": {
++            "bool": {
++                "must": [{"match_all": {}}],
++                "filter": [{"term": {"group_path": {"value": Group.find().path}}}],
++            }
++        },
++        "aggs": {
++            "articles_count": {"cardinality": {"field": "article_id"}},
++            "article": {
++                "terms": {"field": "article_id", "size": 20},
++                "aggs": {
++                    "sorting": {"bucket_sort": {"size": 20, "sort": [{"_count": "desc", "_key": "asc"}], "from": 0}},
++                    "file": {
++                        "terms": {"field": "file_id", "size": 20},
++                        "aggs": {"page_no": {"terms": {"field": "page_no", "size": 1}}},
++                    },
++                    "files_count": {"cardinality": {"field": "file_id"}},
++                },
++            },
++        },
++    }
++    login(account)
++    account.institution_id = 1234
++    send_graphql_request(testapp, query)
++    assert expected_search_call == elasticsearch_client.execute.call_args_list[0].kwargs["search"].to_dict()
++
++
++def test_search_file_content_all_without_group(testapp, mock_group_find, mock_es_search_client, account, login):
++    query = """
++       query {
++        searchFileContent(searchTerm: "", institutionId: 1234, groupId: 0, pageSize: 20, cursor: "") {
++              cursor
++              count
++           }
++        }
++   """
++
++    expected_search_call = {
++        "query": {"match_all": {}},
++        "aggs": {
++            "articles_count": {"cardinality": {"field": "article_id"}},
++            "article": {
++                "terms": {"field": "article_id", "size": 20},
++                "aggs": {
++                    "sorting": {"bucket_sort": {"size": 20, "sort": [{"_count": "desc", "_key": "asc"}], "from": 0}},
++                    "file": {
++                        "terms": {"field": "file_id", "size": 20},
++                        "aggs": {"page_no": {"terms": {"field": "page_no", "size": 1}}},
++                    },
++                    "files_count": {"cardinality": {"field": "file_id"}},
++                },
++            },
++        },
++    }
++    login(account)
++    account.institution_id = 1234
++    send_graphql_request(testapp, query)
++    assert expected_search_call == elasticsearch_client.execute.call_args_list[0].kwargs["search"].to_dict()

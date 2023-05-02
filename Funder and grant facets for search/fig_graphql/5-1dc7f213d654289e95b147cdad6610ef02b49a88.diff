@@ -1,0 +1,120 @@
+diff --git a/figshare/graphql/v2_resolvers/es_search/sort_options.py b/figshare/graphql/v2_resolvers/es_search/sort_options.py
+index 7dbd98b40f..93d9054852 100644
+--- a/figshare/graphql/v2_resolvers/es_search/sort_options.py
++++ b/figshare/graphql/v2_resolvers/es_search/sort_options.py
+@@ -120,7 +120,13 @@ def _get_config_flags(page, institution_id, group_id):
+ 
+ 
+ def get_sort_options(
+-    obj, info, page: str, institution_id: int = None, group_id: int = None, collection_private_token: str = ""
++    obj,
++    info,
++    page: str,
++    sort: dict = {},
++    institution_id: int = None,
++    group_id: int = None,
++    collection_private_token: str = "",
+ ) -> [dict]:
+     configuration_options = _get_config_flags(page, institution_id, group_id)
+ 
+@@ -150,6 +156,12 @@ def get_sort_options(
+         selected = configuration_options["institution_pages_config"][page]["selected"]
+         sort_options["selected"] = {"by": DB_TO_ES_DATES_MAPPING[selected["by"]], "type": selected.get("type")}
+ 
++    if sort.get("by") and sort.get("type"):
++        for element in sort_options["elements"]:
++            if sort["by"] in element["value"]:
++                sort_options["selected"].update(sort)
++                break
++
+     sort_options_labels = [item.get("value") for item in sort_options.get("elements")]
+     is_sort_option_available = sort_options.get("selected", {}).get("by") in sort_options_labels
+ 
+diff --git a/figshare/graphql/v2_resolvers/es_search/utils.py b/figshare/graphql/v2_resolvers/es_search/utils.py
+index 168416f1d5..cae44063e5 100644
+--- a/figshare/graphql/v2_resolvers/es_search/utils.py
++++ b/figshare/graphql/v2_resolvers/es_search/utils.py
+@@ -103,8 +103,14 @@ def get_sort_filters(sort, scope):
+             sort = relevance
+         # TODO(@teodoragrosu): Add default sort for group / collection / project / category search pages
+     else:
+-        if SORT_CRITERIA_MAPPING.get(sort["by"]):
+-            sort["by"] = SORT_CRITERIA_MAPPING[sort["by"]]
++        sort_by = sort["by"]
++        sort_type = sort["type"]
++        if SORT_CRITERIA_MAPPING.get(sort_by):
++            sort = [
++                {"by": SORT_CRITERIA_MAPPING[sort_by], "type": sort_type, "missing": "_last"},
++                {"by": "dates.published", "type": "desc"},
++                {"by": "id", "type": "asc"},
++            ]
+         else:
+             sort = relevance
+ 
+diff --git a/figshare/graphql/v2_schema/queries.py b/figshare/graphql/v2_schema/queries.py
+index 2e847c8dce..d85465d526 100644
+--- a/figshare/graphql/v2_schema/queries.py
++++ b/figshare/graphql/v2_schema/queries.py
+@@ -649,6 +649,7 @@ def get_sort_options(cls):
+         return {
+             "params": [
+                 {"name": "page", "type": "String", "mandatory": True},
++                {"name": "sort", "type": "Order", "mandatory": False},
+                 {"name": "institution_id", "type": "Int", "mandatory": False},
+                 {"name": "group_id", "type": "Int", "mandatory": False},
+                 {"name": "collection_private_token", "type": "String", "mandatory": False},
+diff --git a/tests/functional/graphql/advanced_search/test_public_search.py b/tests/functional/graphql/advanced_search/test_public_search.py
+index 7f01b4af5e..03c3483d8f 100644
+--- a/tests/functional/graphql/advanced_search/test_public_search.py
++++ b/tests/functional/graphql/advanced_search/test_public_search.py
+@@ -1065,8 +1065,24 @@ def test_search_advanced_default_sort_option(testapp, mock_es_search_client):
+ @pytest.mark.parametrize(
+     "sort_by,sort_type,expected",
+     [
+-        ("citations", "desc", {"by": "stats.cites", "type": "desc"}),
+-        ("online_publish_date", "", {"by": "dates.online_publish", "type": ""}),
++        (
++            "citations",
++            "desc",
++            [
++                {"by": "stats.cites", "type": "desc", "missing": "_last"},
++                {"by": "dates.published", "type": "desc"},
++                {"by": "id", "type": "asc"},
++            ],
++        ),
++        (
++            "online_publish_date",
++            "",
++            [
++                {"by": "dates.online_publish", "type": "", "missing": "_last"},
++                {"by": "dates.published", "type": "desc"},
++                {"by": "id", "type": "asc"},
++            ],
++        ),
+         ("relevant", "", [{"by": "_score", "type": "desc"}, {"by": "dates.published", "type": "desc"}]),
+         ("", "", [{"by": "_score", "type": "desc"}, {"by": "dates.published", "type": "desc"}]),
+         ("not_an_actual_option", "", [{"by": "_score", "type": "desc"}, {"by": "dates.published", "type": "desc"}]),
+diff --git a/tests/functional/graphql/advanced_search/test_sort_order.py b/tests/functional/graphql/advanced_search/test_sort_order.py
+index 4ed7e60a33..18bd12c420 100644
+--- a/tests/functional/graphql/advanced_search/test_sort_order.py
++++ b/tests/functional/graphql/advanced_search/test_sort_order.py
+@@ -671,3 +671,19 @@ def test_sort_by_options_return_default_for_empty_string_page_param(testapp):
+     }
+ 
+     assert sort_order == expected_sort_order
++
++
++def test_sort_by_options_returns_criteria_selected_by_the_user_if_allowed(testapp):
++    response = send_graphql_request(
++        testapp, QUERY_STRING.format(variables=f'page: "search", sort: {{by: "online_publish_date", type: "asc"}}')
++    )
++    sort_order = response.json["data"]["getSortOptions"]
++
++    assert sort_order["selected"] == {"by": "online_publish_date", "type": "asc"}
++
++    response = send_graphql_request(
++        testapp, QUERY_STRING.format(variables=f'page: "search", sort: {{by: "wrong_date", type: "asc"}}')
++    )
++    sort_order = response.json["data"]["getSortOptions"]
++
++    assert sort_order["selected"] == {"by": "relevant", "type": "desc"}

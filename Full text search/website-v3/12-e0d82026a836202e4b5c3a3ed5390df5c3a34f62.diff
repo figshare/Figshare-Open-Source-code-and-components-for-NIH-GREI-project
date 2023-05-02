@@ -1,0 +1,221 @@
+diff --git a/src/pages/searchNew/components/listing/index.jsx b/src/pages/searchNew/components/listing/index.jsx
+index f83ad01cb..cb1f7dd82 100644
+--- a/src/pages/searchNew/components/listing/index.jsx
++++ b/src/pages/searchNew/components/listing/index.jsx
+@@ -8,6 +8,7 @@ import getErrorClass from "utils/apollo/getErrorClass";
+ import { withCookieJar } from "utils/cookie/context";
+ import AppContext from "mainApp/context";
+ import FollowButton from "shared/apps/follow";
++import { setGlobalMetadataHighlights } from "shared/ui/highlights/utils";
+ import getIn from "utils/getIn";
+ 
+ import Context from "../../context";
+@@ -320,7 +321,7 @@ export class SearchItemsListing extends Component {
+     const isFullTextSearch = variables.searchBy === "text";
+     const items = isFullTextSearch ? getIn(data, "search.elements", []) : getIn(data, "search.results.elements", []);
+ 
+-    let highlights = null;
++    let highlights = [];
+ 
+     if (isFullTextSearch) {
+       highlights = items.map((item) => {
+@@ -330,12 +331,8 @@ export class SearchItemsListing extends Component {
+           value: { files: item.fileData ?? [], item: item.id },
+         };
+       });
+-    } else {
+-      highlights = items.length ? [
+-        {
+-          type: "metadata-highlights",
+-          value: { items: items.map((item) => item.id) ?? [], q: variables.q },
+-        }] : [];
++    } else if (items.length) {
++      highlights = setGlobalMetadataHighlights(items, variables.q);
+     }
+ 
+     document.dispatchEvent(
+diff --git a/src/shared/ui/highlights/utils.js b/src/shared/ui/highlights/utils.js
+index ca7b8f5de..0b438491a 100644
+--- a/src/shared/ui/highlights/utils.js
++++ b/src/shared/ui/highlights/utils.js
+@@ -42,9 +42,18 @@ export const markTextWithHighlights = (text, highlights, itemId = 0) => {
+   }
+ 
+   if (highlights[0]?.value?.items?.includes(itemId) && (isOnSearchPage() || isComingFromSearchPage())) {
+-    draft = highlights[0].value.q ? draft?.replace(new RegExp(`${highlights[0].value.q}`, "ig"),
++    draft = highlights[0].value.q[0] ? draft?.replace(new RegExp(`\\b(${highlights[0].value.q.join("|")})`, "ig"),
+       (v) => `<span data-text-highlight=true>${v}</span>`) : draft;
+   }
+ 
+   return draft;
+ };
++
++export const setGlobalMetadataHighlights = (items, q) => {
++  const isQuoted = (q[0] === "'" && q[q.length - 1] === "'") || (q[0] === "\"" && q[q.length - 1] === "\"");
++
++  return [{
++    type: "metadata-highlights",
++    value: { items: items.map((item) => item.id) ?? [], q: isQuoted ? [q.slice(1, -1)] : [q].concat(q.split(" ")) },
++  }];
++};
+diff --git a/src/shared/ui/highlights/utils.test.js b/src/shared/ui/highlights/utils.test.js
+index 14223b312..d10eb7feb 100644
+--- a/src/shared/ui/highlights/utils.test.js
++++ b/src/shared/ui/highlights/utils.test.js
+@@ -1,4 +1,9 @@
+-import { isPartOfItemHighlight, getHighlightsCount, markTextWithHighlights } from "./utils";
++import {
++  isPartOfItemHighlight,
++  getHighlightsCount,
++  markTextWithHighlights,
++  setGlobalMetadataHighlights,
++} from "./utils";
+ 
+ 
+ const itemId = 1;
+@@ -12,6 +17,8 @@ let highlights = [{
+   },
+ }];
+ const text = "Lorem ipsum dolor sit amet";
++const items = [{ id: 1 }];
++
+ 
+ describe("isPartOfItemHighlight", () => {
+   beforeEach(() => {
+@@ -89,7 +96,7 @@ describe("markTextWithHighlights", () => {
+       type: "metadata-highlights",
+       value: {
+         items: [2, 3, 4],
+-        q: "lorem ipsum",
++        q: ["lorem ipsum"],
+       },
+     }];
+ 
+@@ -103,7 +110,7 @@ describe("markTextWithHighlights", () => {
+       type: "metadata-highlights",
+       value: {
+         items: [],
+-        q: "lorem ipsum",
++        q: ["lorem ipsum"],
+       },
+     }];
+ 
+@@ -117,7 +124,7 @@ describe("markTextWithHighlights", () => {
+       type: "metadata-highlights",
+       value: {
+         items: [1],
+-        q: "",
++        q: [""],
+       },
+     }];
+ 
+@@ -131,7 +138,7 @@ describe("markTextWithHighlights", () => {
+       type: "metadata-highlights",
+       value: {
+         items: [1],
+-        q: "abcd",
++        q: ["abcd"],
+       },
+     }];
+ 
+@@ -145,7 +152,7 @@ describe("markTextWithHighlights", () => {
+       type: "metadata-highlights",
+       value: {
+         items: [1],
+-        q: "lorem ipsum",
++        q: ["lorem ipsum"],
+       },
+     }];
+ 
+@@ -162,7 +169,7 @@ describe("markTextWithHighlights", () => {
+       type: "metadata-highlights",
+       value: {
+         items: [1],
+-        q: "lorem ipsum",
++        q: ["lorem ipsum"],
+       },
+     }];
+ 
+@@ -171,6 +178,42 @@ describe("markTextWithHighlights", () => {
+     expect(response).toEqual("<span data-text-highlight=true>Lorem ipsum</span> dolor sit amet");
+   });
+ 
++  it("should highlight multiple strings", () => {
++    delete window.location;
++    window.location = { pathname: "/search/new" };
++
++    highlights = [{
++      type: "metadata-highlights",
++      value: {
++        items: [1],
++        q: ["lorem ipsum", "lorem", "ipsum", "amet"],
++      },
++    }];
++
++    const response = markTextWithHighlights(text, highlights, itemId);
++
++    expect(response).toEqual(
++      "<span data-text-highlight=true>Lorem ipsum</span> dolor sit <span data-text-highlight=true>amet</span>"
++    );
++  });
++
++  it("should highlight only the strings starting with the search term", () => {
++    delete window.location;
++    window.location = { pathname: "/search/new" };
++
++    highlights = [{
++      type: "metadata-highlights",
++      value: {
++        items: [1],
++        q: ["lore psum", "lore", "psum"],
++      },
++    }];
++
++    const response = markTextWithHighlights(text, highlights, itemId);
++
++    expect(response).toEqual("<span data-text-highlight=true>Lore</span>m ipsum dolor sit amet");
++  });
++
+   it("should return initial text if the user is not coming from search page", () => {
+     jest.spyOn(window?.document, "referrer", "get").mockReturnValue("http://custom.figshare.test/test");
+ 
+@@ -178,7 +221,7 @@ describe("markTextWithHighlights", () => {
+       type: "metadata-highlights",
+       value: {
+         items: [1],
+-        q: "lorem ipsum",
++        q: ["lorem ipsum"],
+       },
+     }];
+ 
+@@ -186,4 +229,30 @@ describe("markTextWithHighlights", () => {
+ 
+     expect(response).toEqual("Lorem ipsum dolor sit amet");
+   });
++
++  describe("setGlobalMetadataHighlights", () => {
++    beforeEach(() => {
++      jest.spyOn(window?.document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
++    });
++
++    it("should set correct metadata highlights when the search term is quoted", () => {
++      const quotedSearchTerm = "'Lorem ipsum'";
++      const response = setGlobalMetadataHighlights(items, quotedSearchTerm);
++
++      expect(response).toEqual([{
++        type: "metadata-highlights",
++        value: { items: items.map((item) => item.id) ?? [], q: ["Lorem ipsum"] },
++      }]);
++    });
++
++    it("should set correct metadata highlights when the search term is not quoted", () => {
++      const searchTerm = "Lorem ipsum";
++      const response = setGlobalMetadataHighlights(items, searchTerm);
++
++      expect(response).toEqual([{
++        type: "metadata-highlights",
++        value: { items: items.map((item) => item.id) ?? [], q: ["Lorem ipsum", "Lorem", "ipsum"] },
++      }]);
++    });
++  });
+ });

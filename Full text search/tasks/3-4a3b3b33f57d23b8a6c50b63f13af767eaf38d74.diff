@@ -1,0 +1,63 @@
+diff --git a/src/figtasks/config/config.json b/src/figtasks/config/config.json
+index d8ffae95f..1583a4465 100644
+--- a/src/figtasks/config/config.json
++++ b/src/figtasks/config/config.json
+@@ -144,6 +144,7 @@
+   "search": {
+     "es_server": "ETCD:/tasks_subsystem/search/es_server",
+     "new_search": "ETCD:/tasks_subsystem/search/new_search",
++    "file_content": "ETCD:/tasks_subsystem/search/file_content",
+     "batch_limit": "ETCD:/tasks_subsystem/search/batch_limit",
+     "engine": {
+       "url": "ETCD:/tasks_subsystem/search/engine/url"
+diff --git a/src/figtasks/tasks/article/base.py b/src/figtasks/tasks/article/base.py
+index ab870ccab..3d076df13 100644
+--- a/src/figtasks/tasks/article/base.py
++++ b/src/figtasks/tasks/article/base.py
+@@ -80,9 +80,9 @@ def run(self, article_id):
+             afile.runtask_make_public()
+ 
+             if fc_ocr_flag and file_content_ocr_search:
+-                FileContentExtractorTask.queue(afile.id)
+-            elif fc_flag and file_content_search:
+                 FileContentOCRExtractorTask.queue(afile.id)
++            elif fc_flag and file_content_search:
++                FileContentExtractorTask.queue(afile.id)
+ 
+ 
+ @ArticleVersionPublishFilesTask.register_task
+diff --git a/src/figtasks/tasks/file/search.py b/src/figtasks/tasks/file/search.py
+index ea3a11a2e..e4613b20d 100644
+--- a/src/figtasks/tasks/file/search.py
++++ b/src/figtasks/tasks/file/search.py
+@@ -91,7 +91,7 @@ def upsert_file_content_document(file_obj, pages):
+             data.append(json.dumps(page_data))
+ 
+         if data:
+-            es_url = f"{tasks_config.get('search', {}).get('new_search')}/_bulk"
++            es_url = f"{tasks_config.get('search', {}).get('file_content')}/_bulk"
+             headers = {"Content-Type": "application/x-ndjson"}
+             str_data = "\n".join(data) + "\n"
+             make_http_request(es_url, "POST", headers=headers, data=str_data)
+diff --git a/tests/tasks/article/test_article_publish_files.py b/tests/tasks/article/test_article_publish_files.py
+index 47aa16a21..a0fecdfbe 100644
+--- a/tests/tasks/article/test_article_publish_files.py
++++ b/tests/tasks/article/test_article_publish_files.py
+@@ -32,7 +32,7 @@ def mocked_ocr_fc_queue(mocker):
+ def test_file_content_called(mocker, mocked_article_find, mocked_feature_flag, mocked_fc_queue, mocked_ocr_fc_queue):
+     file_obj = mocker.Mock()
+     Article.find.return_value.get_files_to_publish.return_value = [file_obj]
+-    mocked_feature_flag.check_flag.side_effect = [False, True]
++    mocked_feature_flag.check_flag.side_effect = [True, False]
+ 
+     ArticlePublishFilesTaskImplementation().run(1234)
+ 
+@@ -46,7 +46,7 @@ def test_ocr_file_content_called(
+ ):
+     file_obj = mocker.Mock()
+     Article.find.return_value.get_files_to_publish.return_value = [file_obj]
+-    mocked_feature_flag.check_flag.side_effect = [True, False]
++    mocked_feature_flag.check_flag.side_effect = [False, True]
+ 
+     ArticlePublishFilesTaskImplementation().run(1234)
+ 

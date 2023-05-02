@@ -1,0 +1,53 @@
+diff --git a/src/figtasks/tasks/file/search.py b/src/figtasks/tasks/file/search.py
+index e4613b20d..d1dac9707 100644
+--- a/src/figtasks/tasks/file/search.py
++++ b/src/figtasks/tasks/file/search.py
+@@ -140,13 +140,6 @@ class FileContentOCRExtractor(BaseFileExtractor, FileContentOCRExtractorTask):
+     OCR_COMMAND = "mutool draw -o{tmp_dir}/{file_id}_page_%d.png {pdf_path}"
+ 
+     def extract_file_content(self, file_obj, tmp_dir, pdf_path):
+-        reader = PyPDF2.PdfFileReader(pdf_path)
+-        for page in reader.pages:
+-            if page.images:
+-                break
+-            else:  # all pages show if there is an image inside PDF
+-                return self.extract_text(file_obj, tmp_dir, pdf_path)
+-
+         pages = []
+         command = self.OCR_COMMAND.format(tmp_dir=tmp_dir, file_id=file_obj.id, pdf_path=pdf_path)
+         CommandRunner.run(command)
+diff --git a/tests/tasks/file/test_search.py b/tests/tasks/file/test_search.py
+index f2c8a3623..6a9ea04f5 100644
+--- a/tests/tasks/file/test_search.py
++++ b/tests/tasks/file/test_search.py
+@@ -180,8 +180,30 @@ def test_run(
+     expected_data = "\n".join([json.dumps(d) for d in data]) + "\n"
+     assert expected_data == mocked_request.Request.call_args[1]["data"].decode()
+ 
++    data = [
++        {"index": {"_index": "file_content_987", "_id": "12345_0"}},
++        {
++            "article_id": 444,
++            "file_id": 12345,
++            "institution_id": 987,
++            "group_path": "/453/76465",
++            "content": "this is a page",
++            "page_no": 0,
++        },
++        {"index": {"_index": "file_content_987", "_id": "12345_1"}},
++        {
++            "article_id": 444,
++            "file_id": 12345,
++            "institution_id": 987,
++            "group_path": "/453/76465",
++            "content": "this is a page",
++            "page_no": 1,
++        },
++    ]
++
+     return_value = FileContentOCRExtractor().run(12345)
+     assert return_value is True
++    expected_data = "\n".join([json.dumps(d) for d in data]) + "\n"
+     assert expected_data == mocked_request.Request.call_args[1]["data"].decode()
+ 
+     db_query.first.return_value = None

@@ -1,0 +1,295 @@
+diff --git a/figshare/graphql/v2_resolvers/es_search/advanced_search.py b/figshare/graphql/v2_resolvers/es_search/advanced_search.py
+index 397234499b..ca121e8313 100644
+--- a/figshare/graphql/v2_resolvers/es_search/advanced_search.py
++++ b/figshare/graphql/v2_resolvers/es_search/advanced_search.py
+@@ -102,7 +102,9 @@ def get_facets(
+ 
+ def get_available_facets(obj, info, institution_id: int = 0):
+     available_facets = get_institution_available_facets(institution_id)
+-    return [camelcase(facet) for facet in available_facets]
++    return [
++        {"id": camelcase(facet["id"]), "label": facet["label"], "type": facet["type"]} for facet in available_facets
++    ]
+ 
+ 
+ def search_in_facet(
+diff --git a/figshare/graphql/v2_resolvers/es_search/query_parser/static.py b/figshare/graphql/v2_resolvers/es_search/query_parser/static.py
+index 313eaebf81..68d6ab16e4 100644
+--- a/figshare/graphql/v2_resolvers/es_search/query_parser/static.py
++++ b/figshare/graphql/v2_resolvers/es_search/query_parser/static.py
+@@ -49,6 +49,7 @@ class IdentifierType(Enum):
+         "type": IdentifierType.BASE,
+         "on_portal": {"institutional": True, "non-institutional": True},
+         "has_nested_alias": False,
++        "label": "Item Type",
+     },
+     "content_types": {
+         "index_field": "entity_type",
+@@ -57,6 +58,7 @@ class IdentifierType(Enum):
+         "type": IdentifierType.BASE,
+         "on_portal": {"institutional": True, "non-institutional": True},
+         "has_nested_alias": False,
++        "label": "Content Type",
+     },
+     "licenses": {
+         "index_field": "license.id",
+@@ -65,6 +67,7 @@ class IdentifierType(Enum):
+         "type": IdentifierType.BASE,
+         "on_portal": {"institutional": True, "non-institutional": True},
+         "has_nested_alias": False,
++        "label": "Licence",
+     },
+     "categories": {
+         "index_field": "categories.id",
+@@ -73,6 +76,7 @@ class IdentifierType(Enum):
+         "type": IdentifierType.BASE,
+         "on_portal": {"institutional": True, "non-institutional": True},
+         "has_nested_alias": True,
++        "label": "Category",
+     },
+     "sources": {
+         "index_field": "institution.type",
+@@ -81,6 +85,7 @@ class IdentifierType(Enum):
+         "type": IdentifierType.BASE,
+         "on_portal": {"institutional": False, "non-institutional": True},
+         "has_nested_alias": False,
++        "label": "Source",
+     },
+     "groups": {
+         "index_field": "public_content_groups.id",
+@@ -89,6 +94,7 @@ class IdentifierType(Enum):
+         "type": IdentifierType.BASE,
+         "on_portal": {"institutional": True, "non-institutional": False},
+         "has_nested_alias": True,
++        "label": "Group",
+     },
+     "funders": {
+         "index_field": "funding_institution_defined.grid_id",
+@@ -97,6 +103,7 @@ class IdentifierType(Enum):
+         "type": IdentifierType.BASE,
+         "on_portal": {"institutional": True, "non-institutional": True},
+         "has_nested_alias": True,
++        "label": "Funder",
+     },
+     "grants": {
+         "index_field": "funding_institution_defined.id",
+@@ -105,26 +112,31 @@ class IdentifierType(Enum):
+         "type": IdentifierType.BASE,
+         "on_portal": {"institutional": True, "non-institutional": True},
+         "has_nested_alias": True,
++        "label": "Grant Title",
+     },
+     "online_publish_date": {
+         "index_field": "dates.online_publish",
+         "type": IdentifierType.DATE,
+         "on_portal": {"institutional": True, "non-institutional": True},
++        "label": "First Online Date",
+     },
+     "pub_publish_date": {
+         "index_field": "dates.pub_publish",
+         "type": IdentifierType.DATE,
+         "on_portal": {"institutional": True, "non-institutional": True},
++        "label": "Publication Date",
+     },
+     "pub_accept_date": {
+         "index_field": "dates.pub_accept",
+         "type": IdentifierType.DATE,
+         "on_portal": {"institutional": True, "non-institutional": True},
++        "label": "Acceptance Date",
+     },
+     "published_date": {
+         "index_field": "dates.published",
+         "type": IdentifierType.DATE,
+         "on_portal": {"institutional": True, "non-institutional": True},
++        "label": "Posted Date",
+     },
+ }
+ 
+diff --git a/figshare/graphql/v2_resolvers/es_search/utils.py b/figshare/graphql/v2_resolvers/es_search/utils.py
+index f459da853d..020400c7aa 100644
+--- a/figshare/graphql/v2_resolvers/es_search/utils.py
++++ b/figshare/graphql/v2_resolvers/es_search/utils.py
+@@ -32,8 +32,13 @@ def validate_account(account, scope):
+ def validate_facets(aggs_facets, filters={}, searchable=False):
+     institution_id = filters.get("institution_id", 0)
+     available_facets = get_institution_available_facets(institution_id, searchable)
++    available_facets = [facet["id"] for facet in available_facets]
++    aggregations_facets = [
++        key if not key.startswith("custom_fields_") else settings["params"]["id"]
++        for key, settings in aggs_facets.items()
++    ]
+ 
+-    diff = aggs_facets.keys() - available_facets
++    diff = set(aggregations_facets) - set(available_facets)
+     if diff:
+         raise FacetsNotAvailable(",".join(diff))
+ 
+@@ -42,12 +47,24 @@ def get_institution_available_facets(institution_id, searchable=False):
+     portal_type = "institutional" if institution_id != 0 else "non-institutional"
+     if searchable:
+         available_facets = [
+-            facet
++            {
++                "id": facet,
++                "label": specs["label"],
++                "type": "text",
++            }
+             for facet, specs in FACETS_MAPPING.items()
+             if specs["on_portal"][portal_type] and specs["type"] == IdentifierType.BASE
+         ]
+     else:
+-        available_facets = [facet for facet, specs in FACETS_MAPPING.items() if specs["on_portal"][portal_type]]
++        available_facets = [
++            {
++                "id": facet,
++                "label": specs["label"],
++                "type": "date" if specs["type"] == IdentifierType.DATE else "text",
++            }
++            for facet, specs in FACETS_MAPPING.items()
++            if specs["on_portal"][portal_type]
++        ]
+ 
+     return available_facets
+ 
+diff --git a/figshare/graphql/v2_schema/queries.py b/figshare/graphql/v2_schema/queries.py
+index 0d41726326..9fdf653eab 100644
+--- a/figshare/graphql/v2_schema/queries.py
++++ b/figshare/graphql/v2_schema/queries.py
+@@ -623,7 +623,7 @@ def get_available_facets(cls):
+             "params": [
+                 {"name": "institution_id", "type": "Int", "mandatory": False},
+             ],
+-            "type": ["String"],
++            "type": ["AdvancedSearchAvailableFacet"],
+             "resolver": advanced_search_resolver.get_available_facets,
+         }
+ 
+diff --git a/figshare/graphql/v2_schema/types/__init__.py b/figshare/graphql/v2_schema/types/__init__.py
+index 3eeee1be7c..9723328bd8 100644
+--- a/figshare/graphql/v2_schema/types/__init__.py
++++ b/figshare/graphql/v2_schema/types/__init__.py
+@@ -5,6 +5,7 @@
+ from figshare.graphql.v2_schema.types.account_permissions import AccountPermissions
+ from figshare.graphql.v2_schema.types.account_roles import AccountRoles
+ from figshare.graphql.v2_schema.types.advanced_search import AdvancedSearch
++from figshare.graphql.v2_schema.types.advanced_search_available_facet import AdvancedSearchAvailableFacet
+ from figshare.graphql.v2_schema.types.advanced_search_entity import AdvancedSearchEntity
+ from figshare.graphql.v2_schema.types.advanced_search_entity_author import AdvancedSearchEntityAuthor
+ from figshare.graphql.v2_schema.types.advanced_search_entity_item_type import AdvancedSearchEntityItemType
+@@ -94,6 +95,7 @@
+     AccountPermissions,
+     AccountRoles,
+     AdvancedSearch,
++    AdvancedSearchAvailableFacet,
+     AdvancedSearchEntity,
+     AdvancedSearchEntityAuthor,
+     AdvancedSearchEntityItemType,
+diff --git a/figshare/graphql/v2_schema/types/advanced_search_available_facet.py b/figshare/graphql/v2_schema/types/advanced_search_available_facet.py
+new file mode 100644
+index 0000000000..602d297e54
+--- /dev/null
++++ b/figshare/graphql/v2_schema/types/advanced_search_available_facet.py
+@@ -0,0 +1,15 @@
++from figcore.graphql.internals import GqlType
++
++
++class AdvancedSearchAvailableFacet(GqlType):
++    @classmethod
++    def id(cls):
++        return {"type": "String"}
++
++    @classmethod
++    def label(cls):
++        return {"type": "String"}
++
++    @classmethod
++    def type(cls):
++        return {"type": "String"}
+diff --git a/tests/functional/graphql/advanced_search/test_public_search.py b/tests/functional/graphql/advanced_search/test_public_search.py
+index 1bf847e268..8c2e8b201e 100644
+--- a/tests/functional/graphql/advanced_search/test_public_search.py
++++ b/tests/functional/graphql/advanced_search/test_public_search.py
+@@ -943,24 +943,28 @@ def test_get_institutional_available_facets(testapp, mock_es_search_client):
+     query = """
+        query {
+          getAvailableFacets(
+-             institutionId: 0,
+-         )
++             institutionId: 1,
++         ) {
++            id
++            label
++            type
++         }
+        }
+    """
+ 
+     response = send_graphql_request(testapp, query)
+     assert response.json["data"]["getAvailableFacets"] == [
+-        "itemTypes",
+-        "contentTypes",
+-        "licenses",
+-        "categories",
+-        "sources",
+-        "funders",
+-        "grants",
+-        "onlinePublishDate",
+-        "pubPublishDate",
+-        "pubAcceptDate",
+-        "publishedDate",
++        {"id": "itemTypes", "label": "Item Type", "type": "text"},
++        {"id": "contentTypes", "label": "Content Type", "type": "text"},
++        {"id": "licenses", "label": "Licence", "type": "text"},
++        {"id": "categories", "label": "Category", "type": "text"},
++        {"id": "groups", "label": "Group", "type": "text"},
++        {"id": "funders", "label": "Funder", "type": "text"},
++        {"id": "grants", "label": "Grant Title", "type": "text"},
++        {"id": "onlinePublishDate", "label": "First Online Date", "type": "date"},
++        {"id": "pubPublishDate", "label": "Publication Date", "type": "date"},
++        {"id": "pubAcceptDate", "label": "Acceptance Date", "type": "date"},
++        {"id": "publishedDate", "label": "Posted Date", "type": "date"},
+     ]
+ 
+ 
+@@ -968,24 +972,28 @@ def test_get_noninstitutional_available_facets(testapp, mock_es_search_client):
+     query = """
+        query {
+          getAvailableFacets(
+-             institutionId: 1,
+-         )
++             institutionId: 0,
++         ) {
++            id
++            label
++            type
++         }
+        }
+    """
+ 
+     response = send_graphql_request(testapp, query)
+     assert response.json["data"]["getAvailableFacets"] == [
+-        "itemTypes",
+-        "contentTypes",
+-        "licenses",
+-        "categories",
+-        "groups",
+-        "funders",
+-        "grants",
+-        "onlinePublishDate",
+-        "pubPublishDate",
+-        "pubAcceptDate",
+-        "publishedDate",
++        {"id": "itemTypes", "label": "Item Type", "type": "text"},
++        {"id": "contentTypes", "label": "Content Type", "type": "text"},
++        {"id": "licenses", "label": "Licence", "type": "text"},
++        {"id": "categories", "label": "Category", "type": "text"},
++        {"id": "sources", "label": "Source", "type": "text"},
++        {"id": "funders", "label": "Funder", "type": "text"},
++        {"id": "grants", "label": "Grant Title", "type": "text"},
++        {"id": "onlinePublishDate", "label": "First Online Date", "type": "date"},
++        {"id": "pubPublishDate", "label": "Publication Date", "type": "date"},
++        {"id": "pubAcceptDate", "label": "Acceptance Date", "type": "date"},
++        {"id": "publishedDate", "label": "Posted Date", "type": "date"},
+     ]
+ 
+ 

@@ -1,0 +1,53 @@
+diff --git a/figshare/graphql/v2_resolvers/es_search/utils.py b/figshare/graphql/v2_resolvers/es_search/utils.py
+index 1b0fe6a5b..f459da853 100644
+--- a/figshare/graphql/v2_resolvers/es_search/utils.py
++++ b/figshare/graphql/v2_resolvers/es_search/utils.py
+@@ -424,9 +424,6 @@ def facets_mapping(aggs_facets, aggregations):
+         if facet_type == IdentifierType.BASE:
+             has_more = aggregations[facet]["_aggs"]["sum_other_doc_count"] != 0
+             results_facets[facet] = map_base_facet(facet, aggs_facets, buckets, has_more)
+-            results_facets[facet]["elements"] = sorted(
+-                results_facets[facet]["elements"], key=lambda x: (-x["count"], x["name"])
+-            )
+         else:
+             results_facets[facet] = map_date_facet(buckets)
+ 
+@@ -453,6 +450,8 @@ def map_base_facet_with_search(facet, aggregations, page_size, old_cursor):
+         }
+         for bucket in buckets
+     ]
++    elements = sorted(elements, key=lambda x: (-x["count"], x["name"]))
++
+     return {"elements": elements, "cursor": new_cursor}
+ 
+ 
+@@ -470,6 +469,7 @@ def map_base_facet(facet, aggs_fields, buckets, has_more):
+         }
+         for bucket in buckets
+     ]
++    elements = sorted(elements, key=lambda x: (-x["count"], x["name"]))
+ 
+     return {"elements": elements, "cursor": new_cursor}
+ 
+diff --git a/tests/functional/graphql/advanced_search/data.py b/tests/functional/graphql/advanced_search/data.py
+index 04745cb55..d502271d9 100644
+--- a/tests/functional/graphql/advanced_search/data.py
++++ b/tests/functional/graphql/advanced_search/data.py
+@@ -83,7 +83,7 @@ def generate_date_aggregation():
+                     "buckets": [
+                         {
+                             "key": "15",
+-                            "doc_count": "40",
++                            "doc_count": 40,
+                             "_hits": {
+                                 "hits": {
+                                     "hits": [
+@@ -111,7 +111,7 @@ def generate_date_aggregation():
+                 "buckets": [
+                     {
+                         "key": "5",
+-                        "doc_count": "14",
++                        "doc_count": 14,
+                         "_hits": {
+                             "hits": {
+                                 "hits": [

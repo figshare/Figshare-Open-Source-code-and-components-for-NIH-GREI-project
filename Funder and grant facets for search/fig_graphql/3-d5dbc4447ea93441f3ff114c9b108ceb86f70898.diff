@@ -1,0 +1,15 @@
+diff --git a/figshare/graphql/v2_resolvers/es_search/advanced_search.py b/figshare/graphql/v2_resolvers/es_search/advanced_search.py
+index ba298f9db9..bb0c880f26 100644
+--- a/figshare/graphql/v2_resolvers/es_search/advanced_search.py
++++ b/figshare/graphql/v2_resolvers/es_search/advanced_search.py
+@@ -52,6 +52,10 @@ def search(
+ 
+     search = Search()
+     search = search.query(Q("bool", must=es_query, filter=es_filters))
++    # since collections and projects are fewer than items
++    # their score will be higher on a simple search like :description: test
++    # A boost on public_item index is needed
++    search.update_from_dict({"indices_boost": [{"public_item": 1.2}]})
+ 
+     sort = get_sort_filters(sort, scope)
+     result = elasticsearch_client.execute(index=index, search=search, page_size=page_size, cursor=cursor, sort=sort)

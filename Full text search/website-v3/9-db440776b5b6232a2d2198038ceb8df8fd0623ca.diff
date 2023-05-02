@@ -1,0 +1,13 @@
+diff --git a/src/shared/ui/highlights/nodeWithHighlights.jsx b/src/shared/ui/highlights/nodeWithHighlights.jsx
+index 626689f88..85ae126df 100644
+--- a/src/shared/ui/highlights/nodeWithHighlights.jsx
++++ b/src/shared/ui/highlights/nodeWithHighlights.jsx
+@@ -9,7 +9,7 @@ export function NodeWithHighlights({ itemId, tag, text, ...restProps }) {
+   const highlightsContextValue = useContext(HighlightContext);
+   const htmlText = useMemo(() =>
+     markTextWithHighlights(text, highlightsContextValue.highlights, itemId)
+-  , [itemId, highlightsContextValue.highlights]);
++  , [text, itemId, highlightsContextValue.highlights]);
+ 
+   const Tag = tag;
+ 

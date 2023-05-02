@@ -1,0 +1,179 @@
+diff --git a/src/pages/searchNew/components/header/index.jsx b/src/pages/searchNew/components/header/index.jsx
+index dec36238d..58e3768bf 100644
+--- a/src/pages/searchNew/components/header/index.jsx
++++ b/src/pages/searchNew/components/header/index.jsx
+@@ -45,13 +45,18 @@ export default class Header extends PureComponent {
+   renderWithAppContext = (context) => {
+     this.appContext = context;
+ 
+-    const { variables: { q, filters, facets }, domainData, searchQuery, searchQueryError } = this.context;
++    const {
++      variables: { q, filters, facets, searchBy: searchByGlobal },
++      domainData,
++      searchQuery,
++      searchQueryError,
++    } = this.context;
+     const oldFilters = { ...filters, institutionId: domainData.institutionId };
+ 
+     // old follow filters shape for backwards compatibility
+     const followData = {
+       type: "search",
+-      disabled: !(q || getQueryFromFiltersAndFacets(oldFilters, facets).length),
++      disabled: !(q || getQueryFromFiltersAndFacets(oldFilters, facets).length) || searchByGlobal === "text",
+       filters: {
+         searchTerm: q,
+         filters: {
+diff --git a/src/pages/searchNew/components/header/index.test.jsx b/src/pages/searchNew/components/header/index.test.jsx
+index 3bd08f272..a92c3e7d9 100644
+--- a/src/pages/searchNew/components/header/index.test.jsx
++++ b/src/pages/searchNew/components/header/index.test.jsx
+@@ -4,6 +4,7 @@ import { mount } from "enzyme";
+ import CloseIcon from "@figshare/icons/cancel/medium";
+ import AppContext from "mainApp/context";
+ import ErrorMessage from "@figshare/components/ui/errorMessage";
++import FollowButton from "shared/apps/follow";
+ 
+ import Context from "../../context";
+ import {
+@@ -172,4 +173,28 @@ describe("<SearchHeader />", () => {
+ 
+     expect(mounted.find(SearchBy)).toHaveLength(0);
+   });
++
++  it("renders FollowButton with disabled false when searchBy is metadata", () => {
++    const newContext = {
++      ...baselineContext,
++      variables: { q: "test", searchBy: "metadata" },
++    };
++
++    const mounted = mountHeader({ context: newContext, props: baselineProps });
++
++    expect(mounted.find(FollowButton)).toHaveLength(1);
++    expect(mounted.find(FollowButton).props().disabled).toEqual(false);
++  });
++
++  it("renders FollowButton as disabled when searchBy is text", () => {
++    const newContext = {
++      ...baselineContext,
++      variables: { q: "test", searchBy: "text" },
++    };
++
++    const mounted = mountHeader({ context: newContext, props: baselineProps });
++
++    expect(mounted.find(FollowButton)).toHaveLength(1);
++    expect(mounted.find(FollowButton).props().disabled).toEqual(true);
++  });
+ });
+diff --git a/src/pages/searchNew/components/listing/index.jsx b/src/pages/searchNew/components/listing/index.jsx
+index dab7dcfe9..f83ad01cb 100644
+--- a/src/pages/searchNew/components/listing/index.jsx
++++ b/src/pages/searchNew/components/listing/index.jsx
+@@ -114,6 +114,7 @@ export class SearchItemsListing extends Component {
+     // old follow filters shape for backwards compatibility
+     const followData = {
+       type: "search",
++      disabled: searchByGlobal === "text",
+       filters: {
+         searchTerm: q,
+         filters: {
+diff --git a/src/pages/searchNew/components/listing/index.test.jsx b/src/pages/searchNew/components/listing/index.test.jsx
+index afaa57b62..34f97969c 100644
+--- a/src/pages/searchNew/components/listing/index.test.jsx
++++ b/src/pages/searchNew/components/listing/index.test.jsx
+@@ -1,3 +1,4 @@
++/* eslint-disable max-lines */
+ import React from "react";
+ import { GraphQLError } from "graphql";
+ import ListingComponent from "shared/ui/listing";
+@@ -14,7 +15,7 @@ import Context from "../../context";
+ import { getDefaultFilters, getVariablesFromFiltersAndFacets } from "../../queryString";
+ import { INVALID_OPERATORS_ERROR, INVALID_SYNTAX_ERROR } from "../../constants";
+ 
+-import { advancedSearch } from "./index.gql";
++import { advancedSearch, searchFileContent } from "./index.gql";
+ import testItems, { loadMoreItems } from "./testItems";
+ import Listing, { SearchItemsListing as UnconnectedListing } from "./index";
+ 
+@@ -102,6 +103,24 @@ describe("<SearchPageListing />", () => {
+           },
+         },
+       },
++    }, {
++      request: {
++        query: searchFileContent,
++        variables: {
++          q: "",
++          institutionId: 1,
++          pageSize: ITEMS_PER_PAGE,
++        },
++      },
++      result: {
++        data: {
++          search: {
++            count: 0,
++            cursor: null,
++            elements: [],
++          },
++        },
++      },
+     }];
+   });
+ 
+@@ -435,6 +454,57 @@ describe("<SearchPageListing />", () => {
+     expect(mounted.find(".noContent").text()).toEqual(expected);
+   });
+ 
++  it("renders FollowButton with disabled false when searchBy is metadata", async() => {
++    mocks[0].result.data.search = {
++      results: {
++        count: 0,
++        cursor: null,
++        elements: [],
++      },
++      suggestions: [],
++    };
++
++    const mounted = mount(
++      <Context.Provider value={context}>
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
++          <MockedProvider mocks={mocks}>
++            <CookieContextProvider>
++              <Listing {...props} />
++            </CookieContextProvider>
++          </MockedProvider>
++        </StaticRouter>
++      </Context.Provider>
++    );
++
++    await mocks[0].response();
++    mounted.update();
++
++    expect(mounted.find(FollowButton)).toHaveLength(1);
++    expect(mounted.find(FollowButton).props().disabled).toEqual(false);
++  });
++
++  it("renders FollowButton as disabled when searchBy is text", async() => {
++    context.variables.searchBy = "text";
++
++    const mounted = mount(
++      <Context.Provider value={context}>
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=text">
++          <MockedProvider mocks={mocks}>
++            <CookieContextProvider>
++              <Listing {...props} />
++            </CookieContextProvider>
++          </MockedProvider>
++        </StaticRouter>
++      </Context.Provider>
++    );
++
++    await mocks[2].response();
++    mounted.update();
++
++    expect(mounted.find(FollowButton)).toHaveLength(1);
++    expect(mounted.find(FollowButton).props().disabled).toEqual(true);
++  });
++
+   it("triggers onLoad", () => {
+     context.resultsLoading = true;
+     context.onResultsLoaded = jest.fn();

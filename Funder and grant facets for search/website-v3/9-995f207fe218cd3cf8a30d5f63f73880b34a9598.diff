@@ -1,0 +1,75 @@
+diff --git a/src/pages/searchNew/components/facets/index.jsx b/src/pages/searchNew/components/facets/index.jsx
+index b0041f6b0..d864ce126 100644
+--- a/src/pages/searchNew/components/facets/index.jsx
++++ b/src/pages/searchNew/components/facets/index.jsx
+@@ -23,6 +23,7 @@ export default class Facets extends Component {
+   static contextType = Context;
+ 
+   facetValues = null;
++  isFirstLoad = true;
+ 
+   componentDidMount() {
+     const { searchBy: searchByGlobal } = this.context.variables;
+@@ -64,19 +65,19 @@ export default class Facets extends Component {
+   }
+ 
+   renderWithFacets = ({ data, loading, error, refetch }) => {
+-    const { facetsLoading, resultsLoading } = this.context;
+-
+     this.onFacetsLoaded(loading);
+ 
++    if (this.isFirstLoad && loading) {
++      return this.renderLoading();
++    }
++
+     if (error) {
+       this.onRetry = () => refetch();
+ 
+       return this.renderError(error);
+     }
+ 
+-    if (loading && (facetsLoading || resultsLoading)) {
+-      return this.renderLoading();
+-    }
++    this.isFirstLoad = false;
+ 
+     const facets = data?.getFacets;
+ 
+diff --git a/src/pages/searchNew/components/facets/index.test.jsx b/src/pages/searchNew/components/facets/index.test.jsx
+index caa01fdc2..0f9021f3e 100644
+--- a/src/pages/searchNew/components/facets/index.test.jsx
++++ b/src/pages/searchNew/components/facets/index.test.jsx
+@@ -261,31 +261,9 @@ describe("<SearchPage.Facets />", () => {
+   });
+ 
+   it("renders initial loading", () => {
+-    let localContext = {
+-      ...context,
+-      facetsLoading: false,
+-      resultsLoading: true,
+-    };
+-
+-    let mounted = mount(
+-      <MockedProvider mocks={mocks}>
+-        <Context.Provider value={localContext}>
+-          <Facets availableFacets={availableFacets} />
+-        </Context.Provider>
+-      </MockedProvider>
+-    );
+-
+-    expect(mounted.find(FigshareLoader)).toHaveLength(1);
+-
+-    localContext = {
+-      ...context,
+-      facetsLoading: true,
+-      resultsLoading: true,
+-    };
+-
+-    mounted = mount(
++    const mounted = mount(
+       <MockedProvider mocks={mocks}>
+-        <Context.Provider value={localContext}>
++        <Context.Provider value={context}>
+           <Facets availableFacets={availableFacets} />
+         </Context.Provider>
+       </MockedProvider>

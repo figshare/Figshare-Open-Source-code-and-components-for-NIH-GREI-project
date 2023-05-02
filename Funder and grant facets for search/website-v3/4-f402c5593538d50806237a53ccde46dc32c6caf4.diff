@@ -1,0 +1,189 @@
+diff --git a/src/pages/searchNew/components/facets/components/expandedFacet/components/listing/index.jsx b/src/pages/searchNew/components/facets/components/expandedFacet/components/listing/index.jsx
+index 0397dcc2c..b51ada97e 100644
+--- a/src/pages/searchNew/components/facets/components/expandedFacet/components/listing/index.jsx
++++ b/src/pages/searchNew/components/facets/components/expandedFacet/components/listing/index.jsx
+@@ -32,7 +32,7 @@ export default class FacetsListing extends Component {
+       domainData,
+       variables: vars,
+       facets,
+-      filters: { q, searchBy, sortBy, sortType, ...restFilters },
++      filters: { date, q, searchBy, sortBy, sortType, ...restFilters },
+     } = this.context;
+     const { facet, keyword } = this.props;
+     const institutionId = domainData?.institutionId;
+diff --git a/src/pages/searchNew/components/facets/index.jsx b/src/pages/searchNew/components/facets/index.jsx
+index 7dba62bc5..df33b7367 100644
+--- a/src/pages/searchNew/components/facets/index.jsx
++++ b/src/pages/searchNew/components/facets/index.jsx
+@@ -22,17 +22,18 @@ export default class Facets extends Component {
+ 
+   static contextType = Context;
+ 
++  facetValues = null;
++
+   render() {
+     const { hasAppliedFilters, domainData: { institutionId } } = this.context;
+     const query = institutionId ? institutionalFacetsValues : facetsValues;
+ 
+-    let fetchPolicy = "network-only";
+     if (!hasAppliedFilters) {
+-      fetchPolicy = "standby";
++      return this.renderFacetsValues();
+     }
+ 
+     return (
+-      <Query fetchPolicy={fetchPolicy} query={query} variables={ { ...this.variables, pageSize: MAX_VALUES } }>
++      <Query fetchPolicy="network-only" query={query} variables={ { ...this.variables, pageSize: MAX_VALUES } }>
+         {this.renderWithFacets}
+       </Query>
+     );
+@@ -52,9 +53,26 @@ export default class Facets extends Component {
+       return null;
+     }
+ 
++    this.facetValues = facets;
++
++    return this.renderFacetsValues();
++  }
++
++  renderFacetsValues = () => {
++    if (!this.facetValues) {
++      return null;
++    }
++
+     const { activeFacet, hasAppliedFilters } = this.context;
+     const { availableFacets } = this.props;
+-    const { contentTypes, publishedDate, onlinePublishDate, pubPublishDate, pubAcceptDate, ...standardFacets } = facets;
++    const {
++      contentTypes,
++      publishedDate,
++      onlinePublishDate,
++      pubPublishDate,
++      pubAcceptDate,
++      ...standardFacets
++    } = this.facetValues;
+     const datesFacets = { publishedDate, onlinePublishDate, pubPublishDate, pubAcceptDate };
+ 
+     let contentTypesFacet = null;
+@@ -80,7 +98,7 @@ export default class Facets extends Component {
+             disabled={!!(activeFacet && activeFacet !== facet && !hasAppliedFilters)}
+             facet={facet}
+             hasMore={cursor !== null}
+-            {...facets[facet]}
++            {...this.facetValues[facet]}
+           />
+         ))}
+       </Fragment>
+diff --git a/src/pages/searchNew/components/facets/index.test.jsx b/src/pages/searchNew/components/facets/index.test.jsx
+index 414569c14..82ae8ab74 100644
+--- a/src/pages/searchNew/components/facets/index.test.jsx
++++ b/src/pages/searchNew/components/facets/index.test.jsx
+@@ -3,7 +3,7 @@ import { mount } from "enzyme";
+ import { MockedProvider } from "utils/apollo/testing";
+ 
+ import Context from "../../context";
+-import { getDefaultFilters, getVariablesFromFiltersAndFacets } from "../../queryString";
++import { getDefaultFilters } from "../../queryString";
+ import { INVALID_SYNTAX_ERROR } from "../../constants";
+ 
+ import Facets from "./index";
+@@ -18,7 +18,7 @@ jest.mock("./components/dates");
+ describe("<SearchPage.Facets />", () => {
+   let mocks = [];
+   let context = {};
+-  const variables = getVariablesFromFiltersAndFacets(getDefaultFilters(), {});
++  const variables = { q: "", facets: {}, pageSize: 20 };
+ 
+   const availableFacets = [
+     "pubPublishDate",
+@@ -259,6 +259,26 @@ describe("<SearchPage.Facets />", () => {
+     expect(mounted.find(Facets)).toHaveLength(1);
+   });
+ 
++  it("doesn't make query before filters are applied", async() => {
++    const mounted = mount(
++      <MockedProvider mocks={mocks}>
++        <Context.Provider value={ { ...context, hasAppliedFilters: false } }>
++          <Facets availableFacets={availableFacets} />
++        </Context.Provider>
++      </MockedProvider>
++    );
++
++    await mocks[1].response();
++    mounted.update();
++
++    const instance = mounted.find(Facets).instance();
++    instance.client = { writeQuery: jest.fn() };
++    instance.facetValues = figshareFacets;
++
++    expect(instance.renderFacetsValues()).not.toBe(null);
++    expect(instance.client.writeQuery).not.toHaveBeenCalled();
++  });
++
+   it("doesn't render if there are no facets values", async() => {
+     mocks[0].result.data.getFacets = null;
+     context.domainData = { institutionId: 1 };
+diff --git a/src/pages/searchNew/page.jsx b/src/pages/searchNew/page.jsx
+index f1c62989a..5e965508d 100644
+--- a/src/pages/searchNew/page.jsx
++++ b/src/pages/searchNew/page.jsx
+@@ -150,7 +150,7 @@ export class Search extends PureComponent {
+     this.onChange(filters, newFacets);
+   }
+ 
+-  onGetNewOnChangeParameters = (newFilters, newFacets) => {
++  onGetNewOnChangeParameters = (newFilters, newFacets, hasAppliedFilters = false) => {
+     const facets = { ...newFacets };
+     const filters = { ...newFilters };
+ 
+@@ -168,7 +168,10 @@ export class Search extends PureComponent {
+       filters.date = "published_date";
+     }
+ 
+-    const facetsLoading = haveFacetsChanged(facets, this.previousFacets);
++    let facetsLoading = false;
++    if (hasAppliedFilters) {
++      facetsLoading = haveFacetsChanged(facets, this.previousFacets);
++    }
+     let previousFacets = { ...facets };
+ 
+     if (previousFacets) {
+@@ -188,7 +191,7 @@ export class Search extends PureComponent {
+   }
+ 
+   onChange = (newFilters, newFacets, activeFacet = null, hasAppliedFilters = false) => {
+-    const { previousFacets, newState } = this.onGetNewOnChangeParameters(newFilters, newFacets);
++    const { previousFacets, newState } = this.onGetNewOnChangeParameters(newFilters, newFacets, hasAppliedFilters);
+ 
+     this.previousFacets = previousFacets;
+ 
+diff --git a/src/pages/searchNew/page.test.jsx b/src/pages/searchNew/page.test.jsx
+index 14238d643..fb4a3e6ec 100644
+--- a/src/pages/searchNew/page.test.jsx
++++ b/src/pages/searchNew/page.test.jsx
+@@ -421,4 +421,25 @@ describe("<SearchPage />", () => {
+     search.onPopChange();
+     expect(spy).toHaveBeenCalledWith(false);
+   });
++
++  it("computes facetsLoading only if there are applied filters", () => {
++    const mounted = mount(
++      <Context.Provider value={context}>
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
++          <SearchPage availableFacets={availableFacets} domainData={domainData} />
++        </StaticRouter>
++      </Context.Provider>
++    );
++
++    const search = mounted.find(Search).instance();
++
++    let result = search.onGetNewOnChangeParameters({}, { publishedDate: "2023-01-01" }, false);
++    expect(result.newState.facetsLoading).toEqual(false);
++
++    result = search.onGetNewOnChangeParameters({}, { publishedDate: "2023-08-30" }, true);
++    expect(result.newState.facetsLoading).toEqual(true);
++
++    result = search.onGetNewOnChangeParameters({}, {}, true);
++    expect(result.newState.facetsLoading).toEqual(false);
++  });
+ });

@@ -1,0 +1,756 @@
+diff --git a/src/pages/searchNew/components/listing/index.gql b/src/pages/searchNew/components/listing/index.gql
+index 90857526e..8f69fe64a 100644
+--- a/src/pages/searchNew/components/listing/index.gql
++++ b/src/pages/searchNew/components/listing/index.gql
+@@ -1,3 +1,19 @@
++query sortOptions(
++  $sort: Order,
++  $institutionId: Int
++) {
++  getSortOptions(page: "search", sort: $sort, institutionId: $institutionId) {
++    selected {
++      by
++      type
++    }
++    elements {
++      label
++      value
++    }
++  }
++}
++
+ query advancedSearch(
+   $q: String!,
+   $cursor: String,
+@@ -6,7 +22,6 @@ query advancedSearch(
+   $filters: AdvancedSearchFilter
+   $facets: AdvancedSearchFilterFacet
+   $checkForAdvancedSearch: Boolean
+-  $institutionId: Int
+ ) {
+   search: searchAdvanced(
+     searchQuery: $q,
+@@ -82,17 +97,6 @@ query advancedSearch(
+       url
+     }
+   }
+-
+-  getSortOptions(page: "search", institutionId: $institutionId) {
+-    selected {
+-      by
+-      type
+-    }
+-    elements {
+-      label
+-      value
+-    }
+-  }
+ }
+ 
+ query searchFileContent(
+diff --git a/src/pages/searchNew/components/listing/index.jsx b/src/pages/searchNew/components/listing/index.jsx
+index 8978e5aea..a81d501cb 100644
+--- a/src/pages/searchNew/components/listing/index.jsx
++++ b/src/pages/searchNew/components/listing/index.jsx
+@@ -1,4 +1,3 @@
+-/* eslint-disable complexity */
+ import PropTypes from "prop-types";
+ import React, { Component, Fragment } from "react";
+ import { Query } from "@apollo/react-components";
+@@ -20,13 +19,22 @@ import style from "./listing.css";
+ 
+ const ITEMS_PER_PAGE = 40;
+ 
+-export class ItemListing extends Component {
++export class SearchItemsListing extends Component {
+   static propTypes = {
+     cookieContext: PropTypes.object.isRequired,
++    sortEnabled: PropTypes.bool.isRequired,
+     listingViewType: PropTypes.string,
++    sort: PropTypes.object,
++    sortOptions: PropTypes.array,
++    onSort: PropTypes.func,
+   }
+ 
+-  static defaultProps = { listingViewType: "grid" }
++  static defaultProps = {
++    listingViewType: "grid",
++    sort: undefined,
++    sortOptions: undefined,
++    onSort: undefined,
++  }
+ 
+   static contextType = Context;
+ 
+@@ -43,9 +51,6 @@ export class ItemListing extends Component {
+   }
+ 
+   canLoadMore = true;
+-  isSortDefined = false;
+-  sortedBy = null;
+-  sortedType = null;
+ 
+   render() {
+     return (
+@@ -56,14 +61,9 @@ export class ItemListing extends Component {
+   }
+ 
+   renderWithAppContext = ({ mainAppContainer }) => {
+-    const { domainData: { institutionId }, variables: { facets, filters, q, searchBy, sort } } = this.context;
+-
+     this.mainAppContainer = mainAppContainer;
+-    if (!this.isSortDefined && sort) {
+-      this.sortedBy = sort.by;
+-      this.sortedType = sort.type;
+-      this.isSortDefined = true;
+-    }
++
++    const { domainData: { institutionId }, variables: { facets, filters, q, searchBy, sort } } = this.context;
+ 
+     const queryVariables = searchBy === "text" ? {
+       q,
+@@ -76,7 +76,6 @@ export class ItemListing extends Component {
+       cursor: "",
+       pageSize: ITEMS_PER_PAGE,
+       sort,
+-      institutionId,
+     };
+ 
+     const query = searchBy === "text" ? searchFileContent : advancedSearch;
+@@ -112,7 +111,8 @@ export class ItemListing extends Component {
+       errorComponent = this.renderError(error);
+     }
+ 
+-    const { domainData, searchBy, variables: { q, facets, filters, searchBy: searchByGlobal } } = this.context;
++    const { sortEnabled, sortOptions, sort, onSort } = this.props;
++    const { domainData, variables: { q, facets, filters, searchBy: searchByGlobal } } = this.context;
+     // old follow filters shape for backwards compatibility
+     const followData = {
+       type: "search",
+@@ -125,7 +125,6 @@ export class ItemListing extends Component {
+       },
+     };
+ 
+-    const isFullTextSearch = searchBy === "text";
+     const isFullTextSearchGlobal = searchByGlobal === "text";
+ 
+     const searchResult = data?.search;
+@@ -144,22 +143,6 @@ export class ItemListing extends Component {
+         });
+       }
+ 
+-      let sortedBy = null;
+-      let sortedType = null;
+-      let sortOptions = null;
+-
+-      if (!isFullTextSearchGlobal) {
+-        sortedBy = data?.getSortOptions?.selected?.by;
+-        sortedType = data?.getSortOptions?.selected?.type;
+-        sortOptions = data?.getSortOptions?.elements;
+-      }
+-
+-      if (!this.isSortDefined) {
+-        this.sortedBy = sortedBy;
+-        this.sortedType = sortedType;
+-        this.isSortDefined = true;
+-      }
+-
+       const onLoadMore = this.onLoadMore(fetchMore, cursor);
+ 
+       const warningText = `Filters and attributes are not available when searching by file content.
+@@ -167,20 +150,20 @@ export class ItemListing extends Component {
+ 
+       listingComponent = (
+         <Listing
+-          allowSorting={!isFullTextSearch && !!sortOptions}
++          allowSorting={sortEnabled}
+           count={count}
+-          hasWarning={isFullTextSearch}
++          hasWarning={!sortEnabled}
+           items={items}
+           loading={loading}
+           optimizeOnScroll={items.length > ITEMS_PER_PAGE}
+           scrollContainer={this.mainAppContainer}
+           sortOptions={sortOptions}
+-          sortedBy={this.sortedBy}
+-          sortedType={this.sortedType}
++          sortedBy={sort?.by}
++          sortedType={sort?.type}
+           viewMode={this.state.viewMode}
+           warningText={warningText}
+           onLoadMore={onLoadMore}
+-          onSort={this.onSort}
++          onSort={onSort}
+           onSwitchViewMode={this.onSwitchViewMode}
+         />
+       );
+@@ -219,7 +202,7 @@ export class ItemListing extends Component {
+         </div>
+       );
+ 
+-      suggestionsComponent = isFullTextSearch ? null : (
++      suggestionsComponent = !sortEnabled ? null : (
+         <Fragment>
+           {suggestionsTitle}
+           <Listing
+@@ -323,12 +306,6 @@ export class ItemListing extends Component {
+     this.setState({ viewMode });
+   }
+ 
+-  onSort = (sortedBy, sortedType) => {
+-    this.sortedBy = sortedBy;
+-    this.sortedType = sortedType;
+-    this.context.onApplySort(sortedBy, sortedType);
+-  }
+-
+   onResultsLoaded = () => {
+     const { resultsLoading, onResultsLoaded } = this.context;
+     if (resultsLoading) {
+@@ -412,4 +389,4 @@ export class ItemListing extends Component {
+   }
+ }
+ 
+-export default withCookieJar(ItemListing);
++export default withCookieJar(SearchItemsListing);
+diff --git a/src/pages/searchNew/components/listing/index.test.jsx b/src/pages/searchNew/components/listing/index.test.jsx
+index 5f470acd7..cea17f550 100644
+--- a/src/pages/searchNew/components/listing/index.test.jsx
++++ b/src/pages/searchNew/components/listing/index.test.jsx
+@@ -1,4 +1,3 @@
+-/* eslint max-lines: 0 */
+ import React from "react";
+ import ListingComponent from "shared/ui/listing";
+ import Logo from "@figshare/icons/figshare/logo";
+@@ -16,7 +15,7 @@ import { INVALID_OPERATORS_ERROR, INVALID_SYNTAX_ERROR } from "../../constants";
+ 
+ import { advancedSearch } from "./index.gql";
+ import testItems, { loadMoreItems } from "./testItems";
+-import Listing, { ItemListing as UnconnectedListing } from "./index";
++import Listing, { SearchItemsListing as UnconnectedListing } from "./index";
+ 
+ 
+ jest.mock("shared/ui/listing", () => {
+@@ -27,14 +26,6 @@ jest.mock("shared/ui/listing", () => {
+ });
+ jest.mock("shared/apps/follow");
+ 
+-const mockedSortOrder = {
+-  selected: {
+-    by: "relevant",
+-    type: "desc",
+-  },
+-  elements: [],
+-};
+-
+ const wait = () => new Promise((resolve) => setTimeout(resolve));
+ 
+ 
+@@ -44,16 +35,20 @@ describe("<SearchPageListing />", () => {
+   const variables = getVariablesFromFiltersAndFacets(getDefaultFilters(), {});
+   const { searchBy, ...restVars } = variables;
+   const ITEMS_PER_PAGE = 40;
++  const props = {
++    sortEnabled: true,
++    sortOptions: [],
++    sort: { by: "relevant", "type": "desc" },
++    onSort: undefined,
++  };
+ 
+   beforeEach(() => {
++    props.onSort = jest.fn();
++
+     context = {
+       domainData: { institutionId: 1 },
+       facets: {},
+-      filters: {
+-        ...getDefaultFilters(),
+-        sortBy: "sortByTestValue",
+-        sortType: "sortTypeTestValue",
+-      },
++      filters: getDefaultFilters(),
+       onApplySort: jest.fn(),
+       onApply: jest.fn(),
+       onReset: jest.fn(),
+@@ -71,7 +66,6 @@ describe("<SearchPageListing />", () => {
+           ...restVars,
+           cursor: "",
+           pageSize: ITEMS_PER_PAGE,
+-          institutionId: 1,
+         },
+       },
+       result: {
+@@ -84,7 +78,6 @@ describe("<SearchPageListing />", () => {
+             },
+             suggestions: testItems,
+           },
+-          getSortOptions: mockedSortOrder,
+         },
+       },
+     }, {
+@@ -94,7 +87,6 @@ describe("<SearchPageListing />", () => {
+           ...restVars,
+           cursor: "test",
+           pageSize: ITEMS_PER_PAGE,
+-          institutionId: 1,
+         },
+       },
+       result: {
+@@ -107,7 +99,6 @@ describe("<SearchPageListing />", () => {
+             },
+             suggestions: testItems,
+           },
+-          getSortOptions: mockedSortOrder,
+         },
+       },
+     }];
+@@ -119,7 +110,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new?q=test">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -140,7 +131,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -157,7 +148,7 @@ describe("<SearchPageListing />", () => {
+     const errMocks = [{
+       request: {
+         query: advancedSearch,
+-        variables: { q: "", facets: {}, cursor: "", pageSize: 40, institutionId: 1 },
++        variables: { q: "", facets: {}, cursor: "", pageSize: 40 },
+       },
+       result: { errors: [{ errorClass: INVALID_OPERATORS_ERROR }] },
+     }];
+@@ -167,7 +158,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new">
+           <MockedProvider mocks={errMocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -187,7 +178,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new">
+           <MockedProvider mocks={errMocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -210,7 +201,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new">
+           <MockedProvider mocks={errMocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -243,7 +234,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -275,7 +266,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -294,64 +285,6 @@ describe("<SearchPageListing />", () => {
+     expect(listing.state().viewMode).toEqual("grid");
+   });
+ 
+-  it("changes the sort", async() => {
+-    const mounted = mount(
+-      <Context.Provider value={context}>
+-        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+-          <MockedProvider mocks={mocks}>
+-            <CookieContextProvider>
+-              <Listing />
+-            </CookieContextProvider>
+-          </MockedProvider>
+-        </StaticRouter>
+-      </Context.Provider>
+-    );
+-    let listing = mounted.find(UnconnectedListing);
+-    expect(listing.instance().isSortDefined).toEqual(false);
+-    expect(listing.instance().sortedBy).toEqual(null);
+-    expect(listing.instance().sortedType).toEqual(null);
+-
+-    await mocks[0].response();
+-    mounted.update();
+-    listing = mounted.find(UnconnectedListing);
+-
+-    expect(listing.instance().isSortDefined).toEqual(true);
+-    expect(listing.instance().sortedBy).toEqual(mockedSortOrder.selected.by);
+-    expect(listing.instance().sortedType).toEqual(mockedSortOrder.selected.type);
+-
+-    listing.instance().onSort("test", "desc");
+-    expect(context.onApplySort).toHaveBeenCalledWith("test", "desc");
+-  });
+-
+-  it("changes the sort if query string has different sortOrder from server", async() => {
+-    const contextWithSort = {
+-      ...context,
+-      variables: { ...context.variables, sort: { by: "published_date", type: "asc" } },
+-    };
+-
+-    const mounted = mount(
+-      <Context.Provider value={contextWithSort}>
+-        <StaticRouter
+-          context={ {} }
+-          location="/search/new?q=test2&searchBy=metadata&sortBy=published_date&sortType=asc"
+-        >
+-          <MockedProvider mocks={mocks}>
+-            <CookieContextProvider>
+-              <Listing />
+-            </CookieContextProvider>
+-          </MockedProvider>
+-        </StaticRouter>
+-      </Context.Provider>
+-    );
+-    await mocks[0].response();
+-    mounted.update();
+-    const listing = mounted.find(UnconnectedListing);
+-
+-    expect(listing.instance().isSortDefined).toEqual(true);
+-    expect(listing.instance().sortedBy).toEqual("published_date");
+-    expect(listing.instance().sortedType).toEqual("asc");
+-  });
+-
+   it("processes the fetchMore result", async() => {
+     context.domainData = { institutionId: 1 };
+     const mounted = mount(
+@@ -359,7 +292,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -422,7 +355,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -441,7 +374,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new?q=">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -460,7 +393,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new?q=">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+@@ -483,7 +416,7 @@ describe("<SearchPageListing />", () => {
+         <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
+           <MockedProvider mocks={mocks}>
+             <CookieContextProvider>
+-              <Listing />
++              <Listing {...props} />
+             </CookieContextProvider>
+           </MockedProvider>
+         </StaticRouter>
+diff --git a/src/pages/searchNew/components/listing/itemListing.jsx b/src/pages/searchNew/components/listing/itemListing.jsx
+new file mode 100644
+index 000000000..66f68f9fa
+--- /dev/null
++++ b/src/pages/searchNew/components/listing/itemListing.jsx
+@@ -0,0 +1,76 @@
++import PropTypes from "prop-types";
++import React, { Component } from "react";
++import { Query } from "@apollo/react-components";
++
++import Context from "../../context";
++
++import SearchItemsListing from "./index";
++import { sortOptions } from "./index.gql";
++
++
++export default class ItemListing extends Component {
++  static propTypes = { listingViewType: PropTypes.string }
++
++  static defaultProps = { listingViewType: "grid" }
++
++  static contextType = Context;
++
++  isSortDefined = false;
++  sortedBy = null;
++  sortedType = null;
++
++  render() {
++    const { listingViewType } = this.props;
++    const { domainData: { institutionId }, searchBy, variables: { sort } } = this.context;
++
++    if (searchBy === "text") {
++      return <SearchItemsListing listingViewType={listingViewType} sortEnabled={false} />;
++    }
++
++    return (
++      <Query
++        query={sortOptions}
++        variables={ { sort, institutionId } }
++      >
++        {this.renderWithQuery}
++      </Query>
++    );
++  }
++
++  renderWithQuery = ({ data, loading, error }) => {
++    if (loading || error) {
++      return null;
++    }
++
++    const { listingViewType } = this.props;
++    const { elements, selected } = data.getSortOptions;
++    const { by: sortedBy, type: sortedType } = selected;
++
++    if (!this.isSortDefined) {
++      this.sortedBy = sortedBy;
++      this.sortedType = sortedType;
++      this.isSortDefined = true;
++    }
++
++    const isSameResponseFromServer = (this.sortedBy === sortedBy && this.sortedType === sortedType);
++    if (!isSameResponseFromServer) {
++      this.onSort(sortedBy, sortedType);
++    }
++
++    return (
++      <SearchItemsListing
++        listingViewType={listingViewType}
++        sort={selected}
++        sortEnabled={true}
++        sortOptions={elements}
++        onSort={this.onSort}
++      />
++    );
++  }
++
++  onSort = (sortedBy, sortedType) => {
++    this.sortedBy = sortedBy;
++    this.sortedType = sortedType;
++    this.context.onApplySort(sortedBy, sortedType);
++  }
++}
+diff --git a/src/pages/searchNew/components/listing/itemListing.test.jsx b/src/pages/searchNew/components/listing/itemListing.test.jsx
+new file mode 100644
+index 000000000..a30c2decb
+--- /dev/null
++++ b/src/pages/searchNew/components/listing/itemListing.test.jsx
+@@ -0,0 +1,155 @@
++import React from "react";
++import { StaticRouter } from "react-router";
++import { MockedProvider } from "utils/apollo/testing";
++import { Provider as CookieContextProvider } from "utils/cookie/context";
++import { mount } from "enzyme";
++
++import Context from "../../context";
++
++import { sortOptions } from "./index.gql";
++import ItemListing from "./itemListing";
++import SearchItemsListing from "./index";
++
++
++jest.mock("./index", () => {
++  return {
++    __esModule: true,
++    default: () => null,
++  };
++});
++
++
++describe("<ItemListing />", () => {
++  let mocks = [];
++  let context = {};
++  const sort = { "by": "relevant", "type": "desc" };
++  const sortElements = [{
++    label: "Relevance",
++    value: "relevant",
++  }, {
++    label: "Citations",
++    value: "citations",
++  }, {
++    label: "Altmetric Attention Score",
++    value: "altmetric",
++  }, {
++    label: "Posted date",
++    value: "published_date",
++  }, {
++    label: "First online date",
++    value: "online_publish_date",
++  }];
++
++  beforeEach(() => {
++    context = {
++      domainData: { institutionId: 1 },
++      facets: {},
++      onApplySort: jest.fn(),
++      searchBy: "metadata",
++      variables: { sort },
++    };
++
++    mocks = [{
++      request: {
++        query: sortOptions,
++        variables: {
++          sort,
++          institutionId: 1,
++        },
++      },
++      result: {
++        data: {
++          getSortOptions: {
++            selected: sort,
++            elements: sortElements,
++          },
++        },
++      },
++    }, {
++      request: {
++        query: sortOptions,
++        variables: {
++          sort,
++          institutionId: 1,
++        },
++      },
++      result: {
++        data: {
++          getSortOptions: {
++            selected: { "by": "first_online_date", "type": "asc" },
++            elements: sortElements,
++          },
++        },
++      },
++    }];
++  });
++
++  it("renders correct listing component with optional sort enabled", async() => {
++    let mounted = mount(
++      <Context.Provider value={context}>
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
++          <MockedProvider mocks={mocks}>
++            <CookieContextProvider>
++              <ItemListing />
++            </CookieContextProvider>
++          </MockedProvider>
++        </StaticRouter>
++      </Context.Provider>
++    );
++
++    await mocks[0].response();
++    mounted.update();
++
++    let searchListing = mounted.find(SearchItemsListing);
++    expect(searchListing.props().sortEnabled).toEqual(true);
++    expect(searchListing.props().sort).toEqual(sort);
++    expect(searchListing.props().sortOptions).toEqual(sortElements);
++
++    mounted = mount(
++      <Context.Provider value={ { ...context, searchBy: "text" } }>
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=text">
++          <MockedProvider mocks={mocks}>
++            <CookieContextProvider>
++              <ItemListing />
++            </CookieContextProvider>
++          </MockedProvider>
++        </StaticRouter>
++      </Context.Provider>
++    );
++
++    searchListing = mounted.find(SearchItemsListing);
++    expect(searchListing.props().sortEnabled).toEqual(false);
++    expect(searchListing.props().sort).toBeUndefined();
++    expect(searchListing.props().sortOptions).toBeUndefined();
++
++  });
++
++  it("changes the sort", async() => {
++    const mounted = mount(
++      <Context.Provider value={context}>
++        <StaticRouter context={ {} } location="/search/new?q=test&searchBy=metadata">
++          <MockedProvider mocks={mocks}>
++            <CookieContextProvider>
++              <ItemListing />
++            </CookieContextProvider>
++          </MockedProvider>
++        </StaticRouter>
++      </Context.Provider>
++    );
++    let listing = mounted.find(ItemListing);
++    expect(listing.instance().isSortDefined).toEqual(false);
++    expect(listing.instance().sortedBy).toEqual(null);
++    expect(listing.instance().sortedType).toEqual(null);
++
++    await mocks[0].response();
++    mounted.update();
++    listing = mounted.find(ItemListing);
++
++    expect(listing.instance().isSortDefined).toEqual(true);
++    expect(listing.instance().sortedBy).toEqual(sort.by);
++    expect(listing.instance().sortedType).toEqual(sort.type);
++
++    listing.instance().onSort("online_publish_date", "desc");
++    expect(context.onApplySort).toHaveBeenCalledWith("online_publish_date", "desc");
++  });
++});
+diff --git a/src/pages/searchNew/page.jsx b/src/pages/searchNew/page.jsx
+index 70bd79db2..f1c62989a 100644
+--- a/src/pages/searchNew/page.jsx
++++ b/src/pages/searchNew/page.jsx
+@@ -7,7 +7,7 @@ import AppContext from "mainApp/context";
+ 
+ import Context from "./context";
+ import Header from "./components/header";
+-import Listing from "./components/listing";
++import Listing from "./components/listing/itemListing";
+ import Sidebar from "./components/sidebar";
+ import ExpandedFacet from "./components/facets/components/expandedFacet";
+ import {
+diff --git a/src/pages/searchNew/page.test.jsx b/src/pages/searchNew/page.test.jsx
+index 5d1c51261..14238d643 100644
+--- a/src/pages/searchNew/page.test.jsx
++++ b/src/pages/searchNew/page.test.jsx
+@@ -28,7 +28,7 @@ jest.mock("./components/header", () => {
+     default: () => null,
+   };
+ });
+-jest.mock("./components/listing", () => {
++jest.mock("./components/listing/itemListing", () => {
+   return {
+     __esModule: true,
+     default: () => null,

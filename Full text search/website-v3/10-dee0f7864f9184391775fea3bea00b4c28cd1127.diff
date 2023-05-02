@@ -1,0 +1,26 @@
+diff --git a/src/pages/searchNew/components/header/searchBy/index.jsx b/src/pages/searchNew/components/header/searchBy/index.jsx
+index 16c5e2372..85a753aef 100644
+--- a/src/pages/searchNew/components/header/searchBy/index.jsx
++++ b/src/pages/searchNew/components/header/searchBy/index.jsx
+@@ -54,7 +54,7 @@ export default class SearchBy extends Component {
+           onChange={this.onChangeSearchBy}
+         />
+         <label className={style.label} htmlFor="search-by-text-only">
+-          file content only
++          file content only (.pdf)
+         </label>
+       </div>
+     );
+diff --git a/src/pages/searchNew/components/header/searchBy/index.test.jsx b/src/pages/searchNew/components/header/searchBy/index.test.jsx
+index e2104dc51..39f296e8c 100644
+--- a/src/pages/searchNew/components/header/searchBy/index.test.jsx
++++ b/src/pages/searchNew/components/header/searchBy/index.test.jsx
+@@ -57,7 +57,7 @@ describe("<SearchBy />", () => {
+     expect(tested.find("input")).toHaveLength(2);
+     expect(tested.find("label")).toHaveLength(2);
+     expect(tested.find("label").at(0).props().children).toEqual("metadata only");
+-    expect(tested.find("label").at(1).props().children).toEqual("file content only");
++    expect(tested.find("label").at(1).props().children).toEqual("file content only (.pdf)");
+   });
+ 
+ 

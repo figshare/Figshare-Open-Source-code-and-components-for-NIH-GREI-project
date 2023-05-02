@@ -1,0 +1,13 @@
+diff --git a/figshare/graphql/v2_resolvers/es_search/utils.py b/figshare/graphql/v2_resolvers/es_search/utils.py
+index 9dd59a15fe..a66c9d5d79 100644
+--- a/figshare/graphql/v2_resolvers/es_search/utils.py
++++ b/figshare/graphql/v2_resolvers/es_search/utils.py
+@@ -320,7 +320,7 @@ def get_facet_results_after_search(facet, facet_query, search, facets_filters, c
+         search_target = f"{index_mapping_root}.{index_mapping_name}.search"
+         search_fields = [search_target, f"{search_target}._2gram", f"{search_target}._3gram"]
+         search_filter = (
+-            Q("multi_match", query=facet_query, type="bool_prefix", fields=search_fields)
++            Q("multi_match", query=facet_query, type="bool_prefix", fields=search_fields, operator="and")
+             if facet_query
+             else Q("match_all")
+         )

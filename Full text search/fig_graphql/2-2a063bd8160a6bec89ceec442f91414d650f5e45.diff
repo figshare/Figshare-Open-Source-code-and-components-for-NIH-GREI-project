@@ -1,0 +1,71 @@
+diff --git a/figshare/graphql/v2_resolvers/new_search.py b/figshare/graphql/v2_resolvers/new_search.py
+index ee720c39fd..15f590bb8c 100644
+--- a/figshare/graphql/v2_resolvers/new_search.py
++++ b/figshare/graphql/v2_resolvers/new_search.py
+@@ -159,6 +159,10 @@ def search_file_content(
+     cursor: str = None,
+     page_size: int = 15,
+ ) -> Dict[str, any]:
++    request = info.context.request
++    account = request.session.get_active_account()
++    if not account or not institution_id or account.institution_id != institution_id:
++        raise exceptions.Forbidden
+ 
+     index = f"file_content_{institution_id}"
+     search = Search()
+diff --git a/tests/functional/graphql/test_search_file_content.py b/tests/functional/graphql/test_search_file_content.py
+index 986c53a70a..bfeb08c072 100644
+--- a/tests/functional/graphql/test_search_file_content.py
++++ b/tests/functional/graphql/test_search_file_content.py
+@@ -247,7 +247,7 @@ def mock_es_search_client(patcher):
+     return obj
+ 
+ 
+-def test_search_file_content(testapp, mock_group_find, mock_es_search_client):
++def test_search_file_content(testapp, mock_group_find, mock_es_search_client, account, login):
+     query = """
+        query {
+         searchFileContent(searchTerm: "test page", institutionId: 1234, groupId: 543, pageSize: 20, cursor: "") {
+@@ -286,6 +286,9 @@ def test_search_file_content(testapp, mock_group_find, mock_es_search_client):
+         }
+    """
+ 
++    account.institution_id = 1234
++    login(account)
++
+     response = send_graphql_request(testapp, query)
+     elasticsearch_client.execute.assert_any_call(
+         index="file_content_1234", search=ANY, page_size=0, connection_alias="file-content-es-connection"
+@@ -294,3 +297,32 @@ def test_search_file_content(testapp, mock_group_find, mock_es_search_client):
+ 
+     assert response.json["data"]["searchFileContent"]["count"] == 2
+     assert len(response.json["data"]["searchFileContent"]["elements"]) == 2
++
++
++def test_search_file_content_account_logged_in(testapp, mock_group_find, mock_es_search_client, account, login):
++    query = """
++       query {
++        searchFileContent(searchTerm: "test page", institutionId: 1234, groupId: 543, pageSize: 20, cursor: "") {
++              cursor
++              count
++           }
++        }
++   """
++
++    response = send_graphql_request(testapp, query)
++    errors = response.json.get("errors", [])
++    assert len(errors) == 1
++    assert errors[0]["errorClass"] == "Forbidden"
++
++    login(account)
++    account.institution_id = 1111
++    response = send_graphql_request(testapp, query)
++    errors = response.json.get("errors", [])
++    assert len(errors) == 1
++    assert errors[0]["errorClass"] == "Forbidden"
++
++    login(account)
++    account.institution_id = 1234
++    response = send_graphql_request(testapp, query)
++    errors = response.json.get("errors", [])
++    assert len(errors) == 0

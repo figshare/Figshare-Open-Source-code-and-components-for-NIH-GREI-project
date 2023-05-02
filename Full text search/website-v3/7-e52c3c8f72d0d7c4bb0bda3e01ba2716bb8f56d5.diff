@@ -1,0 +1,73 @@
+diff --git a/src/shared/ui/highlights/utils.js b/src/shared/ui/highlights/utils.js
+index 8a7e31de9..f3cad9711 100644
+--- a/src/shared/ui/highlights/utils.js
++++ b/src/shared/ui/highlights/utils.js
+@@ -1,8 +1,8 @@
+ const SEARCH_PATH = "/search/new";
+ 
+ const isComingFromSearchPage = () => {
+-  if (document?.referrer) {
+-    return new URL(document.referrer).pathname === SEARCH_PATH;
++  if (window?.document?.referrer) {
++    return new URL(window.document.referrer)?.pathname === SEARCH_PATH;
+   }
+ 
+   return false;
+diff --git a/src/shared/ui/highlights/utils.test.js b/src/shared/ui/highlights/utils.test.js
+index 62721daae..762b44cd8 100644
+--- a/src/shared/ui/highlights/utils.test.js
++++ b/src/shared/ui/highlights/utils.test.js
+@@ -15,7 +15,7 @@ const text = "Lorem ipsum dolor sit amet";
+ 
+ describe("isPartOfItemHighlight", () => {
+   beforeEach(() => {
+-    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
++    jest.spyOn(window?.document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
+   });
+ 
+   it("should return true", () => {
+@@ -31,7 +31,7 @@ describe("isPartOfItemHighlight", () => {
+   });
+ 
+   it("should return false if the user is not coming from search page", () => {
+-    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/test");
++    jest.spyOn(window?.document, "referrer", "get").mockReturnValue("http://custom.figshare.test/test");
+ 
+     const response = isPartOfItemHighlight(fileId2, highlights);
+ 
+@@ -42,7 +42,7 @@ describe("isPartOfItemHighlight", () => {
+ 
+ describe("getHighlightsCount", () => {
+   beforeEach(() => {
+-    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
++    jest.spyOn(window?.document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
+   });
+ 
+   it("should return correct count", () => {
+@@ -52,7 +52,7 @@ describe("getHighlightsCount", () => {
+   });
+ 
+   it("should return count 0 if the user is not coming from search page", () => {
+-    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/test");
++    jest.spyOn(window?.document, "referrer", "get").mockReturnValue("http://custom.figshare.test/test");
+ 
+     const response = getHighlightsCount(itemId, highlights);
+ 
+@@ -62,7 +62,7 @@ describe("getHighlightsCount", () => {
+ 
+ describe("markTextWithHighlights", () => {
+   beforeEach(() => {
+-    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
++    jest.spyOn(window?.document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
+   });
+ 
+   it("should return initial text if highlights is empty array", () => {
+@@ -148,7 +148,7 @@ describe("markTextWithHighlights", () => {
+   });
+ 
+   it("should return initial text if the user is not coming from search page", () => {
+-    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/test");
++    jest.spyOn(window?.document, "referrer", "get").mockReturnValue("http://custom.figshare.test/test");
+ 
+     highlights = [{
+       type: "metadata-highlights",

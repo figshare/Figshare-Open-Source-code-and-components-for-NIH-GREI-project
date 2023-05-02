@@ -1,0 +1,646 @@
+diff --git a/src/pages/category/header/index.css b/src/pages/category/header/index.css
+index b80386c70..acbe150a5 100644
+--- a/src/pages/category/header/index.css
++++ b/src/pages/category/header/index.css
+@@ -1,13 +1,5 @@
+-.headerWrapper {
+-  background-color: var(--color-layout-tertiary-background);
+-}
+-
+ .headerContainer {
+-  width: calc(42 * 4 * var(--gridSize));
+-
+   margin: 0 auto;
+-  padding-top: calc(6 * var(--gridSize));
+-  padding-bottom: calc(5 * var(--gridSize));
+ }
+ 
+ .navigationWrapper {
+@@ -22,9 +14,8 @@
+   justify-content: center;
+   align-items: center;
+ 
+-  width: calc(42 * 4 * var(--gridSize));
+-
+   margin: 0 auto;
++  padding: calc(4 * var(--gridSize));
+ }
+ 
+ .titleContailer {
+@@ -63,35 +54,7 @@
+   margin-right: calc(7 * var(--gridSize));
+ }
+ 
+-@media (max-width: 1200px) {
+-  .headerContainer {
+-    width: calc(42 * 3 * var(--gridSize));
+-  }
+-
+-  .navigationContainer {
+-    width: calc(42 * 3 * var(--gridSize));
+-  }
+-}
+-
+-@media (max-width: 880px) {
+-  .headerContainer {
+-    width: calc(42 * 2 * var(--gridSize));
+-  }
+-
+-  .navigationContainer {
+-    width: calc(42 * 2 * var(--gridSize));
+-  }
+-}
+-
+ @media (max-width: 512px) {
+-  .headerContainer {
+-    width: 100%;
+-  }
+-
+-  .navigationContainer {
+-    width: 100%;
+-  }
+-
+   .titleContailer {
+     flex-direction: column;
+     justify-content: flex-start;
+diff --git a/src/pages/category/header/index.jsx b/src/pages/category/header/index.jsx
+index 9184a6749..42d913bb1 100644
+--- a/src/pages/category/header/index.jsx
++++ b/src/pages/category/header/index.jsx
+@@ -3,6 +3,8 @@ import { Button, IconButton } from "@figshare/ui/button";
+ import RssIcon from "@figshare/icons/rss";
+ import SearchIcon from "@figshare/icons/search/small";
+ import FollowApp from "shared/apps/follow";
++import Layout from "shared/layout";
++
+ 
+ import Context from "../context";
+ 
+@@ -27,8 +29,8 @@ export default class CategoryDetailsHeader extends PureComponent {
+     };
+ 
+     return (
+-      <div>
+-        <div className={styles.headerWrapper}>
++      <Layout.Preview>
++        <Layout.PreviewContent>
+           <div className={styles.headerContainer}>
+             <div className={styles.titleContailer}>
+               <h1 className={styles.title}>
+@@ -49,7 +51,7 @@ export default class CategoryDetailsHeader extends PureComponent {
+             </div>
+             <SubcategoriesListing />
+           </div>
+-        </div>
++        </Layout.PreviewContent>
+         <div className={styles.navigationWrapper}>
+           <div className={styles.navigationContainer}>
+             <span className={styles.selectedLink}>
+@@ -60,7 +62,7 @@ export default class CategoryDetailsHeader extends PureComponent {
+             </Button>
+           </div>
+         </div>
+-      </div>
++      </Layout.Preview>
+     );
+   }
+ }
+diff --git a/src/pages/category/listing/index.css b/src/pages/category/listing/index.css
+index bb04807b7..9e13c2ea6 100644
+--- a/src/pages/category/listing/index.css
++++ b/src/pages/category/listing/index.css
+@@ -1,30 +1,8 @@
+-.page {
+-  position: relative;
+-
+-  display: flex;
+-  flex-direction: row;
+-
+-  width: calc((56 + (42 * 4) + 15) * var(--gridSize));
+-
+-  max-width: 100%;
+-
+-  margin: 0 auto;
+-
+-  padding: 0 calc(5 * var(--gridSize));
+-  justify-content: center;
+-  align-items: flex-start;
+-  flex: 1;
+-}
+-
+ .container {
+   position: relative;
+ 
+   display: flex;
+   flex-direction: column;
+-
+-  width: calc((42 * 4 - 6) * var(--gridSize));
+-
+-  padding-bottom: calc(4 * var(--gridSize));
+   flex-shrink: 0;
+   flex-grow: 0;
+ }
+@@ -64,35 +42,3 @@
+   justify-content: center;
+   align-items: center;
+ }
+-
+-@media (max-width: 1200px) {
+-  .page {
+-    width: calc((56 + (42 * 3) + 15) * var(--gridSize));
+-  }
+-
+-  .container {
+-    width: calc((42 * 3 - 6) * var(--gridSize));
+-  }
+-}
+-
+-@media (max-width: 880px) {
+-  .page {
+-    width: calc((56 + (42 * 2) + 15) * var(--gridSize));
+-  }
+-
+-  .container {
+-    width: calc((42 * 2 - 6) * var(--gridSize));
+-  }
+-}
+-
+-@media (max-width: 512px) {
+-  .page {
+-    width: calc((56 + (42 * 2) + 10) * var(--gridSize));
+-    max-width: calc(100% - calc(2 * var(--gridSize)));
+-    padding: 0 calc(2 * var(--gridSize));
+-  }
+-
+-  .container {
+-    width: 100%;
+-  }
+-}
+diff --git a/src/pages/category/listing/index.jsx b/src/pages/category/listing/index.jsx
+index 452c5336d..a25017e85 100644
+--- a/src/pages/category/listing/index.jsx
++++ b/src/pages/category/listing/index.jsx
+@@ -6,6 +6,7 @@ import { withCookieJar } from "utils/cookie/context";
+ import AppContext from "mainApp/context";
+ import Logo from "@figshare/icons/figshare/logo";
+ import { GenericButton } from "@figshare/ui/button";
++import Layout from "shared/layout";
+ 
+ import Context from "../context";
+ 
+@@ -184,14 +185,14 @@ export class CategoryDetalisItemListing extends Component {
+     }
+ 
+     return (
+-      <div className={style.page}>
++      <Layout>
+         <div className={style.container}>
+           {listingComponent}
+           {loadingComponent}
+           {errorComponent}
+           {noContentComponent}
+         </div>
+-      </div>
++      </Layout>
+     );
+   }
+ 
+diff --git a/src/pages/portal/homepage/layout/featuredCategories/index.css b/src/pages/portal/homepage/layout/featuredCategories/index.css
+index 4429cddbf..4a99abfba 100644
+--- a/src/pages/portal/homepage/layout/featuredCategories/index.css
++++ b/src/pages/portal/homepage/layout/featuredCategories/index.css
+@@ -23,8 +23,6 @@
+ }
+ 
+ .categoryContainer {
+-  width: calc(162 * var(--gridSize));
+-
+   text-align: center;
+ }
+ 
+@@ -52,12 +50,6 @@
+     margin-top: calc(3 * var(--gridSize));
+   }
+ 
+-  .categoryContainer {
+-    width: 100%;
+-
+-    padding: 0 calc(4 * var(--gridSize)) 0 calc(1.5 * var(--gridSize));
+-  }
+-
+   .categoryButton {
+     max-width: 100%;
+   }
+diff --git a/src/pages/portal/homepage/layout/featuredCategories/index.jsx b/src/pages/portal/homepage/layout/featuredCategories/index.jsx
+index bf5a4b378..2d5ac3dbe 100644
+--- a/src/pages/portal/homepage/layout/featuredCategories/index.jsx
++++ b/src/pages/portal/homepage/layout/featuredCategories/index.jsx
+@@ -1,6 +1,7 @@
+ import React, { PureComponent } from "react";
+ import { Button, GenericButton } from "@figshare/ui/button";
+ import { Query } from "@apollo/react-components";
++import Layout from "shared/layout";
+ 
+ import Loading from "../loading";
+ import Error from "../error";
+@@ -14,11 +15,13 @@ export default class FeaturedCategorie extends PureComponent {
+ 
+     render() {
+       return (
+-        <div className={css.container}>
+-          <h2 className={css.title}>discover research from fig<strong>share</strong></h2>
+-          <h3 className={css.subTitle}>FEATURED CATEGORIES</h3>
+-          {this.renderCategories()}
+-        </div>
++        <Layout>
++          <div className={css.container}>
++            <h2 className={css.title}>discover research from fig<strong>share</strong></h2>
++            <h3 className={css.subTitle}>FEATURED CATEGORIES</h3>
++            {this.renderCategories()}
++          </div>
++        </Layout>
+       );
+     }
+ 
+diff --git a/src/pages/portal/homepage/layout/featuredItems/index.css b/src/pages/portal/homepage/layout/featuredItems/index.css
+index e42f4753d..66eb9ade6 100644
+--- a/src/pages/portal/homepage/layout/featuredItems/index.css
++++ b/src/pages/portal/homepage/layout/featuredItems/index.css
+@@ -1,6 +1,5 @@
+ .container {
+-  width: calc(164 * var(--gridSize));
+-  margin: calc(12 * var(--gridSize)) auto 0 auto;
++  margin: 0 auto;
+ }
+ 
+ .buttonContainer {
+@@ -10,11 +9,3 @@
+ 
+   margin: calc(10 * var(--gridSize)) 0;
+ }
+-
+-@media all  and (max-width: 972px) {
+-  .container {
+-    width: 100%;
+-    margin-top: var(--gridSize);
+-    padding: 0 calc(3 * var(--gridSize));
+-  }
+-}
+diff --git a/src/pages/portal/homepage/layout/featuredItems/index.jsx b/src/pages/portal/homepage/layout/featuredItems/index.jsx
+index 84f8e7faf..6e93ba99a 100644
+--- a/src/pages/portal/homepage/layout/featuredItems/index.jsx
++++ b/src/pages/portal/homepage/layout/featuredItems/index.jsx
+@@ -1,5 +1,6 @@
+ import React, { PureComponent, Fragment } from "react";
+ import { Query } from "@apollo/react-components";
++import Layout from "shared/layout";
+ import Listing from "shared/ui/listing";
+ import { Button } from "@figshare/ui/button";
+ 
+@@ -20,14 +21,16 @@ export default class FeaturedItems extends PureComponent {
+     };
+ 
+     return (
+-      <div className={css.container}>
+-        <Query
+-          query={getHomepageItems}
+-          variables={variables}
+-        >
+-          {this.renderWithData}
+-        </Query>
+-      </div>
++      <Layout>
++        <div className={css.container}>
++          <Query
++            query={getHomepageItems}
++            variables={variables}
++          >
++            {this.renderWithData}
++          </Query>
++        </div>
++      </Layout>
+     );
+   }
+ 
+diff --git a/src/pages/search/components/sidebar/index.css b/src/pages/search/components/sidebar/index.css
+index eb3f05b2c..056da8287 100644
+--- a/src/pages/search/components/sidebar/index.css
++++ b/src/pages/search/components/sidebar/index.css
+@@ -170,6 +170,8 @@
+     left: unset;
+ 
+     visibility: visible;
++
++    margin: calc(6 * var(--gridSize)) 0 0 calc(-2 * var(--gridSize));
+   }
+ 
+   .sidebarContainer {
+@@ -215,3 +217,9 @@
+     opacity: 1;
+   }
+ }
++
++@media (max-width: 443px) {
++  .filtersButton {
++    margin: calc(7 * var(--gridSize)) 0 0 calc(-2 * var(--gridSize));
++  }
++}
+diff --git a/src/pages/search/page.css b/src/pages/search/page.css
+index a6b6f94da..7ae6e0106 100644
+--- a/src/pages/search/page.css
++++ b/src/pages/search/page.css
+@@ -23,9 +23,3 @@ figshare-modal > div {
+     width: calc((67 +  (42 * 2) - 6) * var(--gridSize));
+   }
+ }
+-
+-@media (max-width: 910px) {
+-  .formForMobile {
+-    margin-top: calc(-6 * var(--gridSize));
+-  }
+-}
+diff --git a/src/pages/search/page.jsx b/src/pages/search/page.jsx
+index 81dbe36c9..aa72450d1 100644
+--- a/src/pages/search/page.jsx
++++ b/src/pages/search/page.jsx
+@@ -88,10 +88,8 @@ export class Search extends PureComponent {
+               <Sidebar closeButtonRef={this.setCloseSidebarRef} />
+             </Layout.Actions>
+             <Layout.Form hiddenOverflow={true}>
+-              <div className={style.formForMobile}>
+-                {this.renderExpandedFacet()}
+-                <Listing listingViewType={listingViewType} />
+-              </div>
++              {this.renderExpandedFacet()}
++              <Listing listingViewType={listingViewType} />
+             </Layout.Form>
+           </Layout.Content>
+         </Layout>
+diff --git a/src/pages/searchNew/components/header/header.css b/src/pages/searchNew/components/header/header.css
+index 2121e5b7c..46ba4a50e 100644
+--- a/src/pages/searchNew/components/header/header.css
++++ b/src/pages/searchNew/components/header/header.css
+@@ -15,12 +15,9 @@
+ 
+   display: flex;
+   flex-direction: row;
++  justify-content: center;
+ 
+   width: 100%;
+-  height: calc(13 * var(--gridSize));
+-
+-  background: var(--color-layout-tertiary-background);
+-  justify-content: center;
+ }
+ 
+ .content {
+@@ -28,13 +25,11 @@
+ 
+   display: flex;
+   flex-direction: row;
++  justify-content: flex-start;
++  flex: 1;
+ 
+   width: 100%;
+-  max-width: calc(164 * var(--gridSize));
+   margin: 0 auto;
+-  padding: 0 calc(2 * var(--gridSize));
+-  flex: 1;
+-  justify-content: flex-start;
+ }
+ 
+ .inputContainer {
+@@ -121,8 +116,6 @@
+   justify-content: space-between;
+ 
+   width: 100%;
+-  max-width: calc(164 * var(--gridSize));
+-  padding: 0 calc(2 * var(--gridSize));
+ 
+   @media (max-width: 690px) {
+     flex-direction: column;
+diff --git a/src/pages/searchNew/components/listing/listing.css b/src/pages/searchNew/components/listing/listing.css
+index 33f1b5bda..51693f5d1 100644
+--- a/src/pages/searchNew/components/listing/listing.css
++++ b/src/pages/searchNew/components/listing/listing.css
+@@ -3,10 +3,6 @@
+ 
+   display: flex;
+   flex-direction: column;
+-
+-  width: calc((42 * 4 - 6) * var(--gridSize));
+-
+-  padding-bottom: calc(4 * var(--gridSize));
+   flex-shrink: 0;
+   flex-grow: 0;
+ }
+@@ -60,20 +56,10 @@
+   margin-bottom: calc(-6 * var(--gridSize));
+ }
+ 
+-@media (max-width: 1500px) {
+-  .list {
+-    width: calc((42 * 3 - 6) * var(--gridSize));
+-  }
+-}
+-
+-@media (max-width: 1200px) {
+-  .list {
+-    width: calc((42 * 2 - 6) * var(--gridSize));
+-  }
+-}
+-
+ @media (max-width: 880px) {
+-  .list {
+-    width: 100%;
++  .suggestionsTitle {
++    margin: 0 auto;
++
++    text-align: center;
+   }
+ }
+diff --git a/src/pages/searchNew/components/sidebar/sidebar.css b/src/pages/searchNew/components/sidebar/sidebar.css
+index 3309b619c..056da8287 100644
+--- a/src/pages/searchNew/components/sidebar/sidebar.css
++++ b/src/pages/searchNew/components/sidebar/sidebar.css
+@@ -5,13 +5,9 @@
+ 
+   display: flex;
+   flex-direction: column;
+-
+-  width: calc(56 * var(--gridSize));
+   flex-shrink: 0;
+   justify-content: flex-start;
+   align-items: flex-start;
+-
+-  padding-top: 20px;
+ }
+ 
+ .filtersButton {
+@@ -82,9 +78,7 @@
+   overflow: auto;
+ 
+   width: 100%;
+-  margin-bottom: calc(3 * var(--gridSize));
+-  padding: 0 var(--gridSize);
+-  padding-bottom: var(--gridSize);
++  padding-right: calc(2 * var(--gridSize));
+   flex: 1;
+ }
+ 
+@@ -112,7 +106,7 @@
+   background: transparent;
+ }
+ 
+-@media (max-width: 880px) {
++@media (max-width: 910px) {
+   @media screen and (prefers-reduced-motion: reduce) {
+     .sidebarVisible .sidebarContainer {
+       transition: none;
+@@ -171,7 +165,13 @@
+   }
+ 
+   .filtersButton {
++    z-index: 1;
++    top: unset;
++    left: unset;
++
+     visibility: visible;
++
++    margin: calc(6 * var(--gridSize)) 0 0 calc(-2 * var(--gridSize));
+   }
+ 
+   .sidebarContainer {
+@@ -217,3 +217,9 @@
+     opacity: 1;
+   }
+ }
++
++@media (max-width: 443px) {
++  .filtersButton {
++    margin: calc(7 * var(--gridSize)) 0 0 calc(-2 * var(--gridSize));
++  }
++}
+diff --git a/src/pages/searchNew/page.css b/src/pages/searchNew/page.css
+index 0c8e12bf6..7ae6e0106 100644
+--- a/src/pages/searchNew/page.css
++++ b/src/pages/searchNew/page.css
+@@ -1,17 +1,3 @@
+-.page {
+-  position: relative;
+-
+-  display: flex;
+-  flex-direction: column;
+-  flex: 1;
+-
+-  width: 100%;
+-  justify-content: flex-start;
+-  align-items: flex-start;
+-
+-  min-width: calc(42 * var(--gridSize));
+-}
+-
+ /* stylelint-disable-next-line */
+ figshare-modal > div {
+   position: absolute;
+@@ -26,49 +12,14 @@ figshare-modal > div {
+   background: transparent;
+ }
+ 
+-.container {
+-  position: relative;
+-
+-  display: flex;
+-  flex-direction: row;
+-
+-  width: calc((56 + (42 * 4) + 15) * var(--gridSize));
+-
+-  max-width: 100%;
+-
+-  margin: 0 auto;
+-  margin-top: calc(9 * var(--gridSize));
+-
+-  padding: 0 calc(5 * var(--gridSize));
+-  justify-content: space-between;
+-  align-items: flex-start;
+-  flex: 1;
+-}
+-
+ @media (max-width: 1500px) {
+-  .container {
+-    width: calc((56 + (42 * 3) + 15) * var(--gridSize));
+-  }
+-
+   .expandedFacetContainer {
+     width: calc((67 +  (42 * 3) - 6) * var(--gridSize));
+   }
+ }
+ 
+ @media (max-width: 1200px) {
+-  .container {
+-    width: calc((56 + (42 * 2) + 15) * var(--gridSize));
+-  }
+-
+   .expandedFacetContainer {
+     width: calc((67 +  (42 * 2) - 6) * var(--gridSize));
+   }
+ }
+-
+-@media (max-width: 1000px) {
+-  .container {
+-    width: calc((56 + (42 * 2) + 10) * var(--gridSize));
+-    max-width: calc(100% - calc(2 * var(--gridSize)));
+-    padding: 0 calc(2 * var(--gridSize));
+-  }
+-}
+diff --git a/src/pages/searchNew/page.jsx b/src/pages/searchNew/page.jsx
+index de22b1ef1..020909390 100644
+--- a/src/pages/searchNew/page.jsx
++++ b/src/pages/searchNew/page.jsx
+@@ -4,6 +4,7 @@ import { withRouter, Redirect } from "react-router";
+ import Modal from "@figshare/components/base/modal";
+ import BackToTop from "shared/ui/backToTop";
+ import AppContext from "mainApp/context";
++import Layout from "shared/layout";
+ 
+ import Context from "./context";
+ import Header from "./components/header";
+@@ -96,19 +97,25 @@ export class Search extends PureComponent {
+ 
+     return (
+       <Context.Provider value={this.getContext()}>
+-        <div className={style.page}>
+-          <Header
+-            domainData={domainData}
+-            searchInputRef={this.setSearchInputRef}
+-            session={session}
+-          />
+-          <div className={style.container}>
+-            <Sidebar availableFacets={availableFacets} closeButtonRef={this.setCloseSidebarRef} />
+-            {this.renderExpandedFacet()}
+-            <Listing listingViewType={listingViewType} />
+-          </div>
+-          <BackToTop />
+-        </div>
++        <Layout>
++          <Layout.Header>
++            <Header
++              domainData={domainData}
++              searchInputRef={this.setSearchInputRef}
++              session={session}
++            />
++          </Layout.Header>
++          <Layout.Content>
++            <Layout.Actions data-id="layout-actions-search">
++              <Sidebar availableFacets={availableFacets} closeButtonRef={this.setCloseSidebarRef} />
++            </Layout.Actions>
++            <Layout.Form data-id="layout-form-search" hiddenOverflow={true}>
++              {this.renderExpandedFacet()}
++              <Listing listingViewType={listingViewType} />
++            </Layout.Form>
++          </Layout.Content>
++        </Layout>
++        <BackToTop />
+       </Context.Provider>
+     );
+   }

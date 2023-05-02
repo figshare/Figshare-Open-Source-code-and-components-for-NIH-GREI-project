@@ -1,0 +1,18 @@
+diff --git a/figshare/graphql/v2_resolvers/es_search/advanced_search.py b/figshare/graphql/v2_resolvers/es_search/advanced_search.py
+index ccffd2010..397234499 100644
+--- a/figshare/graphql/v2_resolvers/es_search/advanced_search.py
++++ b/figshare/graphql/v2_resolvers/es_search/advanced_search.py
+@@ -141,11 +141,9 @@ def search_in_facet(
+     search = search.query(Q("bool", must=es_query, filter=es_filters))
+     search = get_facet_results_after_search(facet_name, facet_query, search, facets, cursor, page_size)
+ 
+-    result = elasticsearch_client.execute(index=index, search=search, page_size=1)
++    result = elasticsearch_client.execute(index=index, search=search, page_size=0)
+     result_facet = (
+-        map_base_facet_with_search(facet_name, result["aggregations"], page_size, cursor)
+-        if len(result["hits"])
+-        else None
++        map_base_facet_with_search(facet_name, result["aggregations"], page_size, cursor) if result["total"] else None
+     )
+ 
+     return result_facet

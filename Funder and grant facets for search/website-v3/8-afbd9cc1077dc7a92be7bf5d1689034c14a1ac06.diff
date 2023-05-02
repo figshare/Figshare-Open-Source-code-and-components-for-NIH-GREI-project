@@ -1,0 +1,90 @@
+diff --git a/src/pages/searchNew/components/facets/index.jsx b/src/pages/searchNew/components/facets/index.jsx
+index 98fe6f304..b0041f6b0 100644
+--- a/src/pages/searchNew/components/facets/index.jsx
++++ b/src/pages/searchNew/components/facets/index.jsx
+@@ -64,6 +64,8 @@ export default class Facets extends Component {
+   }
+ 
+   renderWithFacets = ({ data, loading, error, refetch }) => {
++    const { facetsLoading, resultsLoading } = this.context;
++
+     this.onFacetsLoaded(loading);
+ 
+     if (error) {
+@@ -72,6 +74,10 @@ export default class Facets extends Component {
+       return this.renderError(error);
+     }
+ 
++    if (loading && (facetsLoading || resultsLoading)) {
++      return this.renderLoading();
++    }
++
+     const facets = data?.getFacets;
+ 
+     this.facetValues = facets;
+diff --git a/src/pages/searchNew/components/facets/index.test.jsx b/src/pages/searchNew/components/facets/index.test.jsx
+index c53ef6883..caa01fdc2 100644
+--- a/src/pages/searchNew/components/facets/index.test.jsx
++++ b/src/pages/searchNew/components/facets/index.test.jsx
+@@ -1,6 +1,7 @@
+ import React from "react";
+ import { mount } from "enzyme";
+ import { MockedProvider } from "utils/apollo/testing";
++import FigshareLoader from "@figshare/icons/figshare/logo";
+ 
+ import Context from "../../context";
+ import { getDefaultFilters } from "../../queryString";
+@@ -259,6 +260,40 @@ describe("<SearchPage.Facets />", () => {
+     expect(mounted.find(Facets)).toHaveLength(1);
+   });
+ 
++  it("renders initial loading", () => {
++    let localContext = {
++      ...context,
++      facetsLoading: false,
++      resultsLoading: true,
++    };
++
++    let mounted = mount(
++      <MockedProvider mocks={mocks}>
++        <Context.Provider value={localContext}>
++          <Facets availableFacets={availableFacets} />
++        </Context.Provider>
++      </MockedProvider>
++    );
++
++    expect(mounted.find(FigshareLoader)).toHaveLength(1);
++
++    localContext = {
++      ...context,
++      facetsLoading: true,
++      resultsLoading: true,
++    };
++
++    mounted = mount(
++      <MockedProvider mocks={mocks}>
++        <Context.Provider value={localContext}>
++          <Facets availableFacets={availableFacets} />
++        </Context.Provider>
++      </MockedProvider>
++    );
++
++    expect(mounted.find(FigshareLoader)).toHaveLength(1);
++  });
++
+   it("doesn't make query before filters are applied", async() => {
+     const mounted = mount(
+       <MockedProvider mocks={mocks}>
+diff --git a/src/pages/searchNew/components/listing/listing.css b/src/pages/searchNew/components/listing/listing.css
+index 51693f5d1..53cecddc4 100644
+--- a/src/pages/searchNew/components/listing/listing.css
++++ b/src/pages/searchNew/components/listing/listing.css
+@@ -10,6 +10,8 @@
+ .loadingContainer {
+   display: flex;
+ 
++  min-height: calc(100vh - 54 * var(--gridSize));
++  max-height: 100%;
+   flex: 1;
+ 
+   padding: calc(4 * var(--gridSize));

@@ -1,0 +1,159 @@
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
+index 20f221720..bb180bff8 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
+@@ -118,6 +118,8 @@ describe("<ViewersGenericFileControls />", () => {
+   });
+ 
+   it("renders file name with highlight", () => {
++    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
++
+     const highlights = [{
+       type: "file-highlights",
+       value: {
+diff --git a/src/shared/ui/highlights/utils.js b/src/shared/ui/highlights/utils.js
+index d505ca63a..8a7e31de9 100644
+--- a/src/shared/ui/highlights/utils.js
++++ b/src/shared/ui/highlights/utils.js
+@@ -1,29 +1,48 @@
++const SEARCH_PATH = "/search/new";
++
++const isComingFromSearchPage = () => {
++  if (document?.referrer) {
++    return new URL(document.referrer).pathname === SEARCH_PATH;
++  }
++
++  return false;
++};
++
+ export const isPartOfItemHighlight = (fileId, highlights) => {
+-  const fileHighlights = highlights.filter((h) => h.type === "file-highlights");
++  if (isComingFromSearchPage()) {
++    const fileHighlights = highlights.filter((h) => h.type === "file-highlights");
+ 
+-  return fileHighlights.some(((highlight) => {
+-    const exists = highlight.value.files.find((f) => f.fileId === fileId);
++    return fileHighlights.some(((highlight) => {
++      const exists = highlight.value.files.find((f) => f.fileId === fileId);
+ 
+-    return !!exists;
+-  }));
++      return !!exists;
++    }));
++  }
++
++  return false;
+ };
+ 
+ 
+-export const getHighlightsCount = (itemId, highlights) =>
+-  highlights?.filter((el) => el.value?.item === itemId)[0]?.value?.files?.length;
++export const getHighlightsCount = (itemId, highlights) => {
++  if (isComingFromSearchPage()) {
++    return highlights?.filter((el) => el.value?.item === itemId)[0]?.value?.files?.length;
++  }
+ 
++  return 0;
++};
+ 
+-export function markTextWithHighlights(text, highlights, itemId = 0) {
++
++export const markTextWithHighlights = (text, highlights, itemId = 0) => {
+   let draft = text;
+ 
+   if (!highlights?.length || (highlights?.length && highlights[0].type !== "metadata-highlights")) {
+     return draft;
+   }
+ 
+-  if (highlights[0]?.value?.items?.includes(itemId)) {
++  if (highlights[0]?.value?.items?.includes(itemId) && isComingFromSearchPage()) {
+     draft = highlights[0].value.q ? draft?.replace(new RegExp(`${highlights[0].value.q}`, "ig"),
+       (v) => `<span data-text-highlight=true>${v}</span>`) : draft;
+   }
+ 
+   return draft;
+-}
++};
+diff --git a/src/shared/ui/highlights/utils.test.js b/src/shared/ui/highlights/utils.test.js
+index e072170a3..62721daae 100644
+--- a/src/shared/ui/highlights/utils.test.js
++++ b/src/shared/ui/highlights/utils.test.js
+@@ -14,13 +14,25 @@ let highlights = [{
+ const text = "Lorem ipsum dolor sit amet";
+ 
+ describe("isPartOfItemHighlight", () => {
++  beforeEach(() => {
++    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
++  });
++
+   it("should return true", () => {
+     const response = isPartOfItemHighlight(fileId1, highlights);
+ 
+     expect(response).toEqual(true);
+   });
+ 
+-  it("should return false", () => {
++  it("should return false if fileId is not in files", () => {
++    const response = isPartOfItemHighlight(fileId2, highlights);
++
++    expect(response).toEqual(false);
++  });
++
++  it("should return false if the user is not coming from search page", () => {
++    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/test");
++
+     const response = isPartOfItemHighlight(fileId2, highlights);
+ 
+     expect(response).toEqual(false);
+@@ -29,14 +41,30 @@ describe("isPartOfItemHighlight", () => {
+ 
+ 
+ describe("getHighlightsCount", () => {
++  beforeEach(() => {
++    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
++  });
++
+   it("should return correct count", () => {
+     const response = getHighlightsCount(itemId, highlights);
+ 
+     expect(response).toEqual(2);
+   });
++
++  it("should return count 0 if the user is not coming from search page", () => {
++    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/test");
++
++    const response = getHighlightsCount(itemId, highlights);
++
++    expect(response).toEqual(0);
++  });
+ });
+ 
+ describe("markTextWithHighlights", () => {
++  beforeEach(() => {
++    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search/new?q=test");
++  });
++
+   it("should return initial text if highlights is empty array", () => {
+     const response = markTextWithHighlights(text, [], itemId);
+ 
+@@ -118,4 +146,20 @@ describe("markTextWithHighlights", () => {
+ 
+     expect(response).toEqual("<span data-text-highlight=true>Lorem ipsum</span> dolor sit amet");
+   });
++
++  it("should return initial text if the user is not coming from search page", () => {
++    jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/test");
++
++    highlights = [{
++      type: "metadata-highlights",
++      value: {
++        items: [1],
++        q: "lorem ipsum",
++      },
++    }];
++
++    const response = markTextWithHighlights(text, highlights, itemId);
++
++    expect(response).toEqual("Lorem ipsum dolor sit amet");
++  });
+ });

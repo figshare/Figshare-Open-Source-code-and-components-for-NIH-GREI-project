@@ -1,0 +1,27 @@
+diff --git a/src/pages/searchNew/components/facets/index.jsx b/src/pages/searchNew/components/facets/index.jsx
+index df33b7367..c4e38a272 100644
+--- a/src/pages/searchNew/components/facets/index.jsx
++++ b/src/pages/searchNew/components/facets/index.jsx
+@@ -25,10 +25,10 @@ export default class Facets extends Component {
+   facetValues = null;
+ 
+   render() {
+-    const { hasAppliedFilters, domainData: { institutionId } } = this.context;
++    const { hasAppliedFilters, domainData: { institutionId }, searchBy } = this.context;
+     const query = institutionId ? institutionalFacetsValues : facetsValues;
+ 
+-    if (!hasAppliedFilters) {
++    if (!hasAppliedFilters || searchBy === "text") {
+       return this.renderFacetsValues();
+     }
+ 
+@@ -49,9 +49,6 @@ export default class Facets extends Component {
+     }
+ 
+     const facets = data?.getFacets;
+-    if (!facets) {
+-      return null;
+-    }
+ 
+     this.facetValues = facets;
+ 

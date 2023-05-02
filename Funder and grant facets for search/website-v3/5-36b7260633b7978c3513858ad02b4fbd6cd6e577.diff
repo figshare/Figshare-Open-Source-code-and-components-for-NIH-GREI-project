@@ -1,0 +1,13 @@
+diff --git a/src/pages/searchNew/components/listing/index.jsx b/src/pages/searchNew/components/listing/index.jsx
+index a81d501cb..0e36a53be 100644
+--- a/src/pages/searchNew/components/listing/index.jsx
++++ b/src/pages/searchNew/components/listing/index.jsx
+@@ -82,8 +82,6 @@ export class SearchItemsListing extends Component {
+ 
+     return (
+       <Query
+-        fetchPolicy="network-only"
+-        notifyOnNetworkStatusChange={true}
+         query={query}
+         variables={queryVariables}
+         onCompleted={this.onUpdateHighlightsData}

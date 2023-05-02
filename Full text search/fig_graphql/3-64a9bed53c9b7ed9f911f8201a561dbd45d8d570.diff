@@ -1,0 +1,55 @@
+diff --git a/figshare/graphql/v2_resolvers/new_search.py b/figshare/graphql/v2_resolvers/new_search.py
+index 15f590bb8..ed0de43a8 100644
+--- a/figshare/graphql/v2_resolvers/new_search.py
++++ b/figshare/graphql/v2_resolvers/new_search.py
+@@ -176,7 +176,7 @@ def search_file_content(
+ 
+     offset = decrypt_search_after_token(cursor) if cursor else 0
+     search.aggs.metric("articles_count", "cardinality", field="article_id")
+-    search.aggs.bucket("article", A("terms", field="article_id"))
++    search.aggs.bucket("article", A("terms", field="article_id", size=page_size + offset))
+     search.aggs["article"].bucket(
+         "sorting", A("bucket_sort", size=page_size, sort=[{"_count": "desc", "_key": "asc"}], **{"from": offset})
+     )
+diff --git a/tests/functional/graphql/test_search_file_content.py b/tests/functional/graphql/test_search_file_content.py
+index bfeb08c07..22e2f8825 100644
+--- a/tests/functional/graphql/test_search_file_content.py
++++ b/tests/functional/graphql/test_search_file_content.py
+@@ -285,7 +285,28 @@ def test_search_file_content(testapp, mock_group_find, mock_es_search_client, ac
+            }
+         }
+    """
+-
++    expected_search_call = {
++        "query": {
++            "bool": {
++                "must": [{"match": {"content": "test page"}}],
++                "filter": [{"term": {"group_path": {"value": Group.find().path}}}],
++            }
++        },
++        "aggs": {
++            "articles_count": {"cardinality": {"field": "article_id"}},
++            "article": {
++                "terms": {"field": "article_id", "size": 20},
++                "aggs": {
++                    "sorting": {"bucket_sort": {"size": 20, "sort": [{"_count": "desc", "_key": "asc"}], "from": 0}},
++                    "file": {
++                        "terms": {"field": "file_id", "size": 20},
++                        "aggs": {"page_no": {"terms": {"field": "page_no", "size": 1}}},
++                    },
++                    "files_count": {"cardinality": {"field": "file_id"}},
++                },
++            },
++        },
++    }
+     account.institution_id = 1234
+     login(account)
+ 
+@@ -294,6 +315,7 @@ def test_search_file_content(testapp, mock_group_find, mock_es_search_client, ac
+         index="file_content_1234", search=ANY, page_size=0, connection_alias="file-content-es-connection"
+     )
+     elasticsearch_client.execute.assert_called_with(index="public_item", search=ANY, page_size=2)
++    assert expected_search_call == elasticsearch_client.execute.call_args_list[0].kwargs["search"].to_dict()
+ 
+     assert response.json["data"]["searchFileContent"]["count"] == 2
+     assert len(response.json["data"]["searchFileContent"]["elements"]) == 2

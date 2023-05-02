@@ -1,0 +1,104 @@
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx
+index 3964e521a..dcd1b85da 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx
+@@ -6,7 +6,7 @@ import InformationIcon from "@figshare/icons/info/medium";
+ import Exclamation from "@figshare/icons/warning/medium";
+ import { Trigger, UncontrolledToggletip as Toggletip } from "@figshare/components/ui/toggletip";
+ import filesize from "utils/filesize";
+-import { getHighlightsCount } from "shared/ui/highlights/utils";
++import { isPartOfItemHighlight } from "shared/ui/highlights/utils";
+ 
+ import VirusTooltip from "../../../../../virusTooltip";
+ import { VIEW_MODES } from "../../../../constants";
+@@ -114,7 +114,6 @@ export default class FileControls extends Component {
+     const {
+       files,
+       activeFileIndex,
+-      item: { id: itemId },
+     } = this.context;
+ 
+     const { highlights } = this.props;
+@@ -125,14 +124,14 @@ export default class FileControls extends Component {
+ 
+     const file = files[activeFileIndex];
+ 
+-    const { name, extension, size } = file;
++    const { id: fileId, name, extension, size } = file;
+     const filename = name.replace(`.${extension}`, "");
+ 
+-    const highlightsCount = getHighlightsCount(itemId, highlights);
++    const isHighlighted = isPartOfItemHighlight(fileId, highlights);
+ 
+     return (
+       <div className={style.fileDetails} title={name}>
+-        <span data-text-highlight={!!highlightsCount}>
++        <span data-text-highlight={isHighlighted}>
+           <span className={style.fileActualName}>{filename}.</span>
+           <span className={style.fileExtension}>{extension}</span>
+         </span>
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
+index bb180bff8..b8a1f0042 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
+@@ -34,7 +34,6 @@ class Wrapped extends Component {
+       showFileDetails: undefined,
+       activeFileIndex: 0,
+       files,
+-      item: { id: 1 },
+       ...this.props,
+     };
+ 
+@@ -123,8 +122,8 @@ describe("<ViewersGenericFileControls />", () => {
+     const highlights = [{
+       type: "file-highlights",
+       value: {
+-        files: [{ pageNo: 5, fileId: 465 }],
+-        item: 1,
++        files: [{ pageNo: 5, fileId: 1 }],
++        item: 2,
+       },
+     }];
+ 
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx
+index 4402abc72..5231b2dcb 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx
+@@ -14,10 +14,18 @@ export default class SearchInfo extends Component {
+   render() {
+     const { highlightsCount: count } = this.props;
+ 
+-    if (!count || count === 1) {
++    if (!count) {
+       return null;
+     }
+ 
++    if (count === 1) {
++      return (
++        <span className={style.searchInfo}>
++          ({count} file matches the search criteria)
++        </span>
++      );
++    }
++
+     if (count < MAX_COUNT) {
+       return (
+         <span className={style.searchInfo}>
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx
+index 02c5e2a62..3d20f8c36 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx
+@@ -17,9 +17,11 @@ describe("<SearchInfo />", () => {
+     expect(tested.isEmptyRender()).toEqual(true);
+   });
+ 
+-  it("renders null if count is 1", () => {
++  it("renders correct text when count is 1", () => {
+     const tested = mount(<SearchInfo highlightsCount={1} />);
+-    expect(tested.isEmptyRender()).toEqual(true);
++    expect(tested.isEmptyRender()).toEqual(false);
++
++    expect(tested.find(".searchInfo").text()).toEqual("(1 file matches the search criteria)");
+   });
+ 
+   it("renders correct text when count is smaller than max count", () => {

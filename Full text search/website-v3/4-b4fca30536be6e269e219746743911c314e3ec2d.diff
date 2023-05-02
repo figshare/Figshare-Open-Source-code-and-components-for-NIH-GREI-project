@@ -1,0 +1,208 @@
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx
+index 28a03de1d..3964e521a 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.jsx
+@@ -1,3 +1,4 @@
++import PropTypes from "prop-types";
+ import React, { Component, Fragment } from "react";
+ import { IconButton } from "@figshare/ui/button";
+ import DownloadIcon from "@figshare/icons/download";
+@@ -5,19 +6,22 @@ import InformationIcon from "@figshare/icons/info/medium";
+ import Exclamation from "@figshare/icons/warning/medium";
+ import { Trigger, UncontrolledToggletip as Toggletip } from "@figshare/components/ui/toggletip";
+ import filesize from "utils/filesize";
+-import { HighlightContext } from "shared/ui/highlights/highlightContext";
+ import { getHighlightsCount } from "shared/ui/highlights/utils";
+ 
+ import VirusTooltip from "../../../../../virusTooltip";
+ import { VIEW_MODES } from "../../../../constants";
+ import Context from "../../../../context";
+ 
+-import SearchInfo from "./../searchInfo";
+ import style from "./fileControls.css";
+ 
+ 
+ export default class FileControls extends Component {
++  static propTypes = { highlights: PropTypes.array }
++
++  static defaultProps = { highlights: [] }
++
+   static contextType = Context;
++
+   state = { focused: false }
+ 
+   render() {
+@@ -32,9 +36,6 @@ export default class FileControls extends Component {
+     return (
+       <div className={style.controls}>
+         {this.renderFileName()}
+-        <HighlightContext.Consumer>
+-          {({ highlights }) => this.renderSearchInfo(highlights)}
+-        </HighlightContext.Consumer>
+         <IconButton
+           Icon={InformationIcon}
+           theme={buttonTheme}
+@@ -113,8 +114,11 @@ export default class FileControls extends Component {
+     const {
+       files,
+       activeFileIndex,
++      item: { id: itemId },
+     } = this.context;
+ 
++    const { highlights } = this.props;
++
+     if (!files.length || !files[activeFileIndex]) {
+       return null;
+     }
+@@ -124,23 +128,19 @@ export default class FileControls extends Component {
+     const { name, extension, size } = file;
+     const filename = name.replace(`.${extension}`, "");
+ 
++    const highlightsCount = getHighlightsCount(itemId, highlights);
++
+     return (
+       <div className={style.fileDetails} title={name}>
+-        <span className={style.fileActualName}>{filename}.</span>
+-        <span className={style.fileExtension}>{extension}</span>
++        <span data-text-highlight={!!highlightsCount}>
++          <span className={style.fileActualName}>{filename}.</span>
++          <span className={style.fileExtension}>{extension}</span>
++        </span>
+         <span className={style.fileSize}>{" "}({filesize(size).format()})</span>
+       </div>
+     );
+   }
+ 
+-  renderSearchInfo = (highlights) => {
+-    const { item: { id: itemId } } = this.context;
+-
+-    const highlightsCount = getHighlightsCount(itemId, highlights);
+-
+-    return <SearchInfo highlightsCount={highlightsCount} />;
+-  }
+-
+   onShowFileDetails = () => {
+     const { activeFileIndex, onShowFileDetails, showFileDetails } = this.context;
+     const newFile = showFileDetails === activeFileIndex ? undefined : activeFileIndex;
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
+index 87b00506e..20f221720 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/fileControls/index.test.jsx
+@@ -1,3 +1,4 @@
++import PropTypes from "prop-types";
+ import React, { Component } from "react";
+ import { mount } from "enzyme";
+ import Exclamation from "@figshare/icons/warning/medium";
+@@ -23,6 +24,10 @@ jest.mock("@figshare/components/base/popup");
+ 
+ 
+ class Wrapped extends Component {
++  static propTypes = { highlights: PropTypes.array }
++
++  static defaultProps = { highlights: [] }
++
+   render() {
+     const context = {
+       viewMode: VIEW_MODES.single,
+@@ -33,9 +38,11 @@ class Wrapped extends Component {
+       ...this.props,
+     };
+ 
++    const componentProps = { highlights: this.props.highlights };
++
+     return (
+       <Context.Provider value={context}>
+-        <TestedComponent />
++        <TestedComponent {...componentProps} />
+       </Context.Provider>
+     );
+   }
+@@ -109,4 +116,26 @@ describe("<ViewersGenericFileControls />", () => {
+     tested.onToggle();
+     expect(tested.state.focused).toEqual(false);
+   });
++
++  it("renders file name with highlight", () => {
++    const highlights = [{
++      type: "file-highlights",
++      value: {
++        files: [{ pageNo: 5, fileId: 465 }],
++        item: 1,
++      },
++    }];
++
++    const tested = mount(<Wrapped highlights={highlights} />).find(TestedComponent);
++
++    expect(tested.find("[data-text-highlight=true]")).toHaveLength(1);
++  });
++
++  it("renders file name without highlight", () => {
++    const highlights = [];
++
++    const tested = mount(<Wrapped highlights={highlights} />).find(TestedComponent);
++
++    expect(tested.find("[data-text-highlight=false]")).toHaveLength(1);
++  });
+ });
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx
+index 5231b2dcb..4402abc72 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.jsx
+@@ -14,18 +14,10 @@ export default class SearchInfo extends Component {
+   render() {
+     const { highlightsCount: count } = this.props;
+ 
+-    if (!count) {
++    if (!count || count === 1) {
+       return null;
+     }
+ 
+-    if (count === 1) {
+-      return (
+-        <span className={style.searchInfo}>
+-          ({count} file matches the search criteria)
+-        </span>
+-      );
+-    }
+-
+     if (count < MAX_COUNT) {
+       return (
+         <span className={style.searchInfo}>
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx
+index 3d20f8c36..02c5e2a62 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/genericControls/searchInfo/index.test.jsx
+@@ -17,11 +17,9 @@ describe("<SearchInfo />", () => {
+     expect(tested.isEmptyRender()).toEqual(true);
+   });
+ 
+-  it("renders correct text when count is 1", () => {
++  it("renders null if count is 1", () => {
+     const tested = mount(<SearchInfo highlightsCount={1} />);
+-    expect(tested.isEmptyRender()).toEqual(false);
+-
+-    expect(tested.find(".searchInfo").text()).toEqual("(1 file matches the search criteria)");
++    expect(tested.isEmptyRender()).toEqual(true);
+   });
+ 
+   it("renders correct text when count is smaller than max count", () => {
+diff --git a/src/pages/item/page/components/viewer/components/controlsBar/index.jsx b/src/pages/item/page/components/viewer/components/controlsBar/index.jsx
+index 6e599b185..6639ff624 100644
+--- a/src/pages/item/page/components/viewer/components/controlsBar/index.jsx
++++ b/src/pages/item/page/components/viewer/components/controlsBar/index.jsx
+@@ -38,9 +38,13 @@ export default class Controls extends Component {
+           <ViewModeSelector />
+           <Pagination />
+           <HighlightContext.Consumer>
+-            {({ highlights }) => this.renderSearchInfo(highlights)}
++            {({ highlights }) => (
++              <>
++                {this.renderSearchInfo(highlights)}
++                <FileControls highlights={highlights} />
++              </>
++            )}
+           </HighlightContext.Consumer>
+-          <FileControls />
+           <ViewerControls />
+           {this.renderFullScreen()}
+         </div>
