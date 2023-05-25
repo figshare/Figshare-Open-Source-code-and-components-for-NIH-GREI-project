@@ -1,0 +1,145 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/identifiersAndRelationships/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/identifiersAndRelationships/index.test.jsx
+index 7e4e46396..087f2a58f 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/identifiersAndRelationships/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/identifiersAndRelationships/index.test.jsx
+@@ -64,7 +64,7 @@ describe("<IdentifiersAndRelationshipsProvider />", () => {
+ 
+     expect(MockComponent).toHaveBeenCalledWith(loading);
+ 
+-    await wait(wrapper.update());
++    await wait(() => wrapper.update());
+ 
+     const success = {
+       identifiers: {
+@@ -130,7 +130,7 @@ describe("<IdentifiersAndRelationshipsProvider />", () => {
+ 
+     expect(MockComponent).toHaveBeenCalledWith(loading);
+ 
+-    await wait(wrapper.update());
++    await wait(() => wrapper.update());
+ 
+     const failure = {
+       identifiers: expect.objectContaining({
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+index 500df5ac5..a3edb4f8c 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+@@ -275,11 +275,9 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     await act(async() => {
+       await form.props().onSubmit({ preventDefault: jest.fn() });
+-
++      component.update();
+     });
+ 
+-    await wait(() => component.update());
+-
+     return form;
+   }
+ 
+diff --git a/src/pages/item/page/components/relatedMaterials/index.test.jsx b/src/pages/item/page/components/relatedMaterials/index.test.jsx
+index ee8d756cc..01bab1161 100644
+--- a/src/pages/item/page/components/relatedMaterials/index.test.jsx
++++ b/src/pages/item/page/components/relatedMaterials/index.test.jsx
+@@ -90,7 +90,7 @@ describe("<RelatedMaterials />", () => {
+       },
+     };
+     const tested = mount(<RelatedMaterialsWrapped item={testItem} mocks={[...getRelatedMaterialsEmptyMock]} />);
+-    await wait(tested.update());
++    await wait(() => tested.update());
+ 
+     expect(tested.isEmptyRender()).toEqual(false);
+     expect(tested.find("h2")).toHaveLength(1);
+@@ -108,7 +108,7 @@ describe("<RelatedMaterials />", () => {
+     };
+ 
+     const tested = mount(<RelatedMaterialsWrapped item={testItem} mocks={[...getRelatedMaterialsEmptyMock]} />);
+-    await wait(tested.update());
++    await wait(() => tested.update());
+ 
+     expect(tested.isEmptyRender()).toEqual(false);
+     expect(tested.find("span").text()).toContain("No related materials.");
+@@ -126,7 +126,8 @@ describe("<RelatedMaterials />", () => {
+     };
+ 
+     const tested = mount(<RelatedMaterialsWrapped item={testItem} mocks={[...getRelatedMaterialsDataMock]} />);
+-    await wait(tested.update());
++
++    await wait(() => tested.update());
+ 
+     expect(tested.isEmptyRender()).toEqual(false);
+     expect("li").toHaveLength(2);
+diff --git a/src/utils/apollo/testing/index.jsx b/src/utils/apollo/testing/index.jsx
+index e0ef72ce6..eeb8f561b 100644
+--- a/src/utils/apollo/testing/index.jsx
++++ b/src/utils/apollo/testing/index.jsx
+@@ -70,12 +70,21 @@ export class MockedProvider extends Component {
+ 
+ const DEFAULT_DELAY = 200;
+ 
+-export const wait = (resolution, rejection, delay = DEFAULT_DELAY) => act(() => new Promise((resolve, reject) => {
+-  setTimeout(() => {
+-    if (rejection !== undefined) {
+-      reject(typeof rejection === "function" ? rejection() : rejection);
+-    } else {
+-      resolve(typeof resolution === "function" ? resolution() : resolution);
+-    }
+-  }, delay);
+-}));
++export async function wait(callback, delay = DEFAULT_DELAY) {
++  const promise = new Promise((resolve, reject) => {
++    act(() => {
++      setTimeout(async() => {
++        try {
++          const result = await callback();
++          resolve(result);
++        } catch (e) {
++          reject(e);
++        }
++      }, delay);
++    });
++  });
++
++  await act(() => promise);
++
++  return promise;
++}
+diff --git a/src/utils/apollo/testing/index.test.jsx b/src/utils/apollo/testing/index.test.jsx
+index bc7b54d23..553f866df 100644
+--- a/src/utils/apollo/testing/index.test.jsx
++++ b/src/utils/apollo/testing/index.test.jsx
+@@ -83,18 +83,21 @@ describe("<MockedProvider />", () => {
+ 
+ 
+ describe("wait()", () => {
+-  it("returns a promise wrapped in act with a provided resolution or rejection", async() => {
+-    const base = 10;
+-    const resolved = base;
+-    const resolver = () => base * 3;
+-    const rejection = base * 2;
+-    const rejector = () => base * 4;
+-    const delay = 300;
+-
+-    await expect(wait(resolved)).resolves.toBe(resolved);
+-    await expect(wait(resolved, rejection)).rejects.toBe(rejection);
+-    await expect(wait(resolver)).resolves.toBe(resolver());
+-    await expect(wait(resolver, rejector)).rejects.toBe(rejector());
+-    await expect(wait(resolved, undefined, delay)).resolves.toBe(resolved);
++  it("wait() delays calling an action by a certain amount of time", async() => {
++    const defaultDelayCb = jest.fn(() => 1);
++    const longDelayCb = jest.fn(() => 2);
++    const longerDelay = 500;
++
++    const result = wait(defaultDelayCb);
++    expect(result instanceof Promise).toBe(true);
++
++    const awaitedResult = await wait(defaultDelayCb);
++    expect(awaitedResult).toBe(1);
++
++    const longerDelayResult = wait(longDelayCb, longerDelay);
++    expect(longerDelayResult instanceof Promise).toBe(true);
++
++    const awaitedLongerResult = await wait(longDelayCb, longerDelay);
++    expect(awaitedLongerResult).toBe(2);
+   });
+ });

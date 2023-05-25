@@ -1,0 +1,39 @@
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index e421be7f6e..2da226edfc 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -2282,8 +2282,12 @@ def update_article(self, data, **options):
+ 
+         data = self._handle_sherpa_journal(data, group)
+ 
+-        if not (self.resource_doi or data.get("resource_doi")) and self.related_materials:
+-            for i in self.related_materials:
++        materials = self.related_materials
++        if data.get("references") and isinstance(data["references"][0], int):
++            materials = data["references"]
++
++        if materials and not (self.resource_doi or data.get("resource_doi")):
++            for i in materials:
+                 material = self.ENTITIES.RelatedMaterial.find(i)
+                 if (
+                     material.is_linkout
+diff --git a/tests/api/article/test_references.py b/tests/api/article/test_references.py
+index 169fa0121c..c941028796 100644
+--- a/tests/api/article/test_references.py
++++ b/tests/api/article/test_references.py
+@@ -253,6 +253,7 @@ def test_material_updates_resource_doi(self):
+             "categories": [2],
+         }
+         article = Article.create_article(article_data)
++        self.assertIsNone(article.resource_doi)
+         self.account.actions_for(article).publish()
+ 
+         material = RelatedMaterial.create(
+@@ -265,6 +266,7 @@ def test_material_updates_resource_doi(self):
+             }
+         )
+         article.update_article({"title": "Another version", "references": [material.id]})
++        self.assertEqual(article.resource_doi, material.identifier)
+         self.account.actions_for(article).publish()
+ 
+         first = ArticleVersion.find(article.id, 1)

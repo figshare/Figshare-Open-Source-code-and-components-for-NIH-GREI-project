@@ -1,0 +1,26 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
+index eb19128cb..9066abe2a 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
+@@ -136,7 +136,7 @@ export function ManageRelatedMaterials({ disabled, materials, onMaterialsChange,
+         type: "EDIT_RELATED_MATERIAL",
+         material: editedRemapped,
+         prev: oldEntry,
+-        id: edited.id,
++        id: relatedMaterialId,
+       });
+ 
+       await delayAction(() => onMaterialsChange(stateRef.current.materials, "edit"));
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/useManageRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/useManageRelatedMaterials.jsx
+index cc09ccce0..264e49b4a 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/useManageRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/useManageRelatedMaterials.jsx
+@@ -39,7 +39,7 @@ export function manageRelatedMaterialsReducer(state, action) {
+       return { ...state, materials: newMaterials, empty, linkoutTotal };
+     }
+     case "EDIT_RELATED_MATERIAL": {
+-      const index = state.materials.findIndex((entry) => entry.id === action.material.id);
++      const index = state.materials.findIndex((entry) => entry.id === action.id);
+ 
+       if (index !== -1) {
+         const newMaterials = state.materials.slice();

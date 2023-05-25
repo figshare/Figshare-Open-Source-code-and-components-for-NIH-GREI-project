@@ -1,0 +1,57 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.css b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.css
+index 4d35ed8fb..012d45a66 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.css
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.css
+@@ -20,9 +20,23 @@
+   top: 0;
+ 
+   width: 100%;
++  padding-right: calc(6 * var(--gridSize));
++  padding-left: calc(6 * var(--gridSize));
++
++  @media (max-width: 443px) {
++    padding-right: calc(4 * var(--gridSize));
++    padding-left: calc(4 * var(--gridSize));
++  }
++}
++
++.alertsSection > div:empty {
+   margin-bottom: calc(3 * var(--gridSize));
+ }
+ 
++.alertsSection > div:not(:empty) {
++  margin-bottom: calc(6 * var(--gridSize));
++}
++
+ .addSection {
+   display: flex;
+   flex-direction: column;
+@@ -73,7 +87,7 @@
+ 
+   margin: 0 auto;
+ 
+-  padding-bottom: calc(6 * var(--gridSize));
++  padding-bottom: calc(3 * var(--gridSize));
+ }
+ 
+ .content {
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
+index 146742629..e7f3110ae 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
+@@ -215,11 +215,13 @@ export function ManageRelatedMaterials({ disabled, materials, onMaterialsChange,
+       isVisible={open}
+       onClose={closeManager}
+     >
+-      <OverlayHeader className={styles.header} title="Related Materials" />
+-      <OverlayContent className={styles.content}>
++      <div>
++        <OverlayHeader className={styles.header} title="Related Materials" />
+         <section className={styles.alertsSection} data-control-id="materials-alerts-section">
+           <Alerts id={RELATED_MATERIALS_ALERTS_CHANNEL} />
+         </section>
++      </div>
++      <OverlayContent className={styles.content}>
+         <section
+           className={styles.addSection}
+           data-control-id="materials-add-section"

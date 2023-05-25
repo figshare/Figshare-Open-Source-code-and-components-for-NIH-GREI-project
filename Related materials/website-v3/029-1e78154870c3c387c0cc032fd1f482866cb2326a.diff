@@ -1,0 +1,113 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.css b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.css
+index d438aca13..54580f9d2 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.css
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.css
+@@ -9,7 +9,7 @@
+ 
+ .fields {
+   width: 100%;
+-  padding: calc(2 * var(--gridSize));
++  padding-bottom: 0 0 calc(4 * var(--gridSize)) 0;
+ }
+ 
+ .field {
+@@ -88,9 +88,15 @@
+ }
+ 
+ .select {
++  position: relative;
++
+   width: 100%;
+ }
+ 
++.select > div:last-of-type {
++  min-width: 100%;
++}
++
+ .option {
+   font-weight: normal;
+ }
+diff --git a/src/pages/item/page/components/relatedMaterials/index.jsx b/src/pages/item/page/components/relatedMaterials/index.jsx
+index 98d70900f..3c0c183e1 100644
+--- a/src/pages/item/page/components/relatedMaterials/index.jsx
++++ b/src/pages/item/page/components/relatedMaterials/index.jsx
+@@ -24,25 +24,21 @@ export function RelatedMaterials(props) {
+     };
+   }, [item]);
+   const { materials } = useRelatedMaterials(variables, { sort: true, remap: true });
+-  const empty = !materials?.length;
++
++  if (!materials?.length) {
++    return null;
++  }
+ 
+   return (
+     <div {...props}>
+-      <h2 className={style.sectionTitle}>Related Materials</h2>
+-      {empty &&
+-      <span data-id="related-materials-empty">
+-        No related materials.
+-      </span>
+-      }
+-      {!empty && (
+-        <RelatedMaterialsList
+-          identifiers={resources.identifiers.data}
+-          itemId={item?.id}
+-          materials={materials}
+-          publicList={true}
+-          relationships={resources.relationships.data}
+-        />
+-      )}
++      <h2 className={style.sectionTitle}>Related Materials</h2>(
++      <RelatedMaterialsList
++        identifiers={resources.identifiers.data}
++        itemId={item?.id}
++        materials={materials}
++        publicList={true}
++        relationships={resources.relationships.data}
++      />
+     </div>
+   );
+ }
+diff --git a/src/pages/item/page/components/relatedMaterials/index.test.jsx b/src/pages/item/page/components/relatedMaterials/index.test.jsx
+index 01bab1161..0ce144c64 100644
+--- a/src/pages/item/page/components/relatedMaterials/index.test.jsx
++++ b/src/pages/item/page/components/relatedMaterials/index.test.jsx
+@@ -39,7 +39,7 @@ describe("<RelatedMaterials />", () => {
+     result: { data: { getRelatedMaterials: [] } },
+   }];
+   const getRelatedMaterialsDataMock = [{
+-    request: { query: getRelatedMaterials, variables: { relatedMaterialIds: [1, 2, 3] } },
++    request: { query: getRelatedMaterials, variables: { articleId: 12000, relatedMaterialIds: [1, 2, 3] } },
+     result: {
+       data: {
+         getRelatedMaterials: [
+@@ -92,26 +92,8 @@ describe("<RelatedMaterials />", () => {
+     const tested = mount(<RelatedMaterialsWrapped item={testItem} mocks={[...getRelatedMaterialsEmptyMock]} />);
+     await wait(() => tested.update());
+ 
+-    expect(tested.isEmptyRender()).toEqual(false);
+-    expect(tested.find("h2")).toHaveLength(1);
+-  });
+-
+-  it("renders empty message correctly", async() => {
+-    const testItem = {
+-      id: 12000,
+-      references: [],
+-      linkbackCollection: {
+-        resourceTitle: "test-title",
+-        resourceDoi: "test-identifier",
+-        resourcePublication: "test-journal",
+-      },
+-    };
+-
+-    const tested = mount(<RelatedMaterialsWrapped item={testItem} mocks={[...getRelatedMaterialsEmptyMock]} />);
+-    await wait(() => tested.update());
+-
+-    expect(tested.isEmptyRender()).toEqual(false);
+-    expect(tested.find("span").text()).toContain("No related materials.");
++    expect(tested.isEmptyRender()).toEqual(true);
++    expect(tested.find("h2")).toHaveLength(0);
+   });
+ 
+   it("renders list message correctly", async() => {

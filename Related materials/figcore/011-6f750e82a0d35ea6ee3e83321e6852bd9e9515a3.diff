@@ -1,0 +1,21 @@
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index 46a1dff9a5..f7a7bc0685 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -2858,13 +2858,10 @@ def get_published_date(self):
+         return None
+ 
+     def bcheck_references(self):
++        references = self._metadata.references
+         if self._metadata.references and isinstance(self._metadata.references[0], int):
+-            references = []
+-            for i in self._metadata.references:
+-                url = APIEntity.ENTITIES.RelatedMaterial(i).link
+-                references.append(Text(url).format_url(encode=True))
+-            return references
+-        return self._metadata.references
++            references = [APIEntity.ENTITIES.RelatedMaterial(i).link for i in self._metadata.references]
++        return [Text(url).format_url(encode=True) for url in references]
+ 
+     def bcheck_related_material(self):
+         if (self._metadata.references and isinstance(self._metadata.references[0], str)) or (

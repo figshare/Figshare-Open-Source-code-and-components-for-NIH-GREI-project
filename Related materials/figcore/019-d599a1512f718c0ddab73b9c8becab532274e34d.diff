@@ -1,0 +1,13 @@
+diff --git a/src/figcore/lib/identifier/doi/__init__.py b/src/figcore/lib/identifier/doi/__init__.py
+index 5c31156c23..ba3221ee44 100644
+--- a/src/figcore/lib/identifier/doi/__init__.py
++++ b/src/figcore/lib/identifier/doi/__init__.py
+@@ -434,7 +434,7 @@ def build_xml(self, item_data):
+         next_version = item_data.get("next_version")
+         is_last_version = item_data.get("is_last_version")
+         base_identifier = identifier.text.rsplit(".", 1)[0]
+-        related_materials = item_data.get("related_materials")
++        related_materials = item_data.get("related_materials", [])
+         has_related_identifiers = next_version or is_last_version or related_materials
+ 
+         if has_related_identifiers:

@@ -1,0 +1,37 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+index 4692c0767..1f137659d 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+@@ -31,7 +31,7 @@ function renderRelatedMaterial(
+   const resolvedIdentifier = resolveIdentifier(identifier, identifierType, resolver);
+   const sanitizedIdentifier = encodeHTML.decode(encodeHTML(resolvedIdentifier));
+   const displayTitle = title || resolvedIdentifier;
+-  const encodedTitle = encodeHTML.decode(encodeHTML(displayTitle));
++  const encodedTitle = encodeHTML(displayTitle);
+   const titleIsDefined = !!title;
+   /**
+    * For lists that are rendered in the item/preview pages
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+index 2fa0a4c49..06fb2a578 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+@@ -132,14 +132,16 @@ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = t
+ 
+   const done = useMemo(() => {
+     const hasSlices = !!slices.length;
+-    const { loading } = query;
++    const { loading, data, error } = query;
+ 
+     if (hasSlices) {
+       return false;
+     }
+ 
+-    return !loading;
+-  }, [slices.length, query.loading]);
++    const withResult = !!data || !!error;
++
++    return loading ? false : withResult;
++  }, [slices.length, query]);
+ 
+   return { materials, done, setMaterials, query, fetchMore };
+ }

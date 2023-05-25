@@ -1,0 +1,419 @@
+diff --git a/figshare_api2/app/presenters/article.py b/figshare_api2/app/presenters/article.py
+index e89735067..4c09362ef 100644
+--- a/figshare_api2/app/presenters/article.py
++++ b/figshare_api2/app/presenters/article.py
+@@ -206,7 +206,9 @@ class ArticlePresenterL1(ArticlePresenter, ArticleEmbargoPresenter):
+     related_materials = computed("get_related_materials")
+ 
+     def get_related_materials(self, presenter):
+-        materials = RelatedMaterial.find_by_id_list(self.raw_field("related_materials"))
++        materials = []
++        if self.raw_field("related_materials"):
++            materials = RelatedMaterial.find_by_id_list(self.raw_field("related_materials"))
+         return RelatedMaterialPresenter.list(materials)
+ 
+     def get_is_confidential(self, presenter):
+diff --git a/figshare_api2/app/presenters/related_material.py b/figshare_api2/app/presenters/related_material.py
+index e7642c1f9..1e2b8b163 100644
+--- a/figshare_api2/app/presenters/related_material.py
++++ b/figshare_api2/app/presenters/related_material.py
+@@ -9,4 +9,3 @@ class RelatedMaterialPresenter(Presenter):
+     identifier_type = field("identifier_type")
+     is_linkout = field("is_linkout")
+     link = field("link")
+-
+diff --git a/figshare_api2/app/views/article/private.py b/figshare_api2/app/views/article/private.py
+index 631867749..d407572b2 100644
+--- a/figshare_api2/app/views/article/private.py
++++ b/figshare_api2/app/views/article/private.py
+@@ -64,7 +64,9 @@ def create_article(self, oauth):
+         if "title" not in article_dict:
+             raise exceptions.MissingParams("title")
+ 
+-        article_dict["references"] = article_dict.get("related_materials", article_dict.get("references"))
++        references = article_dict.get("related_materials", article_dict.get("references"))
++        if references:
++            article_dict["references"] = references
+ 
+         article = account.create_article(article_dict, get_first_perfect_match_author=True)
+ 
+@@ -159,7 +161,9 @@ def update_article(self, oauth):
+             update_data["categories"] = categories
+ 
+         article_dict = ArticleParser(update_data, institution, additional_data)
+-        article_dict["references"] = article_dict.get("related_materials", article_dict.get("references"))
++        references = article_dict.get("related_materials", article_dict.get("references"))
++        if references:
++            article_dict["references"] = references
+ 
+         account.actions_for(article).update(article_dict, get_first_perfect_match_author=True)
+ 
+@@ -214,7 +218,9 @@ def update_article_version(self, oauth):
+             update_data["categories"] = categories
+ 
+         article_dict = ArticleVersionParser(update_data, account.institution)
+-        article_dict["references"] = article_dict.get("related_materials", article_dict.get("references"))
++        references = article_dict.get("related_materials", article_dict.get("references"))
++        if references:
++            article_dict["references"] = references
+         account.actions_for(article_version).update(article_dict)
+ 
+         response = httpexceptions.HTTPResetContent()
+diff --git a/figshare_api2/app/views/projects/private_articles.py b/figshare_api2/app/views/projects/private_articles.py
+index ac370d8e4..a203a0da2 100644
+--- a/figshare_api2/app/views/projects/private_articles.py
++++ b/figshare_api2/app/views/projects/private_articles.py
+@@ -33,7 +33,9 @@ def add_article(self, oauth):
+         additional_data = {"institution_id": project.institution_id, "group_id": project.group_id}
+ 
+         article_dict = ArticleParser(self.json_body, institution=institution, additional_data=additional_data)
+-        article_dict["references"] = article_dict.get("related_materials", article_dict.get("references"))
++        references = article_dict.get("related_materials", article_dict.get("references"))
++        if references:
++            article_dict["references"] = references
+ 
+         if "title" not in article_dict:
+             raise exceptions.MissingParams("title")
+diff --git a/figshare_api2/tests/app/presenters/article_test.py b/figshare_api2/tests/app/presenters/article_test.py
+index afd210edb..df42e191f 100644
+--- a/figshare_api2/tests/app/presenters/article_test.py
++++ b/figshare_api2/tests/app/presenters/article_test.py
+@@ -1,13 +1,14 @@
+ from datetime import datetime
+ 
+ import pytest
+-from figcore.api import Article, Group
++from figcore.api import Article, Group, RelatedMaterial
+ from mock import Mock, patch
+ 
+ from figshare_api2.app.presenters import ArticlePresenter, ArticlePresenterWithProject
+ 
+ POSTED_DATE = "1900-01-01T00:00:00"
+ RESOURCE_TITLE = "resource title"
++RESOURCE_DOI = "10.10/123"
+ 
+ 
+ @pytest.fixture
+@@ -103,7 +104,7 @@ def article(file_mock, institution):
+     obj.files = [file_mock]
+ 
+     obj.resource_title = RESOURCE_TITLE
+-    obj.resource_doi = "resource_doi"
++    obj.resource_doi = RESOURCE_DOI
+ 
+     obj.published_date = datetime(1900, 1, 1)
+     obj.timeline = {"posted": obj.published_date.isoformat()}
+@@ -133,7 +134,7 @@ def article_dict():
+         "url_public_api": "https://api.figinternal.dev/v2/articles/1",
+         "url_public_html": "https://figtest.com/articles/dataset/test_title/1",
+         "resource_title": RESOURCE_TITLE,
+-        "resource_doi": "resource_doi",
++        "resource_doi": RESOURCE_DOI,
+     }
+ 
+ 
+@@ -156,6 +157,16 @@ def mock_find_group(request):
+     return mock
+ 
+ 
++@pytest.fixture(autouse=True)
++def mock_find_related_material(request):
++    patcher = patch.object(RelatedMaterial, "find_by_id_list")
++    request.addfinalizer(patcher.stop)
++    mock = patcher.start()
++    mock.return_value = [Mock(id=1, identifier=RESOURCE_DOI, title=RESOURCE_TITLE)]
++
++    return mock
++
++
+ def test_article_presenter_public(article, article_dict):
+     response = ArticlePresenter(article, use_public_url=True)
+ 
+@@ -214,7 +225,7 @@ def test_l2_private_contains_resource_fields(article):
+     response = ArticlePresenter.L2Private(article, use_public_url=False)
+ 
+     assert response["resource_title"] == RESOURCE_TITLE
+-    assert response["resource_doi"] == "resource_doi"
++    assert response["resource_doi"] == RESOURCE_DOI
+ 
+ 
+ def test_l2_private_contains_group_resource_id(article):
+diff --git a/figshare_api2/tests/app/presenters/curation_test.py b/figshare_api2/tests/app/presenters/curation_test.py
+index 7d1837f7f..9b5fa43a0 100644
+--- a/figshare_api2/tests/app/presenters/curation_test.py
++++ b/figshare_api2/tests/app/presenters/curation_test.py
+@@ -1,7 +1,13 @@
++from mock import Mock, patch
+ import pytest
+ 
++from figcore.api import RelatedMaterial
++
+ from figshare_api2.app.presenters.curation import CurationPresenter, CurationPresenterL1
+ 
++RESOURCE_TITLE = "resource title"
++RESOURCE_DOI = "10.10/123"
++
+ 
+ @pytest.fixture
+ def curation_dict():
+@@ -67,6 +73,17 @@ def curation_dict_l1(curation_dict):
+         "modified_date": "1902-01-01T00:00:00Z",
+         "published_date": "1903-01-01T00:00:00Z",
+         "references": [],
++        "related_materials": [
++            {
++                "id": 1,
++                "identifier": "10.10/123",
++                "identifier_type": "DOI",
++                "is_linkout": False,
++                "link": "https://doi.org/10.10/123",
++                "relation": "IsSupplementTo",
++                "title": "resource title",
++            }
++        ],
+         "resource_doi": "resource_doi",
+         "resource_title": "resource title",
+         "size": 123456789,
+@@ -97,6 +114,26 @@ def curation_dict_l1(curation_dict):
+     return obj
+ 
+ 
++@pytest.fixture(autouse=True)
++def mock_find_related_material(request):
++    patcher = patch.object(RelatedMaterial, "find_by_id_list")
++    request.addfinalizer(patcher.stop)
++    mock = patcher.start()
++    mock.return_value = [
++        Mock(
++            id=1,
++            identifier=RESOURCE_DOI,
++            title=RESOURCE_TITLE,
++            identifier_type="DOI",
++            is_linkout=False,
++            relation="IsSupplementTo",
++            link=f"https://doi.org/{RESOURCE_DOI}",
++        )
++    ]
++
++    return mock
++
++
+ def test_curation_presenter(curation, curation_dict):
+     response = CurationPresenter(curation)
+     assert response == curation_dict
+diff --git a/figshare_api2/tests/app/presenters/project_article_test.py b/figshare_api2/tests/app/presenters/project_article_test.py
+index 64f8b1c96..8c53d4604 100644
+--- a/figshare_api2/tests/app/presenters/project_article_test.py
++++ b/figshare_api2/tests/app/presenters/project_article_test.py
+@@ -1,7 +1,8 @@
+ import pytest
+ from mock import Mock, patch
+ 
+-from figcore.api import Group
++from figcore.api import Group, RelatedMaterial
++
+ from figshare_api2.app.presenters import ArticlePresenter, ProjectArticlePrivatePresenter
+ 
+ 
+@@ -31,6 +32,7 @@ def test_L1_presenter(article):
+         assert result[key] == base_result[key]
+ 
+ 
++@patch.object(RelatedMaterial, "find_by_id_list")
+ def test_L2_presenter(article):
+     base_result = ArticlePresenter.L2Private(article, use_public_url=False)
+     result = ProjectArticlePrivatePresenter.L2(article, article_url)
+diff --git a/figshare_api2/tests/app/views/article/private/get_article_test.py b/figshare_api2/tests/app/views/article/private/get_article_test.py
+index adf4ce177..83ad42cda 100644
+--- a/figshare_api2/tests/app/views/article/private/get_article_test.py
++++ b/figshare_api2/tests/app/views/article/private/get_article_test.py
+@@ -1,7 +1,7 @@
+ import pytest
+ from mock import Mock, patch
+ 
+-from figcore.api import Group
++from figcore.api import Group, RelatedMaterial
+ from figshare_api2.app import exceptions
+ from figshare_api2.app.presenters import ArticlePresenter
+ from figshare_api2.app.views.article.private import ArticlePrivateView
+@@ -28,7 +28,8 @@ def mock_find_group(request):
+     return mock
+ 
+ 
+-def test_returns_correct_data(api_handler, article, mocked_oauth):
++@patch.object(RelatedMaterial, "find_by_id_list")
++def test_returns_correct_data(mocked_related_materials_find, api_handler, article, mocked_oauth):
+     mocked_oauth.account.get_article.return_value = article
+     expected_response = ArticlePresenter.L2Private(article, use_public_url=False)
+     response = api_handler.get_article()
+@@ -36,7 +37,8 @@ def test_returns_correct_data(api_handler, article, mocked_oauth):
+     assert response == expected_response
+ 
+ 
+-def test_assert_calls_get_article_with_correct_data(api_handler, article, mocked_oauth):
++@patch.object(RelatedMaterial, "find_by_id_list")
++def test_assert_calls_get_article_with_correct_data(mocked_related_materials_find, api_handler, article, mocked_oauth):
+     mocked_oauth.account.get_article.return_value = article
+     api_handler.get_article()
+     account_call = mocked_oauth.account.get_article
+diff --git a/figshare_api2/tests/app/views/article/private/update_test.py b/figshare_api2/tests/app/views/article/private/update_test.py
+index 1c6472c52..95389be61 100644
+--- a/figshare_api2/tests/app/views/article/private/update_test.py
++++ b/figshare_api2/tests/app/views/article/private/update_test.py
+@@ -1,5 +1,4 @@
+ import pytest
+-from mock import Mock, patch
+ from pyramid import httpexceptions
+ 
+ from figshare_api2.app import exceptions
+diff --git a/figshare_api2/tests/app/views/article/public/get_article_test.py b/figshare_api2/tests/app/views/article/public/get_article_test.py
+index 56833954a..b85f579dc 100644
+--- a/figshare_api2/tests/app/views/article/public/get_article_test.py
++++ b/figshare_api2/tests/app/views/article/public/get_article_test.py
+@@ -1,7 +1,7 @@
+ import pytest
+ from mock import patch
+ 
+-from figcore.api import ArticleVersion
++from figcore.api import ArticleVersion, RelatedMaterial
+ 
+ from figshare_api2.app import exceptions
+ from figshare_api2.app.presenters import ArticlePresenter
+@@ -19,8 +19,9 @@ def http_request(pyramid_request):
+     return pyramid_request
+ 
+ 
++@patch.object(RelatedMaterial, "find_by_id_list")
+ @patch.object(ArticleVersion, "get_by_article_id")
+-def test_happy_path_return(mocked_article_find, api_handler, article):
++def test_happy_path_return(mocked_article_find, mocked_related_materials_find, api_handler, article):
+     mocked_article_find.return_value = article
+     expected_response = ArticlePresenter.L2Public(article, use_public_url=True)
+     response = api_handler.get_article()
+@@ -28,8 +29,9 @@ def test_happy_path_return(mocked_article_find, api_handler, article):
+     assert response == expected_response
+ 
+ 
++@patch.object(RelatedMaterial, "find_by_id_list")
+ @patch.object(ArticleVersion, "get_by_article_id")
+-def test_happy_path_call(mocked_article_find, api_handler):
++def test_happy_path_call(mocked_article_find, mocked_related_materials_find, api_handler):
+     api_handler.get_article()
+     mocked_article_find.assert_called_once_with(3)
+ 
+diff --git a/figshare_api2/tests/app/views/article/versions/get_version_test.py b/figshare_api2/tests/app/views/article/versions/get_version_test.py
+index 6a2bb7e80..e7d13be84 100644
+--- a/figshare_api2/tests/app/views/article/versions/get_version_test.py
++++ b/figshare_api2/tests/app/views/article/versions/get_version_test.py
+@@ -1,8 +1,8 @@
++from mock import patch, Mock
+ import pytest
+-from mock import patch
+-from pyramid import httpexceptions
+ 
+-from figcore.api import ArticleVersion
++from figcore.api import ArticleVersion, RelatedMaterial
++
+ from figshare_api2.app import exceptions
+ from figshare_api2.app.presenters import ArticlePresenter
+ from figshare_api2.app.views.article.versions import ArticlesVersionView
+@@ -20,6 +20,16 @@ def http_request(pyramid_request):
+     return pyramid_request
+ 
+ 
++@pytest.fixture(autouse=True)
++def mock_find_related_material(request):
++    patcher = patch.object(RelatedMaterial, "find_by_id_list")
++    request.addfinalizer(patcher.stop)
++    mock = patcher.start()
++    mock.return_value = [Mock(id=1)]
++
++    return mock
++
++
+ @patch.object(ArticleVersion, "find")
+ def test_returns_correct_data(mocked_find, api_handler, article, mocked_oauth):
+     mocked_find.return_value = article
+diff --git a/figshare_api2/tests/app/views/institution/institution_curation_test.py b/figshare_api2/tests/app/views/institution/institution_curation_test.py
+index cf5b5572b..4110f141b 100644
+--- a/figshare_api2/tests/app/views/institution/institution_curation_test.py
++++ b/figshare_api2/tests/app/views/institution/institution_curation_test.py
+@@ -6,7 +6,6 @@
+ from figcore.lib.entity_factory import article as figcore_article
+ from figcore.lib.entity_factory import curation as figcore_curation
+ 
+-from figshare_api2.app import exceptions
+ from figshare_api2.app.views import InstitutionCurationView
+ from figshare_api2.app.views import institution as institution_views
+ 
+diff --git a/figshare_api2/tests/app/views/projects/private_articles/get_article_test.py b/figshare_api2/tests/app/views/projects/private_articles/get_article_test.py
+index f469ccbd1..cf6db5528 100644
+--- a/figshare_api2/tests/app/views/projects/private_articles/get_article_test.py
++++ b/figshare_api2/tests/app/views/projects/private_articles/get_article_test.py
+@@ -1,7 +1,7 @@
+ import pytest
+ from mock import Mock, patch
+ 
+-from figcore.api import Group
++from figcore.api import Group, RelatedMaterial
+ from figshare_api2.app import exceptions
+ from figshare_api2.app.presenters import ProjectArticlePrivatePresenter
+ from figshare_api2.app.views import ProjectArticlePrivateView
+@@ -48,6 +48,16 @@ def mock_find_group(request):
+     return mock
+ 
+ 
++@pytest.fixture(autouse=True)
++def mock_find_related_material(request):
++    patcher = patch.object(RelatedMaterial, "find_by_id_list")
++    request.addfinalizer(patcher.stop)
++    mock = patcher.start()
++    mock.return_value = [Mock(id=1)]
++
++    return mock
++
++
+ def test_raises_on_invalid_project_id(handler, http_request):
+     http_request.matchdict["project_id"] = "invalid"
+ 
+diff --git a/figshare_api2/tests/functional_test/helpers/factory.py b/figshare_api2/tests/functional_test/helpers/factory.py
+index cb6a6cb38..9ab7cb1ae 100644
+--- a/figshare_api2/tests/functional_test/helpers/factory.py
++++ b/figshare_api2/tests/functional_test/helpers/factory.py
+@@ -1,5 +1,3 @@
+-from __future__ import absolute_import
+-
+ from figcore.api import (
+     Account,
+     ArticleComment,
+@@ -460,6 +458,7 @@ def complete_article(id_):
+     article_mock.project = project()
+     article_mock.ENTITIES = APIEntity.ENTITIES
+     article_mock.get_file_ids_attached_to_article_versions.return_value = []
++    article_mock.related_materials = []
+ 
+     return article_mock
+ 
+diff --git a/figshare_api2/tests/functional_test/institution_curations_test.py b/figshare_api2/tests/functional_test/institution_curations_test.py
+index f8cf5995c..06261a499 100644
+--- a/figshare_api2/tests/functional_test/institution_curations_test.py
++++ b/figshare_api2/tests/functional_test/institution_curations_test.py
+@@ -41,6 +41,7 @@ def article():
+     article.get_timeline.return_value = {}
+     article.embargo_options = []
+     article.institution = institution
++    article.related_materials = []
+ 
+     return article
+ 
+diff --git a/requirements_development.txt b/requirements_development.txt
+index ef11348cf..53e629739 100644
+--- a/requirements_development.txt
++++ b/requirements_development.txt
+@@ -1,5 +1,5 @@
+ -r requirements.txt
+ 
+--e git+ssh://git@github.com/figshare/figcore.git@adrianp/feature/related-materials#egg=figcore
++-e git+ssh://git@github.com/figshare/figcore.git@master#egg=figcore
+ 
+ -e .

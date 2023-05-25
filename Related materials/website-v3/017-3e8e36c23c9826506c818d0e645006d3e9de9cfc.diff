@@ -1,0 +1,178 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+index ad1d8405b..2989da0de 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+@@ -9,6 +9,7 @@ import { GraphQLError } from "graphql";
+ 
+ import { relatedMaterialCreate, relatedMaterialUpdate } from "../../index.gql";
+ import { RelatedMaterialsListItem } from "../relatedMaterialsList";
++import { NO_STARTS_WITH_RESOLVER } from "../relatedMaterialsForm/constants";
+ 
+ import { ManageRelatedMaterials } from "./index";
+ 
+@@ -631,6 +632,10 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     expect(component.find("div[data-error-at=\"change\"]")).toHaveLength(1);
+ 
++    expect(NO_STARTS_WITH_RESOLVER.fn("https://doi.org/identifier", { resolver: "https://doi.org/" })).toEqual(false);
++    expect(NO_STARTS_WITH_RESOLVER.fn("https://doi.org/identifier", { resolver: "" })).toEqual(true);
++    expect(NO_STARTS_WITH_RESOLVER.fn("isn:/identifier", { resolver: "https://" })).toEqual(true);
++
+     component.unmount();
+   });
+ });
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+index 24187597a..59601a5f7 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+@@ -1,3 +1,5 @@
++import React from "react";
++
+ import { isRequired, minChecked, maxLength, minLength } from "../../../../../utils";
+ 
+ 
+@@ -80,9 +82,26 @@ const IS_REQUIRED_SCHEMA = {
+       `The '${label}' field is mandatory.`,
+ };
+ 
++export const NO_STARTS_WITH_RESOLVER = {
++  type: "noStartsWithResolver",
++  at: ["submit", "blur:touched"],
++  parameters: ["touched", "resolver"],
++  fn: (value, { resolver }) => {
++    if (resolver && value.trim().startsWith(resolver)) {
++      return false;
++    }
++
++    return true;
++  },
++  message:
++    ({ label, parameters: { resolver } }) =>
++      <>The {"\""}{label}{"\""} field cannot start with <b>{resolver}</b></>,
++};
++
+ export const RELATED_MATERIAL_FORM_VALIDATION_SCHEMA = {
+   identifier: [
+     IS_REQUIRED_SCHEMA,
++    NO_STARTS_WITH_RESOLVER,
+     {
+       type: "minLength",
+       at: ["blur:touched", "submit"],
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx
+index f6c6f08c9..41cd1f94b 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx
+@@ -28,6 +28,13 @@ function renderResource(option) {
+   </Option>);
+ }
+ 
++function getResolverValue(stateRef, resources) {
++  const selectedIdentifierType = getIn(stateRef, "current.fields.identifierType.value");
++  const identifierObject = resources.identifiers.data.find((entry) => entry.key === selectedIdentifierType);
++
++  return getIn(identifierObject, "meta.resolver");
++}
++
+ 
+ export function RelatedMaterialsForm({
+   material, persist, resources, className, linkoutTotal, settings,
+@@ -82,6 +89,8 @@ export function RelatedMaterialsForm({
+       batch.order.push(name);
+ 
+       const { validation } = settingsRef.current;
++      const resolver = getResolverValue(stateRef, resources);
++
+       const error = getFieldError({
+         name,
+         value: field.value,
+@@ -94,6 +103,7 @@ export function RelatedMaterialsForm({
+             ...validation,
+             currentLinkoutsTotal: linkoutTotalRef.current,
+             savedMaterialIsLinked,
++            resolver,
+           },
+         },
+       });
+@@ -191,6 +201,7 @@ export function RelatedMaterialsForm({
+     const { validation } = settingsRef.current;
+     const materialsRef = Registry.get("item-edit/related-materials");
+     const identifiers = materialsRef?.current;
++    const resolver = getResolverValue(stateRef, resources);
+ 
+     const error = getFieldError({
+       value,
+@@ -200,7 +211,11 @@ export function RelatedMaterialsForm({
+         touched,
+         formId,
+         label: field.settings.label,
+-        parameters: { ...validation, identifiers },
++        parameters: {
++          ...validation,
++          identifiers,
++          resolver,
++        },
+       },
+     });
+ 
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+index b21f1d0d6..1bda4e553 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+@@ -29,8 +29,8 @@ function renderRelatedMaterial(
+   const resolver = getIn(material, "resolver", getIn(identifierTypeObj, "meta.resolver", ""));
+   const resolvedIdentifier = resolveIdentifier(identifier, identifierType, resolver);
+   const sanitizedIdentifier = encodeHTML.decode(encodeHTML(resolvedIdentifier));
+-  const displayTitle = title || identifier;
+-  const encodedTitle = encodeHTML(displayTitle);
++  const displayTitle = title || resolvedIdentifier;
++  const encodedTitle = encodeHTML.decode(encodeHTML(displayTitle));
+   /**
+    * For lists that are rendered in the item/preview pages
+    * search highlights are needed for the material title.
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
+index 8e306c913..310019161 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
+@@ -330,9 +330,9 @@ describe("utils", () => {
+     expect(focusSpy).toHaveBeenCalledTimes(1);
+   });
+ 
+-  it("resolveIdentifier() prefixes a resolver to an identifier if needed", () => {
++  it("resolveIdentifier() always prefixes a resolver to an identifier", () => {
+     expect(resolveIdentifier("identifier", undefined, "resolver/")).toEqual("resolver/identifier");
+-    expect(resolveIdentifier("resolver/identifier", undefined, "resolver/")).toEqual("resolver/identifier");
++    expect(resolveIdentifier("resolver/identifier", undefined, "resolver/")).toEqual("resolver/resolver/identifier");
+   });
+ 
+   it("delayAction() delays calling an action by a certain amount of time", async() => {
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils.jsx
+index 12488bc0f..c88b3b042 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils.jsx
+@@ -2,7 +2,7 @@ import compact from "utils/compact";
+ 
+ 
+ export function resolveIdentifier(identifier, type, resolver) {
+-  if (resolver && !identifier.startsWith(resolver)) {
++  if (resolver) {
+     return `${resolver}${identifier}`;
+   }
+ 
+diff --git a/src/pages/item/page/components/linkback/index.jsx b/src/pages/item/page/components/linkback/index.jsx
+index a32a068ad..6792462d5 100644
+--- a/src/pages/item/page/components/linkback/index.jsx
++++ b/src/pages/item/page/components/linkback/index.jsx
+@@ -16,12 +16,12 @@ import styles from "./index.css";
+ function renderItem(material, identifiers, relationships, itemId) {
+   const { id, identifier, identifierType, relation, title } = material;
+   const relationship = relationships.find((entry) => entry.value === relation)?.key ?? relation;
+-  const displayTitle = title || identifier;
+   const identifierTypeObj = identifiers.find((entry) => entry.value === identifierType);
+   const isUrl = getIn(material, "isUrl", getIn(identifierTypeObj, "meta.isUrl", false));
+   const resolver = getIn(material, "resolver", getIn(identifierTypeObj, "meta.resolver", ""));
+   const resolvedIdentifier = resolveIdentifier(identifier, identifierType, resolver);
+   const journal = getIn(material, "meta.publication");
++  const displayTitle = title || resolvedIdentifier;
+   const titleHasWords = displayTitle.search(/\s/) !== -1;
+ 
+   return (

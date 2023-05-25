@@ -1,0 +1,11 @@
+diff --git a/src/figcore/api/account/actions/account.py b/src/figcore/api/account/actions/account.py
+index c5b1764ac7..21517e0468 100644
+--- a/src/figcore/api/account/actions/account.py
++++ b/src/figcore/api/account/actions/account.py
+@@ -481,5 +481,5 @@ def update_related_material(self, id, data):
+         if related_material.account_id != self.account.id:
+             raise fig_exc.InsufficientPermissions("Cannot update related material")
+         data["account_id"] = self.account.id
+-        related_material.update(data)
++        related_material = self.ENTITIES.RelatedMaterial.create(data)
+         return related_material

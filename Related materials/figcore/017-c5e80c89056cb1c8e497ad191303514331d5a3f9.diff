@@ -1,0 +1,56 @@
+diff --git a/src/figcore/api/article/version_api.py b/src/figcore/api/article/version_api.py
+index d7e3657e34..d212611ae7 100644
+--- a/src/figcore/api/article/version_api.py
++++ b/src/figcore/api/article/version_api.py
+@@ -1797,7 +1797,7 @@ def bcheck_related_material(self):
+                     }
+                 )
+                 references.append(material.id)
+-            ArticleVersionInternals.update_version(self.article_id, self.version, references)
++            ArticleVersionInternals.update_version_metadata(self.article_id, self.version, {"references": references})
+             self._metadata = None  # force reloading metadata
+             return references
+         return self._metadata.references
+diff --git a/tests/api/article/test_references.py b/tests/api/article/test_references.py
+index 5df6f855e2..263179a2f0 100644
+--- a/tests/api/article/test_references.py
++++ b/tests/api/article/test_references.py
+@@ -1,6 +1,8 @@
+-from figcore.api import Article, Account, RelatedMaterial
+-import figcore.exc as fig_exc
++import json
+ 
++from figcore import DBConnection
++from figcore.api import Article, Account, RelatedMaterial, ArticleVersion
++import figcore.exc as fig_exc
+ from figcore.internals.article import ArticleInternals
+ 
+ from tests import BaseTestTransactioned
+@@ -185,3 +187,27 @@ def test_related_materials_list(self):
+         article.update_article(update_data)
+         self.assertEqual(len(article.related_materials), 2)
+         self.assertFalse(RelatedMaterial(article.related_materials[1]).is_linkout)
++
++    def test_version_backwards_compatible_references(self):
++        article_data = {
++            "title": "References test",
++            "description": "lorem ipsum dolor",
++            "is_active": 1,
++            "defined_type": 3,
++            "account_id": self.account.id,
++            "institution_id": self.account.institution_id,
++            "group_id": self.account.group_id,
++            "detected_license_id": 1,
++            "tags": ["test"],
++            "categories": [2],
++            "references": ["https://google.com", "10.1000/182"],
++        }
++        article = Article.create_article(article_data)
++        self.account.actions_for(article).publish()
++
++        with DBConnection.get_session() as db_session:
++            query = "UPDATE article_metadata_version SET `references`=:references where article_id=:article_id"
++            db_session.execute(query, {"references": json.dumps(article_data["references"]), "article_id": article.id})
++
++        version = ArticleVersion.find(article.id, 1)
++        self.assertEquals(RelatedMaterial(version.related_materials[0]).identifier, article_data["references"][0])

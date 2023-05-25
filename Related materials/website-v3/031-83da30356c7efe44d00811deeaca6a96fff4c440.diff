@@ -1,0 +1,70 @@
+diff --git a/src/pages/item/page/components/linkback/index.jsx b/src/pages/item/page/components/linkback/index.jsx
+index 9065e3287..34e72c7f8 100644
+--- a/src/pages/item/page/components/linkback/index.jsx
++++ b/src/pages/item/page/components/linkback/index.jsx
+@@ -44,9 +44,8 @@ function renderItem(material, identifiers, relationships, itemId) {
+ }
+ 
+ export function Linkback(props) {
+-  const { item, domainData, isPublic, isShared, isSharedInCollection } = useContext(Context);
++  const { item, domainData, isPublic } = useContext(Context);
+   const { identifiers, relationships } = useIdentifiersAndRelationshipsResource();
+-  const hideLinkbackSection = useMemo(() => isShared || isSharedInCollection, [isShared, isSharedInCollection]);
+   const variables = useMemo(() => {
+     return {
+       id: getIn(item, "id"),
+@@ -90,10 +89,6 @@ export function Linkback(props) {
+   const withLinkback = empty && linkback;
+   const itemId = item?.id;
+ 
+-  if (hideLinkbackSection) {
+-    return null;
+-  }
+-
+   return (
+     <ul className={styles.linkback} {...props}>
+       {done && (<>
+diff --git a/src/pages/item/page/components/linkback/index.test.jsx b/src/pages/item/page/components/linkback/index.test.jsx
+index 3333f9659..7611eb18a 100644
+--- a/src/pages/item/page/components/linkback/index.test.jsx
++++ b/src/pages/item/page/components/linkback/index.test.jsx
+@@ -238,39 +238,4 @@ describe("<Linkback />", () => {
+ 
+     expect(component.isEmptyRender()).toEqual(true);
+   });
+-
+-  it("does not render item is shared or shared in collection", async() => {
+-    const testItem = {
+-      id: 12000,
+-      version: 0,
+-      references: [],
+-      linkbackCollection: null,
+-    };
+-
+-    let component = mount(
+-      <LinkbackWrapped
+-        domainData={ { linkBackTitle: "My linkback title" } }
+-        isShared={true}
+-        item={testItem}
+-        mocks={[...getRelatedMaterialsEmptyMock]}
+-      />
+-    );
+-
+-    await wait(() => component.update());
+-
+-    expect(component.isEmptyRender()).toEqual(true);
+-
+-    component = mount(
+-      <LinkbackWrapped
+-        domainData={ { linkBackTitle: "My linkback title" } }
+-        isSharedInCollection={true}
+-        item={testItem}
+-        mocks={[...getRelatedMaterialsEmptyMock]}
+-      />
+-    );
+-
+-    await wait(() => component.update());
+-
+-    expect(component.isEmptyRender()).toEqual(true);
+-  });
+ });

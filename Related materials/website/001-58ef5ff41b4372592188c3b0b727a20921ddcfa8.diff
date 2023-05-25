@@ -1,0 +1,63 @@
+diff --git a/frontend/shared/components/item_edit/lib/validation_rules.js b/frontend/shared/components/item_edit/lib/validation_rules.js
+index b59d407be4..2f550f64e0 100644
+--- a/frontend/shared/components/item_edit/lib/validation_rules.js
++++ b/frontend/shared/components/item_edit/lib/validation_rules.js
+@@ -1,7 +1,7 @@
+ /* eslint-disable babel/no-invalid-this */
+ import FieldError from "shared/lib/validation/field_error";
+ import validateLink from "shared/lib/validation/link";
+-import { isDOI, stripHtmlTags, trimHtmlSpaces } from "shared/lib/sanitizers";
++import { isDOI, stripHtmlTags, trimHtmlSpaces, isURN } from "shared/lib/sanitizers";
+ import { isAuthorListValid } from "shared/apps/authors_selector/services/validate";
+ 
+ 
+@@ -87,7 +87,7 @@ export const length = (message, max) => function(fieldName, value, options, call
+ export const validateRefrences = (message) => function(fieldName, value, options = {}, callback) {
+   let hasError = false;
+   value.forEach((link, index) => {
+-    if (link.length && !validateLink(link) && !isDOI(link) && index !== options.ignore) {
++    if (link.length && !validateLink(link) && !isDOI(link) && !isURN(link) && index !== options.ignore) {
+       this.addError(fieldName, new FieldError(message, { index: [index] }));
+       hasError = true;
+     }
+diff --git a/frontend/shared/lib/sanitizers.js b/frontend/shared/lib/sanitizers.js
+index 9a3d342a6f..8aed9b4096 100644
+--- a/frontend/shared/lib/sanitizers.js
++++ b/frontend/shared/lib/sanitizers.js
+@@ -42,6 +42,10 @@ export function isDOI(value = "") {
+   return VALID_DOI_REGEX.test(value);
+ }
+ 
++export function isURN(value = "") {
++  return value.startsWith("urn:");
++}
++
+ /**
+  * Removes the version part from figshare issued DOIs. This is useful, for
+  * example, for Altmetric, which ignores the version when aggregating its data.
+diff --git a/frontend/shared/lib/validator3/rules.js b/frontend/shared/lib/validator3/rules.js
+index d2552b2cd4..6b545110f0 100644
+--- a/frontend/shared/lib/validator3/rules.js
++++ b/frontend/shared/lib/validator3/rules.js
+@@ -3,7 +3,7 @@ import isEmail from "validator/lib/isEmail";
+ import trim from "validator/lib/trim";
+ import isURL from "validator/lib/isURL";
+ import isOrcid from "shared/lib/is_orcid";
+-import { isDOI, stripHtmlTags, trimHtmlSpaces } from "shared/lib/sanitizers";
++import { isDOI, stripHtmlTags, trimHtmlSpaces, isURN } from "shared/lib/sanitizers";
+ import nonASCII from "shared/lib/non_ascii";
+ 
+ 
+@@ -166,10 +166,11 @@ export function listOfReferences({ message, field }) {
+         return null;
+       }
+ 
++      const isValidURN = isURN(link);
+       const isValidURL = isURL(link, { "require_protocol": true });
+       const isValidDOI = isDOI(link);
+ 
+-      if (link.length && !isValidURL && !isValidDOI) {
++      if (link.length && !isValidURL && !isValidDOI && !isValidURN) {
+         hasErrors = true;
+ 
+         return message;

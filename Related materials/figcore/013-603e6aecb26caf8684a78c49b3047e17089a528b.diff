@@ -1,0 +1,21 @@
+diff --git a/src/figcore/api/related_material/api.py b/src/figcore/api/related_material/api.py
+index 487f7d769c..bd90774ecb 100644
+--- a/src/figcore/api/related_material/api.py
++++ b/src/figcore/api/related_material/api.py
+@@ -100,6 +100,16 @@ def process_related_materials_list(cls, materials, account_id):
+     def load_model(self):
+         self._model = RelatedMaterialInternals.get_by_id(self.id)
+ 
++    def to_dict(self):
++        return {
++            "id": self.id,
++            "identifier": self.identifier,
++            "title": self.title,
++            "identifier_type": self.identifier_type,
++            "relation": self.relation,
++            "is_linkout": self.is_linkout,
++        }
++
+     def __eq__(self, other):
+         return self.identifier == other.identifier and self.relation == other.relation
+ 

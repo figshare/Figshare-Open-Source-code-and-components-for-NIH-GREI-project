@@ -1,0 +1,100 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+index ef29f969e..e065f97ca 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+@@ -198,23 +198,37 @@ describe("<ManageRelatedMaterials />", () => {
+     });
+ 
+     await wait(() => component.update());
++
++    act(() => {
++      component.find(`input[id="related-materials-form-${form}-field-identifier"]`).
++        simulate("blur", { target: { name: "identifier", value } });
++    });
++
++    await wait(() => component.update());
+   }
+ 
+   async function unitStepFragmentChangeFormFieldTitle(component, { form, value }) {
+     act(() => {
+       // edit the material identifier
+-      component.find(`input[id="related-materials-form-${form}-field-identifier"]`).
++      component.find(`input[id="related-materials-form-${form}-field-title"]`).
+         simulate("change", { target: { name: "title", value } });
+     });
+ 
+     await wait(() => component.update());
++
++    act(() => {
++      component.find(`input[id="related-materials-form-${form}-field-title"]`).
++        simulate("blur", { target: { name: "title", value } });
++    });
++
++    await wait(() => component.update());
+   }
+ 
+   async function unitStepFragmentChangeFormFieldLinkout(component, { form, checked }) {
+     act(() => {
+       // edit the material identifier
+       component.find(`input[id="related-materials-form-${form}-field-linkout"]`).
+-        simulate("change", { target: { name: "title", checked } });
++        simulate("change", { target: { name: "linkout", checked } });
+     });
+ 
+     await wait(() => component.update());
+@@ -558,13 +572,13 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     expect(onMaterialsChange).not.toHaveBeenCalled();
+ 
+-    expect(component.find("div[data-error-at=\"change\"]")).toHaveLength(2);
++    expect(component.find("div[data-error-at=\"blur\"]")).toHaveLength(2);
+ 
+     await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "too long" });
+     await unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "too long" });
+ 
+ 
+-    expect(component.find("div[data-error-at=\"change\"]")).toHaveLength(2);
++    expect(component.find("div[data-error-at=\"blur\"]")).toHaveLength(2);
+ 
+ 
+     await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "right" });
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+index 5e60628e1..24bab9e54 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+@@ -89,7 +89,7 @@ export const RELATED_MATERIAL_FORM_VALIDATION_SCHEMA = {
+     IS_REQUIRED_SCHEMA,
+     {
+       type: "minLength",
+-      at: ["change", "blur:touched", "submit"],
++      at: ["blur:touched", "submit"],
+       parameters: ["maxIdentifierLength", "minIdentifierLength"],
+       fn: (value, { minIdentifierLength }) => minLength(value, minIdentifierLength),
+       message:
+@@ -98,7 +98,7 @@ export const RELATED_MATERIAL_FORM_VALIDATION_SCHEMA = {
+     },
+     {
+       type: "maxLength",
+-      at: ["change", "blur:touched", "submit"],
++      at: ["blur:touched", "submit"],
+       parameters: ["maxIdentifierLength", "minIdentifierLength"],
+       fn: (value, { maxIdentifierLength }) => maxLength(value, maxIdentifierLength),
+       message:
+@@ -118,7 +118,7 @@ export const RELATED_MATERIAL_FORM_VALIDATION_SCHEMA = {
+   title: [
+     {
+       type: "minLength",
+-      at: ["change", "blur:touched", "submit"],
++      at: ["blur:touched", "submit"],
+       parameters: ["maxTitleLength", "minTitleLength"],
+       fn: (value, { minTitleLength }) => minLength(value, minTitleLength),
+       message:
+@@ -128,7 +128,7 @@ export const RELATED_MATERIAL_FORM_VALIDATION_SCHEMA = {
+     },
+     {
+       type: "maxLength",
+-      at: ["change", "blur:touched", "submit"],
++      at: ["blur:touched", "submit"],
+       parameters: ["minTitleLength", "maxTitleLength"],
+       fn: (value, { maxTitleLength }) => maxLength(value, maxTitleLength),
+       message:

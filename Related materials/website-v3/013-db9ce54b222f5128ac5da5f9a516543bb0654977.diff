@@ -1,0 +1,276 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/index.test.jsx
+index 416d6361e..537cf5b3e 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/index.test.jsx
+@@ -4,6 +4,7 @@ import { act } from "react-dom/test-utils";
+ import { Button } from "@figshare/fcl/button";
+ 
+ import { RelatedMaterialsList, RelatedMaterialsListItem } from "./index";
++import ReadcubeButton from "./readcubeButton";
+ 
+ 
+ describe("<RelatedMaterialsListItem />", () => {
+@@ -155,3 +156,25 @@ describe("<RelatedMaterialsList />", () => {
+     component.unmount();
+   });
+ });
++
++describe("<ReadcubeButton/>", () => {
++  const READCUBE_DELAY = 600;
++
++  it("does not render a readcube slot for identifiers without DOIs", () => {
++    const component = mount(<ReadcubeButton identifier="notadoi/313.1113.1" />);
++
++    expect(component.isEmptyRender()).toBe(true);
++  });
++
++  it("renders a node for DOI identifiers and injects the readcube script", (done) => {
++    const component = mount(<ReadcubeButton identifier="https://doi.com/10.1080/14686996.2018.1458578" />);
++
++    expect(component.isEmptyRender()).toBe(false);
++    expect(component.find("span[data-doi=\"10.1080/14686996.2018.1458578\"]")).toHaveLength(1);
++
++    setTimeout(() => {
++      expect(document.getElementById("readcube-injected-script")).not.toBe(null);
++      done();
++    }, READCUBE_DELAY);
++  });
++});
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/readcubeButton.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/readcubeButton.jsx
+new file mode 100644
+index 000000000..ac4122188
+--- /dev/null
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/readcubeButton.jsx
+@@ -0,0 +1,36 @@
++import React, { useMemo, useEffect } from "react";
++import { string } from "prop-types";
++import injectReadcubeScript from "utils/readcube";
++import getIn from "utils/getIn";
++import { VALID_DOI_REGEX } from "utils/validation";
++
++
++const READCUBE_DELAY = 500;
++
++export function ReadcubeButton({ identifier }) {
++  const doi = useMemo(() => {
++    if (!identifier.length) {
++      return undefined;
++    }
++
++    return getIn(identifier.match(VALID_DOI_REGEX), "0");
++  }, [identifier]);
++
++  useEffect(() => {
++    if (doi && process.env.BROWSER) {
++      setTimeout(injectReadcubeScript, READCUBE_DELAY);
++    }
++  }, [doi]);
++
++  if (!doi) {
++    return null;
++  }
++
++  return <span className="__readcube-access-button" data-doi={doi} data-node-id="readcube-access-button" />;
++}
++
++ReadcubeButton.propTypes = { identifier: string.isRequired };
++
++ReadcubeButton.defaultProps = {};
++
++export default ReadcubeButton;
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+index f91971764..b21f1d0d6 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+@@ -14,7 +14,11 @@ import { RelatedMaterialsListItem } from "./relatedMaterialsListItem";
+ import style from "./relatedMaterialsList.css";
+ 
+ 
+-function renderRelatedMaterial(material, index, { identifiers, relationships, withHighlights, showLinkout, itemId }) {
++function renderRelatedMaterial(
++  material,
++  index,
++  { identifiers, relationships, withHighlights, showLinkout, isPublic, itemId }
++) {
+   const { id, title, linkout, relationshipType, identifierType, identifier } = material;
+   const order = index + 1;
+   const relationshipObj = relationships.find((entry) => entry.value === relationshipType);
+@@ -24,22 +28,25 @@ function renderRelatedMaterial(material, index, { identifiers, relationships, wi
+   const isUrl = getIn(material, "isUrl", getIn(identifierTypeObj, "meta.isUrl", false));
+   const resolver = getIn(material, "resolver", getIn(identifierTypeObj, "meta.resolver", ""));
+   const resolvedIdentifier = resolveIdentifier(identifier, identifierType, resolver);
++  const sanitizedIdentifier = encodeHTML.decode(encodeHTML(resolvedIdentifier));
+   const displayTitle = title || identifier;
++  const encodedTitle = encodeHTML(displayTitle);
+   /**
+    * For lists that are rendered in the item/preview pages
+    * search highlights are needed for the material title.
+    */
+   const titleNode = withHighlights ? (
+-    <NodeWithHighlights itemId={itemId} text={encodeHTML(displayTitle)} />
+-  ) : displayTitle;
++    <NodeWithHighlights itemId={itemId} text={encodedTitle} />
++  ) : encodeHTML.decode(encodedTitle);
+   const titleHasWords = displayTitle.search(/\s/) !== -1;
+ 
+   return (
+     <RelatedMaterialsListItem
+       key={id}
+       id={id}
+-      identifier={resolvedIdentifier}
++      identifier={sanitizedIdentifier}
+       isLinkout={linkout && showLinkout}
++      isPublic={isPublic}
+       isUrl={isUrl}
+       order={order}
+       relation={relation}
+@@ -67,6 +74,7 @@ export function RelatedMaterialsList({ materials, publicList, itemId, identifier
+       relationships,
+       itemId,
+       withHighlights: publicList,
++      isPublic: publicList,
+       showLinkout: !publicList,
+     };
+   }, [identifiers, relationships, publicList, itemId]);
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx
+index 83c3cfb99..342fdd220 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx
+@@ -4,12 +4,13 @@ import { Button } from "@figshare/fcl/button";
+ import Papers from "@figshare/fcl/icons/papers";
+ import { string, bool, number, oneOfType, node } from "prop-types";
+ 
++import { ReadcubeButton } from "./readcubeButton";
+ import styles from "./relatedMaterialsListItem.css";
+ 
+ 
+ export function RelatedMaterialsListItem({
+   id, identifier, title, type, relation,
+-  order, isUrl, isLinkout, titleHasWords,
++  order, isUrl, isLinkout, titleHasWords, isPublic,
+ }) {
+   const isResolved = isUrl && identifier.includes("://");
+   const href = isResolved ? identifier : `//${identifier}`;
+@@ -35,15 +36,18 @@ export function RelatedMaterialsListItem({
+           {`${relation} `}
+         </span>
+         {isUrl ? (
+-          <Button
+-            className={styles.link}
+-            data-control-id="material-link"
+-            href={href}
+-            target="_blank"
+-            theme={"tertiary"}
+-          >
+-            {title}
+-          </Button>
++          <>
++            <Button
++              className={styles.link}
++              data-control-id="material-link"
++              href={href}
++              target="_blank"
++              theme={"tertiary"}
++            >
++              {title}
++            </Button>
++            {isPublic && <ReadcubeButton identifier={identifier} />}
++          </>
+         ) : (<span className={styles.text} data-node-id="material-title"><i>{title}</i> ({identifier})</span>)}
+       </div>
+     </li>
+@@ -59,9 +63,10 @@ RelatedMaterialsListItem.propTypes = {
+   relation: string.isRequired,
+   title: node.isRequired,
+   type: string.isRequired,
++  isPublic: bool,
+   titleHasWords: bool,
+ };
+ 
+-RelatedMaterialsListItem.defaultProps = { titleHasWords: true };
++RelatedMaterialsListItem.defaultProps = { titleHasWords: true, isPublic: false };
+ 
+ export default RelatedMaterialsListItem;
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
+index 942907e4c..d7a198bcd 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
+@@ -12,6 +12,7 @@ import Papers from "@figshare/fcl/icons/papers";
+ import BinIcon from "@figshare/fcl/icons/delete/medium";
+ import EditMedium from "@figshare/fcl/icons/edit/medium";
+ import { Content, Trigger, UncontrolledTooltip as Tooltip } from "@figshare/components/ui/tooltip";
++import { encodeHTML } from "utils/sanitizers";
+ import { Forms } from "shared/ui/forms";
+ 
+ import { RelatedMaterialPropType } from "../../constants";
+@@ -124,6 +125,8 @@ export function RelatedMaterialTile(
+           <Disclosure.Toggle>
+             {({ visible, ...buttonProps }) => {
+               const Icon = disclosed ? CaretDown : CaretRight;
++              const encoded = encodeHTML(material.title || material.identifier);
++              const displayTitle = encodeHTML.decode(encoded);
+ 
+               return (
+                 <>
+@@ -148,7 +151,7 @@ export function RelatedMaterialTile(
+                     </Tooltip>
+                     }
+                     <p className={style.identifier}>
+-                      {material.title || material.identifier}
++                      {displayTitle}
+                     </p>
+                   </div>
+                   {changed &&
+diff --git a/src/pages/item/page/components/linkback/card.jsx b/src/pages/item/page/components/linkback/card.jsx
+index 9467985b4..2f4d49cc9 100644
+--- a/src/pages/item/page/components/linkback/card.jsx
++++ b/src/pages/item/page/components/linkback/card.jsx
+@@ -49,8 +49,8 @@ export function LinkbackCard({ id, itemId, title, relation, identifier, type, is
+             className={styles.text}
+             data-linkback-material-text-identifier={identifier}
+           >
+-            <NodeWithHighlights itemId={itemId} tag="i" text={title} />{" ("}
+-            <NodeWithHighlights itemId={itemId} tag="span" text={identifier} />
++            <NodeWithHighlights itemId={itemId} tag="i" text={encodeHTML(title)} />{" ("}
++            <NodeWithHighlights itemId={itemId} tag="span" text={encodeHTML(identifier)} />
+             {")"}
+           </span>
+         )}
+diff --git a/src/utils/sanitizers.js b/src/utils/sanitizers.js
+index f2128d242..7b3e28eaa 100644
+--- a/src/utils/sanitizers.js
++++ b/src/utils/sanitizers.js
+@@ -15,9 +15,16 @@ export function removeDOIVersion(doi) {
+ }
+ /**
+  * Encode the HTML in a user-submitted string
++ * Exposes a .decode function to parse characters replaced with codes if any.
+  * @param  {String} str  The user-submitted string
+  * @return {String} str  The sanitized string
+  */
+ export function encodeHTML(str) {
+   return str.replace(/data:/gi, "").replace(/javascript:/gi, "").replace(/[^\w-_. ]/gi, (c) => `&#${c.charCodeAt(0)};`);
+ }
++
++function decode(str) {
++  return str.replace(/(&#(\d*));/gi, (_, encoded, code) => String.fromCharCode(code));
++}
++
++encodeHTML.decode = decode;
+diff --git a/src/utils/sanitizers.test.js b/src/utils/sanitizers.test.js
+index a5ad7e40c..da52d6177 100644
+--- a/src/utils/sanitizers.test.js
++++ b/src/utils/sanitizers.test.js
+@@ -16,4 +16,12 @@ describe("encodeHTML", () => {
+     expect(encodeHTML("<IMG SRC=\"data:alert('XSS');\">")).
+       toEqual("&#60;IMG SRC&#61;&#34;alert&#40;&#39;XSS&#39;&#41;&#59;&#34;&#62;");
+   });
++
++  it("exposes a function to decode replaced characters with char codes", () => {
++    const encoded = encodeHTML("<IMG SRC=\"javascript:alert('XSS');\">");
++
++    expect(encoded).toEqual("&#60;IMG SRC&#61;&#34;alert&#40;&#39;XSS&#39;&#41;&#59;&#34;&#62;");
++
++    expect(encodeHTML.decode(encoded)).toEqual("<IMG SRC=\"alert('XSS');\">");
++  });
+ });

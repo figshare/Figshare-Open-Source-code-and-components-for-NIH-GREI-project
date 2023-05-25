@@ -1,0 +1,139 @@
+diff --git a/figshare/app/events.py b/figshare/app/events.py
+index 01f048816..1d59cf1ee 100644
+--- a/figshare/app/events.py
++++ b/figshare/app/events.py
+@@ -1,10 +1,12 @@
++import json
+ from urllib.parse import quote
+-from pyramid.events import subscriber, BeforeRender, NewResponse, NewRequest
++
++from pyramid.events import subscriber, NewResponse, NewRequest
+ from pyramid.httpexceptions import HTTPOk
+ 
+-from figshare.lib.util import extract_request_host
+-from figshare.lib import logger
+ from figshare.config import config
++from figshare.lib import logger
++from figshare.lib.util import extract_request_host
+ 
+ 
+ class LoginSuccess(object):
+@@ -74,8 +76,10 @@ def setup_global_info(event):
+ 
+ @subscriber(NewResponse)
+ def on_request(event):
+-    request = event.request
+-    route = request.matched_route
+-    route = route.name if route else "none"
+-
+-    logger.debug("Request finished. Matched route: {}".format(route))
++    try:
++        req_schema = json.loads(event.request.body)
++        query = req_schema["query"]
++    except (ValueError, KeyError):
++        logger.debug(f"Query failed: {event.request.body}")
++    else:
++        logger.debug("Query finished: " + query.replace("\n", "").replace("  ", " ").strip())
+diff --git a/figshare/graphql/v2_resolvers/item.py b/figshare/graphql/v2_resolvers/item.py
+index 68b159dec..6a06d80d9 100644
+--- a/figshare/graphql/v2_resolvers/item.py
++++ b/figshare/graphql/v2_resolvers/item.py
+@@ -4,6 +4,7 @@
+ from figcore.api.custom_field.validator import CustomFieldValidatorRules
+ from figcore.api.article.validator import ArticleValidator
+ from figcore.api.funding.validator import FundingValidator
++from figcore.api.related_material.validator import RelatedMaterialValidator
+ from figcore.lib.validator import Validator
+ from figcore.graphql.internals.db_calls.utils import get_to_many_ast_from_obj_and_info_and_query_data
+ 
+@@ -472,7 +473,7 @@ def _get_internal_fields(item_api, item_group):
+         },
+         "references": {
+             "is_required": False,
+-            "type": "references",
++            "type": "related_materials",
+             "settings": {
+                 "default_value": [],
+                 "info": None,
+@@ -481,8 +482,15 @@ def _get_internal_fields(item_api, item_group):
+                 "is_multiple": True,
+                 "options": None,
+             },
+-            "validation": {"isUrlOrDoi": True, "maxListLength": ArticleValidator.MAX_REFERENCES_LIST_LENGTH},
+-            "value": item_api.references,
++            "validation": {
++                "maxListLength": ArticleValidator.MAX_REFERENCES_LIST_LENGTH,
++                "maxLinkouts": ArticleValidator.MAX_LINKOUTS,
++                "minTitleLength": RelatedMaterialValidator.MIN_TITLE_LENGTH,
++                "maxTitleLength": RelatedMaterialValidator.MAX_TITLE_LENGTH,
++                "minIdentifierLength": RelatedMaterialValidator.MIN_IDENTIFIER_LENGTH,
++                "maxIdentifierLength": RelatedMaterialValidator.MAX_IDENTIFIER_LENGTH,
++            },
++            "value": item_api.related_materials,
+             "order": 8,
+         },
+         "license": {
+diff --git a/tests/functional/graphql/test_item_fields.py b/tests/functional/graphql/test_item_fields.py
+index 1e2771b36..a12c7ee1b 100644
+--- a/tests/functional/graphql/test_item_fields.py
++++ b/tests/functional/graphql/test_item_fields.py
+@@ -6,6 +6,7 @@
+ from figcore.api.custom_field.validator import CustomFieldValidatorRules
+ from figcore.api.article.validator import ArticleValidator
+ from figcore.api.funding.validator import FundingValidator
++from figcore.api.related_material.validator import RelatedMaterialValidator
+ from figcore.graphql import Context
+ 
+ from tests.functional.graphql import send_graphql_request
+@@ -148,7 +149,7 @@ def item(author, group, institution, category, funding, custom_field):
+     obj.categories = [category]
+     obj.tags = ["Tag"]
+     obj.funding = [funding]
+-    obj.references = ["https://ref.com"]
++    obj.related_materials = [1]
+     obj.resource_doi = "10.1158/doi.123"
+     obj.resource_title = "Item Resource Title"
+     obj.license_id = 1
+@@ -377,7 +378,7 @@ def _get_item_fields(options):
+         },
+         {
+             "id": "references",
+-            "value": ["https://ref.com"],
++            "value": [1],
+             "isRequired": False,
+             "namespace": "internal",
+             "settings": {
+@@ -388,8 +389,15 @@ def _get_item_fields(options):
+                 "info": None,
+                 "options": None,
+             },
+-            "type": "references",
+-            "validation": {"isUrlOrDoi": True, "maxListLength": ArticleValidator.MAX_REFERENCES_LIST_LENGTH},
++            "type": "relatedMaterials",
++            "validation": {
++                "maxListLength": ArticleValidator.MAX_REFERENCES_LIST_LENGTH,
++                "maxLinkouts": ArticleValidator.MAX_LINKOUTS,
++                "minTitleLength": RelatedMaterialValidator.MIN_TITLE_LENGTH,
++                "maxTitleLength": RelatedMaterialValidator.MAX_TITLE_LENGTH,
++                "minIdentifierLength": RelatedMaterialValidator.MIN_IDENTIFIER_LENGTH,
++                "maxIdentifierLength": RelatedMaterialValidator.MAX_IDENTIFIER_LENGTH,
++            },
+             "order": 8,
+         },
+         {
+@@ -658,7 +666,6 @@ def test_item_fields_cf_validations_and_options(
+     mock_context_account_can,
+     mock_find_new_group,
+ ):
+-
+     url_custom_field = Mock(id=322, field_type="url", context=["items"], settings={"validations": {}})
+     email_custom_field = Mock(id=324, field_type="email", context=["items"], settings={"validations": {}})
+     dropdown_custom_field = Mock(
+@@ -719,7 +726,6 @@ def test_item_group_curators(
+     mock_context_account_can,
+     mock_get_url_details,
+ ):
+-
+     private_user = Mock(id=1, is_public=False)
+     private_user.name = "private user"
+ 

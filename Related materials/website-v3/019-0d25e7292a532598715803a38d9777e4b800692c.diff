@@ -1,0 +1,524 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+index 2989da0de..6be7582d0 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+@@ -6,10 +6,11 @@ import Alert from "@figshare/fcl/alert";
+ import { MockedProvider, wait } from "utils/apollo/testing";
+ import Select from "@figshare/components/ui/select";
+ import { GraphQLError } from "graphql";
++import Registry from "utils/registry";
+ 
+ import { relatedMaterialCreate, relatedMaterialUpdate } from "../../index.gql";
+ import { RelatedMaterialsListItem } from "../relatedMaterialsList";
+-import { NO_STARTS_WITH_RESOLVER } from "../relatedMaterialsForm/constants";
++import { NO_STARTS_WITH_RESOLVER, NO_MATERIAL_DUPLICATE } from "../relatedMaterialsForm/constants";
+ 
+ import { ManageRelatedMaterials } from "./index";
+ 
+@@ -636,6 +637,77 @@ describe("<ManageRelatedMaterials />", () => {
+     expect(NO_STARTS_WITH_RESOLVER.fn("https://doi.org/identifier", { resolver: "" })).toEqual(true);
+     expect(NO_STARTS_WITH_RESOLVER.fn("isn:/identifier", { resolver: "https://" })).toEqual(true);
+ 
++    const material = {
++      identifier: "test",
++      identifierType: "DOI",
++      relationshipType: "References",
++    };
++
++    const material2 = {
++      identifier: "whatever",
++      identifierType: "URL",
++      relationshipType: "References",
++    };
++
++    function asForm(materialObject) {
++      const formObj = { fields: {} };
++
++      Object.entries(materialObject).forEach(([k, v]) => {
++        formObj.fields[k] = { value: v };
++      });
++
++      return formObj;
++    }
++
++    expect(NO_MATERIAL_DUPLICATE.fn(asForm(material), { materials: [] })).toEqual(true);
++    expect(NO_MATERIAL_DUPLICATE.fn(asForm(material), { materials: [material2] })).toEqual(true);
++    expect(NO_MATERIAL_DUPLICATE.fn(asForm(material), { materials: [material, material2] })).toEqual(false);
++    expect(NO_MATERIAL_DUPLICATE.fn(asForm(material2), { materials: [material, material2] })).toEqual(false);
++
++    component.unmount();
++  });
++
++  it("manages material duplicate validation", async() => {
++    onMaterialsChange.mockClear();
++
++    const material = {
++      identifier: "test",
++      identifierType: "DOI",
++      relationshipType: "References",
++    };
++
++    const material2 = {
++      identifier: "whatever",
++      identifierType: "URL",
++      relationshipType: "References",
++    };
++
++    const component = mount(
++      <MockedProvider mocks={[...relatedMaterialCreateFailMock]}>
++        <ManageRelatedMaterials
++          {...defaultProps}
++          materials={[material, material2]}
++          settings={fieldSettings}
++        />
++      </MockedProvider>
++    );
++
++    await unitStepFragmentOpenOverlay(component);
++
++    Registry.set("item-edit/related-materials", { current: [material, material2] });
++
++    await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "test" });
++    await unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "test" });
++    await unitStepFragmentChangeFormFieldIdentifierType(component, { form: "add", value: "DOI" });
++    await unitStepFragmentChangeFormFieldRelationType(component, { form: "add", value: "References" });
++
++    await unitStepFragmentSubmitChangedForm(component, "add");
++
++    expect(onMaterialsChange).not.toHaveBeenCalled();
++
++    expect(component.find(Alert)).toHaveLength(1);
++
+     component.unmount();
++    Registry.delete("item-edit/related-materials");
+   });
+ });
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+index 59601a5f7..6f07751fd 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+@@ -1,4 +1,5 @@
+ import React from "react";
++import { getIn } from "utils/getIn";
+ 
+ import { isRequired, minChecked, maxLength, minLength } from "../../../../../utils";
+ 
+@@ -98,7 +99,37 @@ export const NO_STARTS_WITH_RESOLVER = {
+       <>The {"\""}{label}{"\""} field cannot start with <b>{resolver}</b></>,
+ };
+ 
++export const NO_MATERIAL_DUPLICATE = {
++  type: "isDuplicate",
++  at: ["submit"],
++  parameters: ["identifiers"],
++  fn: (value, { materials }) => {
++    const hasMaterials = getIn(materials, "length", 0);
++    const identifier = getIn(value, "fields.identifier.value");
++    const relation = getIn(value, "fields.relationshipType.value");
++
++    if (!hasMaterials) {
++      return true;
++    }
++
++    const duplicate = materials.find((material) => {
++      const sameRelation = material.relationshipType === relation;
++      const sameIdentifier = material.identifier === identifier;
++
++      return sameIdentifier && sameRelation;
++    });
++
++    if (duplicate) {
++      return false;
++    }
++
++    return true;
++  },
++  message: () => "This identifier-relation pair already exists.",
++};
++
+ export const RELATED_MATERIAL_FORM_VALIDATION_SCHEMA = {
++  form: [NO_MATERIAL_DUPLICATE],
+   identifier: [
+     IS_REQUIRED_SCHEMA,
+     NO_STARTS_WITH_RESOLVER,
+@@ -120,15 +151,6 @@ export const RELATED_MATERIAL_FORM_VALIDATION_SCHEMA = {
+         ({ label, parameters: { minIdentifierLength, maxIdentifierLength } }) =>
+           `'${label}' must be between ${minIdentifierLength} and ${maxIdentifierLength} characters in length.`,
+     },
+-    {
+-      type: "isDuplicate",
+-      at: ["blur:touched", "submit"],
+-      parameters: ["identifiers"],
+-      fn: (value, { identifiers }) => !identifiers?.some((obj) => obj.identifier === value),
+-      message:
+-        () =>
+-          "You can not use the same identifier twice.",
+-    },
+   ],
+   title: [
+     {
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx
+index 41cd1f94b..bd7feb1ca 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx
+@@ -121,6 +121,34 @@ export function RelatedMaterialsForm({
+       batch.fields[name] = change;
+     });
+ 
++
++    const materialsRef = Registry.get("item-edit/related-materials");
++    const materialsToCheckAgainst = materialsRef?.current;
++
++    const formWideError = getFieldError({
++      name: "form",
++      value: stateRef.current,
++      at: "submit",
++      meta: {
++        touched,
++        formId,
++        label: "Form",
++        parameters: { materials: materialsToCheckAgainst },
++      },
++    });
++
++    if (formWideError) {
++      batch.hasErrors = true;
++      batch.submittable = false;
++
++      pushFormAlert({
++        channel: `${formId}`,
++        content: <span>{formWideError?.message}</span>,
++        type: "error",
++        id: formWideError.id,
++      });
++    }
++
+     batchUpdate(batch);
+ 
+     return !batch.hasErrors;
+@@ -199,8 +227,6 @@ export function RelatedMaterialsForm({
+     const field = stateRef.current.fields?.[name];
+     const { formId, touched } = stateRef.current;
+     const { validation } = settingsRef.current;
+-    const materialsRef = Registry.get("item-edit/related-materials");
+-    const identifiers = materialsRef?.current;
+     const resolver = getResolverValue(stateRef, resources);
+ 
+     const error = getFieldError({
+@@ -213,7 +239,6 @@ export function RelatedMaterialsForm({
+         label: field.settings.label,
+         parameters: {
+           ...validation,
+-          identifiers,
+           resolver,
+         },
+       },
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
+index f0f5ee169..b49e76801 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
+@@ -77,10 +77,10 @@ export function RelatedMaterialTile(
+     const onFormMessage = (message) => {
+       setChanged(message?.changed);
+     };
+-    Forms.subscribe(`related-materials-form-${material.id}`, onFormMessage);
++    Forms.emitter.subscribe(`related-materials-form-${material.id}`, onFormMessage);
+ 
+     return () => {
+-      Forms.unsubscribe(`related-materials-form-${material.id}`, onFormMessage);
++      Forms.emitter.unsubscribe(`related-materials-form-${material.id}`, onFormMessage);
+     };
+   }, [material.id, setChanged]);
+ 
+diff --git a/src/shared/modules/debug.js b/src/shared/modules/debug.js
+new file mode 100644
+index 000000000..d6a9b42e6
+--- /dev/null
++++ b/src/shared/modules/debug.js
+@@ -0,0 +1,38 @@
++import { Forms } from "shared/ui/forms";
++import { Emitter } from "utils/emitter";
++import Registry from "utils/registry";
++
++
++let debug = false;
++
++const level = {
++  get debug() {
++    return debug;
++  },
++};
++
++function check(token) {
++  return token === "helpusobi1";
++}
++
++function enableModulesDebug(token) {
++  if (check(token)) {
++    debug = true;
++    window.Forms = Forms;
++    window.Emitter = Emitter;
++    window.Registry = Registry;
++
++    return true;
++  }
++  debug = false;
++  delete window.Forms;
++  delete window.Emitter;
++  delete window.Registry;
++
++  return false;
++
++}
++
++window.enableDebug = enableModulesDebug;
++
++export { level, enableModulesDebug };
+diff --git a/src/shared/modules/index.jsx b/src/shared/modules/index.jsx
+new file mode 100644
+index 000000000..7e7795147
+--- /dev/null
++++ b/src/shared/modules/index.jsx
+@@ -0,0 +1 @@
++export * from "./debug";
+diff --git a/src/shared/ui/forms/registry.jsx b/src/shared/ui/forms/registry.jsx
+index 73228df1d..7f75dc636 100644
+--- a/src/shared/ui/forms/registry.jsx
++++ b/src/shared/ui/forms/registry.jsx
+@@ -1,31 +1,10 @@
+-export const Forms = (() => {
+-  const subscribers = new Map();
+-  const registry = new Map();
+-
+-  function subscribe(channel, callback) {
+-    if (subscribers.has(channel)) {
+-      const set = subscribers.get(channel);
+-
+-      set.add(callback);
+-    } else {
+-      subscribers.set(channel, new Set([callback]));
+-    }
+-  }
++import Emitter from "utils/emitter";
+ 
+-  function unsubscribe(channel, callback) {
+-    if (subscribers.has(channel)) {
+-      const set = subscribers.get(channel);
+ 
+-      set.delete(callback);
+-    }
+-  }
++export const Forms = (() => {
++  const emitter = Emitter;
++  const registry = new Map();
+ 
+-  function publish(channel, message) {
+-
+-    if (subscribers.has(channel)) {
+-      subscribers.get(channel).forEach((listener) => listener(message));
+-    }
+-  }
+ 
+   function clear(opts) {
+     const { namespace } = opts;
+@@ -39,9 +18,5 @@ export const Forms = (() => {
+     }
+   }
+ 
+-  const module = { subscribe, unsubscribe, publish, registry, subscribers, clear };
+-
+-  window.Forms = module;
+-
+-  return module;
++  return { emitter, registry, clear };
+ })();
+diff --git a/src/shared/ui/forms/useForm.jsx b/src/shared/ui/forms/useForm.jsx
+index 19c4d9ae7..9fa50dfad 100644
+--- a/src/shared/ui/forms/useForm.jsx
++++ b/src/shared/ui/forms/useForm.jsx
+@@ -60,7 +60,7 @@ export function useForm({ data, persist, schema, validation }) {
+   }, [data, persist, resetForm]);
+ 
+   useEffect(() => {
+-    Forms.publish(state.formId, { changed: state.changed });
++    Forms.emitter.publish(state.formId, { changed: state.changed });
+ 
+     if (typeof state.changed === "boolean" && !state.changed) {
+       Forms.registry.delete(`form-changes-${state.formId}`);
+@@ -68,6 +68,14 @@ export function useForm({ data, persist, schema, validation }) {
+ 
+   }, [state.formId, state.changed]);
+ 
++  useEffect(() => {
++    Forms.registry.set(stateRef.current.formId, stateRef);
++
++    return () => {
++      Forms.registry.delete(stateRef.current.formId, stateRef);
++    };
++  }, [stateRef.current.formId]);
++
+   return {
+     state, dispatch, stateRef,
+     resetForm, updateField, batchUpdate, getFieldHtmlId,
+diff --git a/src/utils/emitter/emitter.test.js b/src/utils/emitter/emitter.test.js
+new file mode 100644
+index 000000000..d23385d5e
+--- /dev/null
++++ b/src/utils/emitter/emitter.test.js
+@@ -0,0 +1,71 @@
++import { enableModulesDebug } from "shared/modules/debug";
++
++import { Emitter } from "./index";
++
++
++describe("Emitter module", () => {
++  const callback = jest.fn();
++  const failingCallback = jest.fn((arg) => {
++    throw new Error(arg);
++  });
++
++  beforeEach(() => {
++    enableModulesDebug("helpusobi1");
++  });
++
++  afterEach(() => {
++    enableModulesDebug("close");
++  });
++
++  it("allows subscribing and unsubscribing to a channel", () => {
++    const subscribed = Emitter.subscribe("test-channel", callback);
++    const secondSubscription = Emitter.subscribe("test-channel", failingCallback);
++
++    expect(subscribed).toStrictEqual(["test-channel", callback]);
++    expect(secondSubscription).toStrictEqual(["test-channel", failingCallback]);
++
++    const unsubscribed = Emitter.unsubscribe("test-channel", callback);
++    const unsubscribedFromMissingChannel = Emitter.unsubscribe("unregistered-channel", callback);
++    const unsubscribedFromChannelWithWrongCallback = Emitter.unsubscribe("test-channel", () => undefined);
++    const unsubscribedFromSecondSubscription = Emitter.unsubscribe("test-channel", failingCallback);
++
++    expect(unsubscribed).toBe(true);
++    expect(unsubscribedFromMissingChannel).toBe(true);
++    expect(unsubscribedFromChannelWithWrongCallback).toBe(false);
++    expect(unsubscribedFromSecondSubscription).toBe(true);
++  });
++
++  it("allows publishing to a channel", () => {
++    Emitter.subscribe("test-channel", callback);
++
++    Emitter.publish("test-channel", "5");
++    Emitter.publish("unregistered-channel", "3");
++
++    expect(callback).toHaveBeenCalledWith("5");
++
++    Emitter.unsubscribe("test-channel", callback);
++  });
++
++  it("catches run errors", (done) => {
++    const warnSpy = jest.spyOn(console, "warn");
++    Emitter.subscribe("test-channel", failingCallback);
++
++    Emitter.publish("test-channel", "5");
++    Emitter.publish("unregistered-channel", "3");
++
++    expect(failingCallback).toHaveBeenCalledWith("5");
++
++    Emitter.unsubscribe("test-channel", callback);
++    const delay = 200;
++
++    setTimeout(() => {
++      expect(warnSpy).toHaveBeenCalledWith(
++        "test-channel", "Emitter listener threw uncaught error:",
++        expect.anything(), expect.anything()
++      );
++      warnSpy.mockRestore();
++
++      done();
++    }, delay);
++  });
++});
+diff --git a/src/utils/emitter/index.js b/src/utils/emitter/index.js
+new file mode 100644
+index 000000000..f1f587a78
+--- /dev/null
++++ b/src/utils/emitter/index.js
+@@ -0,0 +1,79 @@
++/* eslint-disable no-unused-expressions, no-console */
++import { level } from "shared/modules/debug";
++
++
++const channels = new Map();
++
++function subscribe(name, callback) {
++  let channel = channels.get(name);
++
++  if (!channel) {
++    channel = { name, subscribers: new Set() };
++    channels.set(name, channel);
++  }
++
++  level.debug && console.log("Emitter subscribed:", name);
++
++  channel.subscribers.add(callback);
++
++  return [name, callback];
++}
++
++function unsubscribe(name, callback) {
++  const channel = channels.get(name);
++
++  if (!channel) {
++    return true;
++  }
++
++  if (channel.subscribers.has(callback)) {
++    channel.subscribers.delete(callback);
++
++    if (channel.subscribers.size === 0) {
++      channels.delete(name);
++    }
++
++    return true;
++  }
++
++  return false;
++}
++
++async function run(callback, message) {
++  const result = await callback(message);
++
++  level.debug && console.log("Emmiter run, result", result);
++
++  return result;
++}
++
++function publish(name, message) {
++  const channel = channels.get(name);
++
++  level.debug &&
++    console.log("Emitter publish for -", name, " - message:", message);
++
++  if (channel) {
++    for (const callback of channel.subscribers) {
++      run(callback, message).
++        catch((err) => {
++          console.warn(
++            name,
++            "Emitter listener threw uncaught error:",
++            callback.name,
++            err
++          );
++        });
++    }
++  }
++}
++
++
++export const Emitter = {
++  subscribe,
++  unsubscribe,
++  publish,
++  _channels: channels,
++};
++
++export default Emitter;

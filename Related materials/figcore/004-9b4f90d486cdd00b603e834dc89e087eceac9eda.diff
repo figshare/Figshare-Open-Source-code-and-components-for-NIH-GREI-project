@@ -1,0 +1,605 @@
+diff --git a/scripts/sql_migrations/2023-05.sql b/scripts/sql_migrations/2023-05.sql
+index 7c76e64bf1..b43158778b 100644
+--- a/scripts/sql_migrations/2023-05.sql
++++ b/scripts/sql_migrations/2023-05.sql
+@@ -1,5 +1,6 @@
+ CREATE TABLE `related_material` (
+   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
++  `account_id` bigint(20) unsigned NOT NULL DEFAULT 0,
+   `identifier` varchar(2000) NOT NULL DEFAULT '',
+   `identifier_type` enum('ARK','arXiv','bibcode','DOI','EAN13','EISSN','Handle','IGSN','ISBN','ISSN','ISTC','LISSN','LSID','PMID','PURL','UPC','URL','URN','w3id') NOT NULL DEFAULT 'URL',
+   `relation` enum('IsCitedBy','Cites','IsSupplementTo','IsSupplementedBy','IsContinuedBy','Continues','Describes','IsDescribedBy','HasMetadata','IsMetadataFor','HasVersion','IsVersionOf','IsNewVersionOf','IsPreviousVersionOf','IsPartOf','HasPart','IsPublishedIn','IsReferencedBy','References','IsDocumentedBy','Documents','IsCompiledBy','Compiles','IsVariantFormOf','IsOriginalFormOf','IsIdenticalTo','IsReviewedBy','Reviews','IsDerivedFrom','IsSourceOf','IsRequiredBy','Requires','IsObsoletedBy','Obsoletes') NOT NULL DEFAULT 'References',
+diff --git a/src/figcore/api/account/actions/account.py b/src/figcore/api/account/actions/account.py
+index 784228affc..e25ecd627c 100644
+--- a/src/figcore/api/account/actions/account.py
++++ b/src/figcore/api/account/actions/account.py
+@@ -237,7 +237,7 @@ def create_journal_submission(self, data):
+             "journal_submission_lock_time", self.ENTITIES.JournalSubmission.DEFAULT_LOCK_TIME
+         )
+ 
+-        data["article_locked"] = int(bool(journal_submission_lock_time) != False)
++        data["article_locked"] = int(bool(journal_submission_lock_time) is not False)
+         data["account_id"] = account.id
+         data["institution_id"] = account.institution_id
+         data["group_id"] = article.group_id
+@@ -338,7 +338,8 @@ def generate_password_for_ftp_login(self):
+         password = "".join(random_selection)
+ 
+         # (Corneliu) We are using the private account method because the institutional public one
+-        # (Corneliu) does not support password updates for institutions with `shib` login strategy; also see reset_password method above
++        # (Corneliu) does not support password updates for institutions with `shib` login
++        # strategy; also see reset_password method above
+         data = self.account._process_update_account_data({"password": password})
+         AccountInternals.update_account(self.account.id, self.account.user.id, data)
+         self.account._model = None
+@@ -469,3 +470,16 @@ def launch_batch_download_task(self, item_status="all", filter_groups=None):
+             self.account, "batchdownload", options={"item_status": item_status, "filter_groups": filter_groups}
+         )
+         BatchManagementDownloadTask.queue(task.id)
++
++    def create_related_material(self, data):
++        data["account_id"] = self.account.id
++        related_material = self.ENTITIES.RelatedMaterial.create(data)
++        return related_material
++
++    def update_related_material(self, id, data):
++        related_material = self.ENTITIES.RelatedMaterial(id)
++        if related_material.account_id != self.account.id:
++            raise fig_exc.InsufficientPermissions("Cannot update related material")
++        data["account_id"] = self.account.id
++        related_material.update(data)
++        return related_material
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index a482f7b415..8780f56018 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -2099,7 +2099,7 @@ def process_update_data(self, data, **options):
+             validator.validate_update_data()
+ 
+         references = data.get("references")
+-        if references is not None:
++        if references and isinstance(references[0], str):
+             data["references"] = [Text(x).format_url() for x in references]
+ 
+         data = self._process_embargo(data, validator=validator, article=self)
+@@ -2845,7 +2845,9 @@ def bcheck_related_material(self):
+             for reference in self._metadata.references:
+                 FigcoreLogger.info(f"Converting {reference}")
+                 # TODO(adrianp): differentiate between URL and DOI
+-                material = APIEntity.ENTITIES.RelatedMaterial.create({"identifier": reference})
++                material = APIEntity.ENTITIES.RelatedMaterial.create(
++                    {"identifier": reference, "account_id": self.account.id}
++                )
+                 references.append(material.id)
+             ArticleInternals.update_references(self.id, references)
+             self._metadata = None  # force reloading metadata
+diff --git a/src/figcore/api/article/validator.py b/src/figcore/api/article/validator.py
+index 06104fa976..54c6d114ce 100644
+--- a/src/figcore/api/article/validator.py
++++ b/src/figcore/api/article/validator.py
+@@ -26,6 +26,7 @@ class ArticleValidator(Validator):
+     MIN_UNPUBLISH_REASON_LENGTH = 5
+     MAX_FUNDING_LIST_LENGTH = 100
+     MAX_REFERENCES_LIST_LENGTH = 100
++    MAX_LINKOUTS = 3
+     FIELDS_MAPPING = ArticleFieldsMapping.MAPPING
+ 
+     def __init__(self, article_api, form_data):
+@@ -525,7 +526,16 @@ def _validate_article_references(self):
+             ):
+                 raise exc.InvalidValue("Invalid value for references", field="references")
+ 
+-        Validator.check_duplicates(references, field="references")
++        values = references
++        if references and isinstance(references[0], int):
++            values = [APIEntity.ENTITIES.RelatedMaterial(i) for i in references]
++            linkouts = sum(v.is_linkout for v in values)
++            if linkouts > self.MAX_LINKOUTS:
++                raise exc.InvalidValue(
++                    f"Too many linkout related materials, maximum is {self.MAX_LINKOUTS}", field="references"
++                )
++
++        Validator.check_duplicates(values, field="references")
+ 
+     def _validate_funding(self):
+         self.validate_list_length("funding", self.form_data["funding"], self.MAX_FUNDING_LIST_LENGTH)
+diff --git a/src/figcore/api/related_material/api.py b/src/figcore/api/related_material/api.py
+index 494e411aee..b1e75f5c53 100644
+--- a/src/figcore/api/related_material/api.py
++++ b/src/figcore/api/related_material/api.py
+@@ -1,6 +1,7 @@
+ from figcore.internals.related_material import RelatedMaterialInternals
+ from figcore.lib.api_entity import APIEntity
+ from figcore.lib.checker import Checker
++from figcore.lib.data.related_material_static import IDENTIFIER_TYPE
+ 
+ from .validator import RelatedMaterialValidator
+ 
+@@ -14,6 +15,11 @@ def __init__(self, id):
+     def id(self):
+         return self._id
+ 
++    @property
++    @Checker.ensure("model")
++    def account_id(self):
++        return self._model.account_id
++
+     @property
+     @Checker.ensure("model")
+     def identifier(self):
+@@ -39,6 +45,12 @@ def title(self):
+     def is_linkout(self):
+         return self._model.is_linkout
+ 
++    @property
++    @Checker.ensure("model")
++    def url(self):
++        resolver = IDENTIFIER_TYPE[self.identifier_type]["resolver"]
++        return f"{resolver}{self.identifier}"
++
+     @classmethod
+     def find(cls, id):
+         model = RelatedMaterialInternals.get_by_id(id)
+@@ -62,5 +74,14 @@ def update(self, data):
+     def load_model(self):
+         self._model = RelatedMaterialInternals.get_by_id(self.id)
+ 
++    def __eq__(self, other):
++        return self.identifier == other.identifier and self.relation == other.relation
++
++    def __hash__(self):
++        return hash((self.identifier, self.relation))
++
++    def __repr__(self):
++        return f"{self.relation}: {self.identifier}"
++
+ 
+ APIEntity.ENTITIES.RelatedMaterial = RelatedMaterial
+diff --git a/src/figcore/api/related_material/validator.py b/src/figcore/api/related_material/validator.py
+index 0a1e012ef8..4fcd24659b 100644
+--- a/src/figcore/api/related_material/validator.py
++++ b/src/figcore/api/related_material/validator.py
+@@ -13,7 +13,7 @@ class RelatedMaterialValidator(Validator):
+     MAX_TITLE_LENGTH = 1000
+     MIN_IDENTIFIER_LENGTH = 1
+     MAX_IDENTIFIER_LENGTH = 2000
+-    MANDATORY_FIELDS = ["identifier", "identifier_type", "relation"]
++    MANDATORY_FIELDS = ["account_id", "identifier", "identifier_type", "relation"]
+ 
+     def __init__(self, data):
+         self.data = data
+@@ -23,7 +23,7 @@ def sanitize_input(cls, data):
+         data["identifier_type"] = data.get("identifier_type", DEFAULT_IDENTIFIER_TYPE)
+ 
+         if data.get("identifier"):
+-            data["identifier"] = cls.sanitize_url(data.get("identifier"))
++            data["identifier"] = cls.sanitize_url(data.get("identifier"), encode_path=False)
+ 
+         data["relation"] = data.get("relation", DEFAULT_RELATION_TYPE)
+ 
+@@ -39,6 +39,9 @@ def validate(self):
+             if not self.data.get(field):
+                 raise fig_exc.MissingMandatoryField(field)
+ 
++        if not self.validate_int(self.data["account_id"]):
++            raise fig_exc.InvalidValue("Invalid account ID", field="account_id")
++
+         if not self.validate_string(self.data["identifier"], self.MIN_IDENTIFIER_LENGTH, self.MAX_IDENTIFIER_LENGTH):
+             raise fig_exc.InvalidLength(
+                 "Identifier can have between {cls.MIN_IDENTIFIER_LENGTH} and {cls.MAX_IDENTIFIER_LENGTH} characters",
+diff --git a/src/figcore/graphql/mutations/related_material.py b/src/figcore/graphql/mutations/related_material.py
+new file mode 100644
+index 0000000000..4c3a115d68
+--- /dev/null
++++ b/src/figcore/graphql/mutations/related_material.py
+@@ -0,0 +1,15 @@
++from figcore.graphql.utils.mutations import get_mutation_response_query
++
++
++def create_related_material(obj, info, data):
++    account = info.context.account
++    related_material = account.actions_for(account).create_related_material(data)
++    result = get_mutation_response_query(info=info, params={"id": related_material.id})
++    return result
++
++
++def update_related_material(obj, info, related_material_id, data):
++    account = info.context.account
++    related_material = account.actions_for(account).update_related_material(related_material_id, data)
++    result = get_mutation_response_query(info=info, params={"id": related_material.id})
++    return result
+diff --git a/src/figcore/graphql/resolvers_v2/related_material.py b/src/figcore/graphql/resolvers_v2/related_material.py
+new file mode 100644
+index 0000000000..f8946cb950
+--- /dev/null
++++ b/src/figcore/graphql/resolvers_v2/related_material.py
+@@ -0,0 +1,29 @@
++from figcore.exc.graphql import InvalidParam
++from figcore.lib.data.related_material_static import IDENTIFIER_TYPE
++from figcore.graphql.utils import get_fields_eql
++from figcore.graphql.utils.pagination.limits import MAX_REQUESTED_ENTITIES
++
++
++def get_related_materials(obj, info, related_material_ids, **kwargs):
++    select_query = get_fields_eql(info)
++    return_type_name = info.return_type.of_type.name
++
++    if len(related_material_ids) > MAX_REQUESTED_ENTITIES:
++        raise InvalidParam(
++            message=f"Too many related materials requests, maximum is {MAX_REQUESTED_ENTITIES}",
++            param_name="relatedMaterialIds",
++            param_value=related_material_ids,
++        )
++
++    filters = {"id": {"operator": "in", "value": related_material_ids}}
++    data = {
++        "type_name": return_type_name,
++        "select_query": select_query,
++        "filters": filters,
++    }
++
++    return info.context.db_get_multiple(data)
++
++
++def get_related_material_types(obj, info, **kwargs):
++    return [{"name": k, "resolver": v["resolver"], "isUrl": v["is_url"]} for k, v in IDENTIFIER_TYPE.items()]
+diff --git a/src/figcore/graphql/schema/mutations.py b/src/figcore/graphql/schema/mutations.py
+index 97b4145740..e261ecb3b4 100644
+--- a/src/figcore/graphql/schema/mutations.py
++++ b/src/figcore/graphql/schema/mutations.py
+@@ -13,6 +13,7 @@
+ )
+ from figcore.graphql.mutations.account import update_profile
+ from figcore.graphql.mutations.group import group_add_account, group_create, group_delete, group_update
++from figcore.graphql.mutations.related_material import create_related_material, update_related_material
+ from figcore.graphql.schema.types import ItemV2, Project
+ from figcore.graphql.schema.types.collection import Collection
+ from figcore.graphql.schema.types.collection_version import CollectionVersion
+@@ -23,6 +24,7 @@
+ from figcore.graphql.schema.types.item import Item
+ from figcore.graphql.schema.types.item_version import ItemVersion
+ from figcore.graphql.schema.types.private_link import PrivateLink
++from figcore.graphql.schema.types.related_material import RelatedMaterial
+ from figcore.graphql.schema.types.success import Success
+ 
+ 
+@@ -681,3 +683,30 @@ def file_complete(cls):
+                 {"name": "file_id", "type": "Int", "mandatory": True},
+             ],
+         }
++
++    @classmethod
++    def related_material_create(cls):
++        return {
++            "name": "related_material_create",
++            "scopes": ["website", "api"],
++            "ensure_account": True,
++            "resolver": create_related_material,
++            "type": RelatedMaterial,
++            "params": [
++                {"name": "data", "type": "Json", "mandatory": True},
++            ],
++        }
++
++    @classmethod
++    def related_material_update(cls):
++        return {
++            "name": "related_material_update",
++            "scopes": ["website", "api"],
++            "ensure_account": True,
++            "resolver": update_related_material,
++            "type": RelatedMaterial,
++            "params": [
++                {"name": "related_material_id", "type": "Int", "mandatory": True},
++                {"name": "data", "type": "Json", "mandatory": True},
++            ],
++        }
+diff --git a/src/figcore/graphql/schema/queries.py b/src/figcore/graphql/schema/queries.py
+index 4195d71250..f28ec57735 100644
+--- a/src/figcore/graphql/schema/queries.py
++++ b/src/figcore/graphql/schema/queries.py
+@@ -1,4 +1,5 @@
+ from figcore.lib.debug import deprecated
++from figcore.lib.data.related_material_static import IDENTIFIER_TYPE, RELATION_TYPE
+ from figcore.graphql.acl_checks.generic import (
+     check_permissions_for_account,
+     check_permissions_for_private_article,
+@@ -31,14 +32,12 @@
+     search_public_groups,
+     search_public_institutions,
+ )
++from figcore.graphql.resolvers_v2.related_material import get_related_materials, get_related_material_types
+ from figcore.graphql.schema.types.account import Account
+ from figcore.graphql.schema.types.collection import Collection
+ 
+ from figcore.graphql.schema.types.file import File
+-from figcore.graphql.schema.types.collection_authors import CollectionAuthors
+ 
+-from figcore.graphql.schema.types.group_search import GroupSearch
+-from figcore.graphql.schema.types.institution_search import InstitutionGroupSearch
+ from figcore.graphql.schema.types.item import Item
+ from figcore.graphql.schema.types.item_type import ItemType
+ from figcore.graphql.schema.types.item_types import ItemTypes
+@@ -984,3 +983,20 @@ def search_profile(cls):
+             "type": {"implements": "cursorCountPagination", "name": "ProfileList", "type": "AuthorSearchListEntity"},
+             "resolver": search_profile,
+         }
++
++    @classmethod
++    def get_related_materials(cls):
++        return {
++            "scopes": ["website"],
++            "params": [{"name": "related_material_ids", "type": "Json", "mandatory": True}],
++            "type": ["RelatedMaterial"],
++            "resolver": get_related_materials,
++        }
++
++    @classmethod
++    def get_related_material_types(cls):
++        return {"scopes": ["website"], "type": ["Json"], "resolver": get_related_material_types}
++
++    @classmethod
++    def get_related_material_relations(cls):
++        return {"scopes": ["website"], "type": ["String"], "resolver": lambda o, i: RELATION_TYPE}
+diff --git a/src/figcore/graphql/schema/types/__init__.py b/src/figcore/graphql/schema/types/__init__.py
+index 3b618e2a25..a6df274f25 100644
+--- a/src/figcore/graphql/schema/types/__init__.py
++++ b/src/figcore/graphql/schema/types/__init__.py
+@@ -86,6 +86,7 @@
+ from figcore.graphql.schema.types.user import User, user
+ from figcore.graphql.schema.types.author import Author
+ from figcore.graphql.schema.types.virus_scan_info import VirusScanInfo
++from figcore.graphql.schema.types.related_material import RelatedMaterial
+ 
+ ql_types = [
+     Account,
+@@ -175,4 +176,5 @@
+     Author,
+     AuthorListEntity,
+     VirusScanInfo,
++    RelatedMaterial,
+ ]
+diff --git a/src/figcore/graphql/schema/types/related_material.py b/src/figcore/graphql/schema/types/related_material.py
+new file mode 100644
+index 0000000000..3819ffa722
+--- /dev/null
++++ b/src/figcore/graphql/schema/types/related_material.py
+@@ -0,0 +1,64 @@
++from figcore.lib.data.related_material_static import IDENTIFIER_TYPE
++from figcore.graphql.internals import GqlType
++
++
++class RelatedMaterial(GqlType):
++    MODEL = "related_material"
++
++    @classmethod
++    def id(cls):
++        return {"type": "Int", "meta": {"db_model": "related_material", "db_column": "id"}}
++
++    @classmethod
++    def identifier(cls):
++        return {"type": "String", "meta": {"db_model": "related_material", "db_column": "identifier"}}
++
++    @classmethod
++    def identifier_type(cls):
++        return {"type": "String", "meta": {"db_model": "related_material", "db_column": "identifier_type"}}
++
++    @classmethod
++    def relation(cls):
++        return {"type": "String", "meta": {"db_model": "related_material", "db_column": "relation"}}
++
++    @classmethod
++    def title(cls):
++        return {"type": "String", "meta": {"db_model": "related_material", "db_column": "title"}}
++
++    @classmethod
++    def is_linkout(cls):
++        return {"type": "Boolean", "meta": {"db_model": "related_material", "db_column": "is_linkout"}}
++
++    @classmethod
++    def resolver(cls):
++        return {
++            "type": "String",
++            "meta": {
++                "depends_on": [
++                    {"db_model": "related_material", "db_column": "identifier_type"},
++                ],
++            },
++            "resolver": {
++                "function": lambda o, i, identifier_type: IDENTIFIER_TYPE[identifier_type]["resolver"],
++                "params": {
++                    "identifier_type": {"db_field": "related_material.identifier_type"},
++                },
++            },
++        }
++
++    @classmethod
++    def is_url(cls):
++        return {
++            "type": "String",
++            "meta": {
++                "depends_on": [
++                    {"db_model": "related_material", "db_column": "identifier_type"},
++                ],
++            },
++            "resolver": {
++                "function": lambda o, i, identifier_type: IDENTIFIER_TYPE[identifier_type]["is_url"],
++                "params": {
++                    "identifier_type": {"db_field": "related_material.identifier_type"},
++                },
++            },
++        }
+diff --git a/src/figcore/graphql/utils/pagination/limits.py b/src/figcore/graphql/utils/pagination/limits.py
+new file mode 100644
+index 0000000000..b78e2fe5db
+--- /dev/null
++++ b/src/figcore/graphql/utils/pagination/limits.py
+@@ -0,0 +1 @@
++MAX_REQUESTED_ENTITIES = 40
+diff --git a/src/figcore/lib/data/related_material_static.py b/src/figcore/lib/data/related_material_static.py
+index e3fb1c1438..a37632fc16 100644
+--- a/src/figcore/lib/data/related_material_static.py
++++ b/src/figcore/lib/data/related_material_static.py
+@@ -1,23 +1,23 @@
+ IDENTIFIER_TYPE = {
+-    "ARK": {"resolver": "https://n2t.net/", "isUrl": True},
+-    "arXiv": {"resolver": "https://arxiv.org/abs/", "isUrl": True},
+-    "bibcode": {"resolver": "", "isUrl": False},
+-    "DOI": {"resolver": "https://doi.org/", "isUrl": True},
+-    "EAN13": {"resolver": "", "isUrl": False},
+-    "EISSN": {"resolver": "", "isUrl": False},
+-    "Handle": {"resolver": "https://handle.net/", "isUrl": True},
+-    "IGSN": {"resolver": "https://igsn.org/", "isUrl": True},
+-    "ISBN": {"resolver": "urn:isbn:", "isUrl": True},
+-    "ISSN": {"resolver": "urn:ISSN:", "isUrl": True},
+-    "ISTC": {"resolver": "", "isUrl": False},
+-    "LISSN": {"resolver": "", "isUrl": False},
+-    "LSID": {"resolver": "urn:lsid:", "isUrl": True},
+-    "PMID": {"resolver": "https://pubmed.ncbi.nlm.nih.gov/", "isUrl": True},
+-    "PURL": {"resolver": "", "isUrl": False},
+-    "UPC": {"resolver": "", "isUrl": False},
+-    "URL": {"resolver": "", "isUrl": False},
+-    "URN": {"resolver": "", "isUrl": False},
+-    "w3id": {"resolver": "https://w3id.org/", "isUrl": True},
++    "ARK": {"resolver": "https://n2t.net/", "is_url": True},
++    "arXiv": {"resolver": "https://arxiv.org/abs/", "is_url": True},
++    "bibcode": {"resolver": "https://adsabs.harvard.edu/abs/", "is_url": True},
++    "DOI": {"resolver": "https://doi.org/", "is_url": True},
++    "EAN13": {"resolver": "urn:ean13:", "is_url": False},
++    "EISSN": {"resolver": "https://portal.issn.org/resource/ISSN/", "is_url": True},
++    "Handle": {"resolver": "https://handle.net/", "is_url": True},
++    "IGSN": {"resolver": "https://igsn.org/", "is_url": True},
++    "ISBN": {"resolver": "urn:isbn:", "is_url": False},
++    "ISSN": {"resolver": "https://portal.issn.org/resource/ISSN/", "is_url": True},
++    "ISTC": {"resolver": "urn:istc:", "is_url": False},
++    "LISSN": {"resolver": "https://portal.issn.org/resource/ISSN/", "is_url": True},
++    "LSID": {"resolver": "urn:lsid:", "is_url": False},
++    "PMID": {"resolver": "https://pubmed.ncbi.nlm.nih.gov/", "is_url": True},
++    "PURL": {"resolver": "", "is_url": True},
++    "UPC": {"resolver": "urn:upc:", "is_url": False},
++    "URL": {"resolver": "", "is_url": True},
++    "URN": {"resolver": "", "is_url": False},
++    "w3id": {"resolver": "https://w3id.org/", "is_url": True},
+ }
+ 
+ DEFAULT_IDENTIFIER_TYPE = "URL"
+diff --git a/src/figcore/lib/validator.py b/src/figcore/lib/validator.py
+index 0acb051d62..ea1e853e08 100644
+--- a/src/figcore/lib/validator.py
++++ b/src/figcore/lib/validator.py
+@@ -261,13 +261,14 @@ def sanitize_string_for_url(cls, string):
+         return Text(string).for_url()
+ 
+     @classmethod
+-    def sanitize_url(cls, string):
++    def sanitize_url(cls, string, encode_path=True):
+         if not string:
+             return ""
+ 
+         scheme, netloc, path, params, query_str, fragment = six.moves.urllib.parse.urlparse(string)
+ 
+-        path = urllib.parse.quote(path)
++        if encode_path:
++            path = urllib.parse.quote(path)
+ 
+         query = six.moves.urllib.parse.parse_qsl(query_str)
+         new_query_str = six.moves.urllib.parse.urlencode(query)
+diff --git a/src/figcore/models/dao/related_material.py b/src/figcore/models/dao/related_material.py
+index ead0a38cdb..bb9afe54e5 100644
+--- a/src/figcore/models/dao/related_material.py
++++ b/src/figcore/models/dao/related_material.py
+@@ -15,6 +15,7 @@ class RelatedMaterial(Base, ExtendedBase):
+     __tablename__ = "related_material"
+ 
+     id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
++    account_id = Column(BIGINT(unsigned=True), nullable=False, server_default="0", default=0)
+     identifier = Column(VARCHAR(length=2000), nullable=False, server_default="", default="")
+     identifier_type = Column(
+         ENUM(*IDENTIFIER_TYPE.keys()),
+diff --git a/tests/api/related_material/test_api.py b/tests/api/related_material/test_api.py
+index 1b7bd3314a..f711997a71 100644
+--- a/tests/api/related_material/test_api.py
++++ b/tests/api/related_material/test_api.py
+@@ -6,6 +6,7 @@
+ class TestRelatedMaterialAPI(BaseTest):
+     def test_crud(self):
+         data = {
++            "account_id": 1,
+             "identifier": "1234",
+             "identifier_type": "ARK",
+             "relation": "Cites",
+diff --git a/tests/api/related_material/test_validator.py b/tests/api/related_material/test_validator.py
+index 62b38d73b0..d443c3da80 100644
+--- a/tests/api/related_material/test_validator.py
++++ b/tests/api/related_material/test_validator.py
+@@ -8,6 +8,7 @@
+ class TestRelatedMaterialValidator(TestCase):
+     def test_passes_validation(self):
+         data = {
++            "account_id": 1,
+             "identifier": "53355/cl010066723",
+             "title": "Some title",
+             "relation": "Cites",
+@@ -21,10 +22,11 @@ def test_passes_validation(self):
+         self.assertDictEqual(data, result)
+ 
+     def test_uses_defaults(self):
+-        data = {"identifier": "https://figshare.com"}
++        data = {"account_id": 1, "identifier": "https://figshare.com"}
+         data = RelatedMaterialValidator.sanitize_input(data)
+         RelatedMaterialValidator(data).validate()
+         expected = {
++            "account_id": 1,
+             "identifier": "https://figshare.com",
+             "relation": "References",
+             "identifier_type": "URL",
+@@ -33,10 +35,17 @@ def test_uses_defaults(self):
+ 
+         self.assertDictEqual(data, expected)
+ 
+-        data = {"identifier": "53355/cl010066723", "identifier_type": "ARK", "title": "La Joconde", "is_linkout": True}
++        data = {
++            "account_id": 1,
++            "identifier": "53355/cl010066723",
++            "identifier_type": "ARK",
++            "title": "La Joconde",
++            "is_linkout": True,
++        }
+         data = RelatedMaterialValidator.sanitize_input(data)
+         RelatedMaterialValidator(data).validate()
+         expected = {
++            "account_id": 1,
+             "identifier": "53355/cl010066723",
+             "relation": "References",
+             "identifier_type": "ARK",
+@@ -52,16 +61,26 @@ def test_fails_validation(self):
+ 
+         with self.assertRaises(fig_exc.InvalidLength):
+             RelatedMaterialValidator(
+-                {"identifier": "a" * 2001, "identifier_type": "ARK", "relation": "Cites"}
++                {"account_id": 1, "identifier": "a" * 2001, "identifier_type": "ARK", "relation": "Cites"}
+             ).validate()
+ 
+         with self.assertRaises(fig_exc.InvalidValue):
+-            RelatedMaterialValidator({"identifier": "123", "identifier_type": "test", "relation": "Cites"}).validate()
++            RelatedMaterialValidator(
++                {"account_id": 1, "identifier": "123", "identifier_type": "test", "relation": "Cites"}
++            ).validate()
+ 
+         with self.assertRaises(fig_exc.InvalidValue):
+-            RelatedMaterialValidator({"identifier": "123", "identifier_type": "ARK", "relation": "test"}).validate()
++            RelatedMaterialValidator(
++                {"account_id": 1, "identifier": "123", "identifier_type": "ARK", "relation": "test"}
++            ).validate()
+ 
+         with self.assertRaises(fig_exc.InvalidLength):
+             RelatedMaterialValidator(
+-                {"identifier": "123", "title": "a" * 1001, "identifier_type": "ARK", "relation": "Cites"}
++                {
++                    "account_id": 1,
++                    "identifier": "123",
++                    "title": "a" * 1001,
++                    "identifier_type": "ARK",
++                    "relation": "Cites",
++                }
+             ).validate()

@@ -1,0 +1,83 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+index 5755b3d31..f91971764 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+@@ -4,6 +4,7 @@ import DoubleChevronDownMedium from "@figshare/fcl/icons/doubleChevron/down/medi
+ import classnames from "classnames";
+ import { shape, string, bool, number, arrayOf, oneOfType } from "prop-types";
+ import getIn from "utils/getIn";
++import { encodeHTML } from "utils/sanitizers";
+ import { NodeWithHighlights } from "shared/ui/highlights";
+ 
+ import { RelatedMaterialListPropType, SHOWN_ITEM_LIMIT } from "../../constants";
+@@ -28,7 +29,9 @@ function renderRelatedMaterial(material, index, { identifiers, relationships, wi
+    * For lists that are rendered in the item/preview pages
+    * search highlights are needed for the material title.
+    */
+-  const titleNode = withHighlights ? (<NodeWithHighlights itemId={itemId} text={displayTitle} />) : displayTitle;
++  const titleNode = withHighlights ? (
++    <NodeWithHighlights itemId={itemId} text={encodeHTML(displayTitle)} />
++  ) : displayTitle;
+   const titleHasWords = displayTitle.search(/\s/) !== -1;
+ 
+   return (
+diff --git a/src/pages/item/page/components/linkback/card.jsx b/src/pages/item/page/components/linkback/card.jsx
+index 59f6409bc..9467985b4 100644
+--- a/src/pages/item/page/components/linkback/card.jsx
++++ b/src/pages/item/page/components/linkback/card.jsx
+@@ -4,6 +4,7 @@ import { bool, oneOfType, string, number } from "prop-types";
+ import Papers from "@figshare/fcl/icons/papers";
+ import { Button } from "@figshare/fcl/button";
+ import { NodeWithHighlights } from "shared/ui/highlights";
++import { encodeHTML } from "utils/sanitizers";
+ 
+ import styles from "./card.css";
+ 
+@@ -40,7 +41,7 @@ export function LinkbackCard({ id, itemId, title, relation, identifier, type, is
+             target="_blank"
+             theme="tertiary"
+           >
+-            <NodeWithHighlights itemId={itemId} text={title} />
++            <NodeWithHighlights itemId={itemId} text={encodeHTML(title)} />
+           </Button>
+         )}
+         {!isUrl && (
+diff --git a/src/utils/sanitizers.js b/src/utils/sanitizers.js
+index 46ff76a3a..f2128d242 100644
+--- a/src/utils/sanitizers.js
++++ b/src/utils/sanitizers.js
+@@ -13,3 +13,11 @@ export function removeDOIVersion(doi) {
+ 
+   return doi;
+ }
++/**
++ * Encode the HTML in a user-submitted string
++ * @param  {String} str  The user-submitted string
++ * @return {String} str  The sanitized string
++ */
++export function encodeHTML(str) {
++  return str.replace(/data:/gi, "").replace(/javascript:/gi, "").replace(/[^\w-_. ]/gi, (c) => `&#${c.charCodeAt(0)};`);
++}
+diff --git a/src/utils/sanitizers.test.js b/src/utils/sanitizers.test.js
+index 664fa5c78..a5ad7e40c 100644
+--- a/src/utils/sanitizers.test.js
++++ b/src/utils/sanitizers.test.js
+@@ -1,4 +1,4 @@
+-import { removeDOIVersion } from "./sanitizers";
++import { removeDOIVersion, encodeHTML } from "./sanitizers";
+ 
+ 
+ describe("removeDOIVersion", () => {
+@@ -8,3 +8,12 @@ describe("removeDOIVersion", () => {
+     expect(removeDOIVersion("test")).toEqual("test");
+   });
+ });
++
++describe("encodeHTML", () => {
++  it("removes possibly malicious tokens from html strings", () => {
++    expect(encodeHTML("<IMG SRC=\"javascript:alert('XSS');\">")).
++      toEqual("&#60;IMG SRC&#61;&#34;alert&#40;&#39;XSS&#39;&#41;&#59;&#34;&#62;");
++    expect(encodeHTML("<IMG SRC=\"data:alert('XSS');\">")).
++      toEqual("&#60;IMG SRC&#61;&#34;alert&#40;&#39;XSS&#39;&#41;&#59;&#34;&#62;");
++  });
++});

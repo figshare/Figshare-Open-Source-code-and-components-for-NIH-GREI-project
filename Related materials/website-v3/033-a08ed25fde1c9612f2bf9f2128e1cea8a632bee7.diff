@@ -1,0 +1,67 @@
+diff --git a/src/pages/item/page/components/linkback/index.jsx b/src/pages/item/page/components/linkback/index.jsx
+index b7623e53c..be891d5d6 100644
+--- a/src/pages/item/page/components/linkback/index.jsx
++++ b/src/pages/item/page/components/linkback/index.jsx
+@@ -95,10 +95,11 @@ export function Linkback(props) {
+   const empty = !materials.length;
+   const withLinkback = empty && linkback;
+   const itemId = item?.id;
++  const canRender = useMemo(() => (process.env.BROWSER && done), [done]);
+ 
+   return (
+     <ul className={styles.linkback} {...props}>
+-      {done && (<>
++      {canRender && (<>
+         {withLinkback && renderItem(linkback, identifiers.data, relationships.data, itemId)}
+         {materials.map((material) => renderItem(material, identifiers.data, relationships.data, itemId))}
+       </>)}
+diff --git a/src/pages/item/page/components/linkback/index.test.jsx b/src/pages/item/page/components/linkback/index.test.jsx
+index 1decd484e..8f210576a 100644
+--- a/src/pages/item/page/components/linkback/index.test.jsx
++++ b/src/pages/item/page/components/linkback/index.test.jsx
+@@ -35,6 +35,13 @@ LinkbackWrapped.defaultProps = {
+ 
+ 
+ describe("<Linkback />", () => {
++  const ORIGINAL_ENV = process.env;
++
++  beforeEach(() => {
++    process.env = { ...ORIGINAL_ENV };
++    process.env.BROWSER = true;
++  });
++
+   const getRelatedMaterialsEmptyMock = [{
+     request: { query: getRelatedMaterials, variables: { relatedMaterialIds: [] } },
+     result: { data: { getRelatedMaterials: [] } },
+diff --git a/src/pages/item/page/components/relatedMaterials/index.jsx b/src/pages/item/page/components/relatedMaterials/index.jsx
+index 477287de0..1576df975 100644
+--- a/src/pages/item/page/components/relatedMaterials/index.jsx
++++ b/src/pages/item/page/components/relatedMaterials/index.jsx
+@@ -33,7 +33,9 @@ export function RelatedMaterials(props) {
+   }, [item, token]);
+   const { materials } = useRelatedMaterials(variables, { sort: true, remap: true });
+ 
+-  if (!materials?.length) {
++  const canRender = useMemo(() => process.env.BROWSER && materials?.length, [materials]);
++
++  if (!canRender) {
+     return null;
+   }
+ 
+diff --git a/src/pages/item/page/components/relatedMaterials/index.test.jsx b/src/pages/item/page/components/relatedMaterials/index.test.jsx
+index 3c71abd96..9ed878d3f 100644
+--- a/src/pages/item/page/components/relatedMaterials/index.test.jsx
++++ b/src/pages/item/page/components/relatedMaterials/index.test.jsx
+@@ -33,6 +33,12 @@ RelatedMaterials.defaultProps = {
+ 
+ 
+ describe("<RelatedMaterials />", () => {
++  const ORIGINAL_ENV = process.env;
++
++  beforeEach(() => {
++    process.env = { ...ORIGINAL_ENV };
++    process.env.BROWSER = true;
++  });
+ 
+   const getRelatedMaterialsEmptyMock = [{
+     request: { query: getRelatedMaterials, variables: { relatedMaterialIds: [] } },

@@ -1,0 +1,34 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+index a3edb4f8c..ad1d8405b 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+@@ -361,11 +361,12 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     component.unmount();
+   });
+-  it("cannot add more than settings.validation.maxListLength, and handles add gql errors", async() => {
++
++  it("cannot add more than settings.validation.maxListLength", async() => {
+     const newSettings = JSON.parse(JSON.stringify(fieldSettings));
+ 
+     newSettings.validation.maxListLength = 2;
+-    let component = mount(
++    const component = mount(
+       <MockedProvider mocks={[...relatedMaterialCreateMock]}>
+         <ManageRelatedMaterials
+           {...defaultProps}
+@@ -389,10 +390,11 @@ describe("<ManageRelatedMaterials />", () => {
+     expect(component.find(Alert)).toHaveLength(1);
+ 
+     component.unmount();
++  });
+ 
+-    // mount with create errors
+-    component = mount(
+-      <MockedProvider mocks={[]}>
++  it("handles add gql errors", async() => {
++    const component = mount(
++      <MockedProvider mocks={[...relatedMaterialCreateFailMock]}>
+         <ManageRelatedMaterials
+           {...defaultProps}
+           materials={materials.current}

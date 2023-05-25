@@ -1,0 +1,184 @@
+diff --git a/src/pages/account/itemEdit/constants.js b/src/pages/account/itemEdit/constants.js
+index d7ec3c506..528651d8a 100644
+--- a/src/pages/account/itemEdit/constants.js
++++ b/src/pages/account/itemEdit/constants.js
+@@ -77,5 +77,5 @@ export const MANDATORY_AUTHORS_PUBLISH_ERROR = {
+ 
+ export const LINKBACK_MANDATORY_PUBLISH_ERROR = {
+   field: "references",
+-  error: "A linkout Resource DOI is mandatory for publishing. Add the entry in related materials.",
++  error: "A linkout DOI is mandatory for publishing. Please add a valid entry in the related materials section",
+ };
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+index 24bab9e54..8c1ae8c42 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+@@ -123,7 +123,7 @@ export const RELATED_MATERIAL_FORM_VALIDATION_SCHEMA = {
+       fn: (value, { minTitleLength }) => minLength(value, minTitleLength),
+       message:
+         ({ label, parameters: { minTitleLength, maxTitleLength } }) =>
+-          `'${label.replace(" (optional)", "")}' must be between` +
++          `'${label.replace(" (optional)", "")}' must be between ` +
+           `${minTitleLength} and ${maxTitleLength} characters in length.`,
+     },
+     {
+@@ -133,7 +133,7 @@ export const RELATED_MATERIAL_FORM_VALIDATION_SCHEMA = {
+       fn: (value, { maxTitleLength }) => maxLength(value, maxTitleLength),
+       message:
+         ({ label, parameters: { minTitleLength, maxTitleLength } }) =>
+-          `'${label.replace(" (optional)", "")}' must be between` +
++          `'${label.replace(" (optional)", "")}' must be between ` +
+           `${minTitleLength} and ${maxTitleLength} characters in length.`,
+     },
+   ],
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx
+index aecdc1388..83c3cfb99 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx
+@@ -11,6 +11,9 @@ export function RelatedMaterialsListItem({
+   id, identifier, title, type, relation,
+   order, isUrl, isLinkout, titleHasWords,
+ }) {
++  const isResolved = isUrl && identifier.includes("://");
++  const href = isResolved ? identifier : `//${identifier}`;
++
+   return (
+     <li
+       key={id}
+@@ -34,7 +37,8 @@ export function RelatedMaterialsListItem({
+         {isUrl ? (
+           <Button
+             className={styles.link}
+-            data-control-id="material-link" href={identifier}
++            data-control-id="material-link"
++            href={href}
+             target="_blank"
+             theme={"tertiary"}
+           >
+diff --git a/src/pages/item/page/components/linkback/card.jsx b/src/pages/item/page/components/linkback/card.jsx
+index 763f03a69..59f6409bc 100644
+--- a/src/pages/item/page/components/linkback/card.jsx
++++ b/src/pages/item/page/components/linkback/card.jsx
+@@ -2,13 +2,16 @@ import React from "react";
+ import classnames from "classnames";
+ import { bool, oneOfType, string, number } from "prop-types";
+ import Papers from "@figshare/fcl/icons/papers";
+-import { GenericButton } from "@figshare/fcl/button";
++import { Button } from "@figshare/fcl/button";
+ import { NodeWithHighlights } from "shared/ui/highlights";
+ 
+ import styles from "./card.css";
+ 
+ 
+ export function LinkbackCard({ id, itemId, title, relation, identifier, type, isUrl, journal, titleHasWords }) {
++  const isResolved = isUrl && identifier.includes("://");
++  const href = isResolved ? identifier : `//${identifier}`;
++
+   return (
+     <div
+       key={id}
+@@ -31,13 +34,14 @@ export function LinkbackCard({ id, itemId, title, relation, identifier, type, is
+       </div>
+       <div className={classnames(styles.content, titleHasWords ? styles.sentence : styles.word)}>
+         {isUrl && (
+-          <GenericButton
++          <Button
+             className={styles.link}
+-            href={identifier}
++            href={href}
+             target="_blank"
++            theme="tertiary"
+           >
+             <NodeWithHighlights itemId={itemId} text={title} />
+-          </GenericButton>
++          </Button>
+         )}
+         {!isUrl && (
+           <span
+diff --git a/src/pages/item/page/components/linkback/index.jsx b/src/pages/item/page/components/linkback/index.jsx
+index 31f99cc85..680fc9a36 100644
+--- a/src/pages/item/page/components/linkback/index.jsx
++++ b/src/pages/item/page/components/linkback/index.jsx
+@@ -8,7 +8,6 @@ import { resolveIdentifier } from
+   "pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils";
+ 
+ import Context from "../../context";
+-import { ITEM_STATUS } from "../../../../account/itemEdit/constants";
+ 
+ import { LinkbackCard } from "./card";
+ import styles from "./index.css";
+@@ -43,14 +42,14 @@ function renderItem(material, identifiers, relationships, itemId) {
+ }
+ 
+ export function Linkback(props) {
+-  const { item, domainData } = useContext(Context);
++  const { item, domainData, isPublic } = useContext(Context);
+   const { identifiers, relationships } = useIdentifiersAndRelationshipsResource();
+   const variables = useMemo(() => {
+     return {
+       id: getIn(item, "id"),
+       version: getIn(item, "version"),
+       value: getIn(item, "references.items", getIn(item, "references", [])),
+-      isPublic: getIn(item, "status", ITEM_STATUS.private) === ITEM_STATUS.public,
++      isPublic,
+     };
+   }, [item]);
+   const { materials: unfiltered } = useRelatedMaterials(variables, { sort: true, remap: false });
+diff --git a/src/pages/item/page/components/linkback/index.test.jsx b/src/pages/item/page/components/linkback/index.test.jsx
+index e80ba3fb3..0ce11e88a 100644
+--- a/src/pages/item/page/components/linkback/index.test.jsx
++++ b/src/pages/item/page/components/linkback/index.test.jsx
+@@ -14,8 +14,8 @@ import Linkback from "./index";
+ class LinkbackWrapped extends Component {
+   render() {
+     // eslint-disable-next-line react/prop-types
+-    const { item, domainData, mocks } = this.props;
+-    const context = { item, domainData };
++    const { item, domainData, isPublic, mocks } = this.props;
++    const context = { item, domainData, isPublic };
+ 
+     return (
+       <MockedProvider addTypename={false} mocks={mocks}>
+@@ -140,7 +140,6 @@ describe("<Linkback />", () => {
+     const testItem = {
+       id: 12000,
+       version: 0,
+-      status: "public",
+       references: [1, 2, 3],
+       linkbackCollection: {
+         resourceTitle: "test-title",
+@@ -152,6 +151,7 @@ describe("<Linkback />", () => {
+     const component = mount(
+       <LinkbackWrapped
+         domainData={ { linkBackTitle: "My linkback title" } }
++        isPublic={true}
+         item={testItem}
+         mocks={[...getRelatedMaterialsDataMock, ...getIdentifiersAndRelationshipsMocks]}
+       />
+diff --git a/src/pages/item/page/components/relatedMaterials/index.jsx b/src/pages/item/page/components/relatedMaterials/index.jsx
+index 542296cc9..98d70900f 100644
+--- a/src/pages/item/page/components/relatedMaterials/index.jsx
++++ b/src/pages/item/page/components/relatedMaterials/index.jsx
+@@ -8,20 +8,19 @@ import { useRelatedMaterials } from
+   "pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials";
+ 
+ import Context from "../../context";
+-import { ITEM_STATUS } from "../../../../account/itemEdit/constants";
+ 
+ import style from "./index.css";
+ 
+ 
+ export function RelatedMaterials(props) {
+-  const { item } = useContext(Context);
++  const { item, isPublic } = useContext(Context);
+   const resources = useIdentifiersAndRelationshipsResource();
+   const variables = useMemo(() => {
+     return {
+       id: getIn(item, "id"),
+       version: getIn(item, "version"),
+       value: getIn(item, "references.items", getIn(item, "references", [])),
+-      isPublic: getIn(item, "status", ITEM_STATUS.private) === ITEM_STATUS.public,
++      isPublic,
+     };
+   }, [item]);
+   const { materials } = useRelatedMaterials(variables, { sort: true, remap: true });

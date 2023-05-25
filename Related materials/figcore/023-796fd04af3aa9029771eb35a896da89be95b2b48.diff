@@ -1,0 +1,76 @@
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index 7caa7de8b8..de670e5a64 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -2470,8 +2470,13 @@ def create_article(cls, data, **options):
+             data["minting_info_id"] = IdentifierUtils.get_self_minting_info_id(IdentifierUtils.HANDLE, group, item=None)
+ 
+         references = data.get("references")
+-        if references and isinstance(references[0], str):
+-            data["references"] = [Text(reference).format_url(encode=False) for reference in references]
++        if references:
++            if isinstance(references[0], str):
++                data["references"] = [Text(reference).format_url(encode=False) for reference in references]
++            elif isinstance(data["references"][0], dict):
++                data["references"] = cls.ENTITIES.RelatedMaterial.process_related_materials_list(
++                    data["references"], data["account_id"]
++                )
+ 
+         models = ArticleInternals.create_article(data, owner_is_author=owner_is_author)
+         api = Article(models["article_id"])
+diff --git a/src/figcore/api/article/validator.py b/src/figcore/api/article/validator.py
+index cd41ae76a6..3442fd520e 100644
+--- a/src/figcore/api/article/validator.py
++++ b/src/figcore/api/article/validator.py
+@@ -252,9 +252,10 @@ def _check_related_materials_linkout(self):
+         if isinstance(references, list) and (len(references) == 0 or isinstance(references[0], str)):
+             # references were updated using an old interface (e.g., review screen)
+             return False
+-        related_materials = self._get_final_value("related_materials")
+-        if related_materials and isinstance(related_materials[0], int):
+-            for material in related_materials:
++        if not references:
++            references = self._get_final_value("related_materials")
++        if references and isinstance(references[0], int):
++            for material in references:
+                 if APIEntity.ENTITIES.RelatedMaterial.find(material).is_linkout:
+                     return True
+         return False
+diff --git a/tests/api/article/test_references.py b/tests/api/article/test_references.py
+index 5176e0fa9d..16092e8440 100644
+--- a/tests/api/article/test_references.py
++++ b/tests/api/article/test_references.py
+@@ -61,7 +61,7 @@ def test_create_has_resource(self):
+         db_references = ArticleInternals.get_metadata(article.id).references
+         self.assertListEqual(db_references, article.related_materials)
+ 
+-    def test_create_article_with_related_materials(self):
++    def test_create_article_with_related_materials_in_references(self):
+         material = RelatedMaterial.create({"identifier": "https://google.com", "account_id": self.account.id})
+         article_data = {
+             "title": "References test",
+@@ -80,6 +80,24 @@ def test_create_article_with_related_materials(self):
+         self.assertEqual(article.references[0], "https://google.com")
+         self.assertEqual(RelatedMaterial(article.related_materials[0]).identifier, "https://google.com")
+ 
++    def test_create_article_with_related_materials(self):
++        article_data = {
++            "title": "References test",
++            "description": "lorem ipsum dolor",
++            "is_active": 1,
++            "defined_type": 3,
++            "account_id": self.account.id,
++            "institution_id": self.account.institution_id,
++            "group_id": self.account.group_id,
++            "detected_license_id": 1,
++            "tags": ["test"],
++            "categories": [2],
++            "references": [{"identifier": "https://google.com"}],
++        }
++        article = Article.create_article(article_data)
++        self.assertEqual(article.references[0], "https://google.com")
++        self.assertEqual(RelatedMaterial(article.related_materials[0]).identifier, "https://google.com")
++
+     def test_update_references_when_having_related_materials(self):
+         article_data = {
+             "title": "References test",

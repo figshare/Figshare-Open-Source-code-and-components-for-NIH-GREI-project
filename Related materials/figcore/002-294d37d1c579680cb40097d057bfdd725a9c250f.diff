@@ -1,0 +1,288 @@
+diff --git a/scripts/sql_migrations/2023-05.sql b/scripts/sql_migrations/2023-05.sql
+index ddfc03ab16..7c76e64bf1 100644
+--- a/scripts/sql_migrations/2023-05.sql
++++ b/scripts/sql_migrations/2023-05.sql
+@@ -1,9 +1,9 @@
+ CREATE TABLE `related_material` (
+   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+   `identifier` varchar(2000) NOT NULL DEFAULT '',
+-  `identifer_type` enum('ARK','arXiv','bibcode','DOI','EAN13','EISSN','Handle','IGSN','ISBN','ISSN','ISTC','LISSN','LSID','PMID','PURL','UPC','URL','URN','w3id') NOT NULL DEFAULT 'URL',
++  `identifier_type` enum('ARK','arXiv','bibcode','DOI','EAN13','EISSN','Handle','IGSN','ISBN','ISSN','ISTC','LISSN','LSID','PMID','PURL','UPC','URL','URN','w3id') NOT NULL DEFAULT 'URL',
+   `relation` enum('IsCitedBy','Cites','IsSupplementTo','IsSupplementedBy','IsContinuedBy','Continues','Describes','IsDescribedBy','HasMetadata','IsMetadataFor','HasVersion','IsVersionOf','IsNewVersionOf','IsPreviousVersionOf','IsPartOf','HasPart','IsPublishedIn','IsReferencedBy','References','IsDocumentedBy','Documents','IsCompiledBy','Compiles','IsVariantFormOf','IsOriginalFormOf','IsIdenticalTo','IsReviewedBy','Reviews','IsDerivedFrom','IsSourceOf','IsRequiredBy','Requires','IsObsoletedBy','Obsoletes') NOT NULL DEFAULT 'References',
+   `title` varchar(2000) NOT NULL DEFAULT '',
+   `is_linkout` tinyint(3) unsigned NOT NULL DEFAULT 0,
+   PRIMARY KEY (`id`)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
++) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
+diff --git a/src/figcore/api/related_material/api.py b/src/figcore/api/related_material/api.py
+index cf1ceffaa1..c766bf9b7b 100644
+--- a/src/figcore/api/related_material/api.py
++++ b/src/figcore/api/related_material/api.py
+@@ -2,6 +2,8 @@
+ from figcore.lib.api_entity import APIEntity
+ from figcore.lib.checker import Checker
+ 
++from .validator import RelatedMaterialValidator
++
+ 
+ class RelatedMaterial(APIEntity):
+     def __init__(self, id):
+@@ -18,8 +20,8 @@ def identifier(self):
+ 
+     @property
+     @Checker.ensure("model")
+-    def identifer_type(self):
+-        return self._model.identifer_type
++    def identifier_type(self):
++        return self._model.identifier_type
+ 
+     @property
+     @Checker.ensure("model")
+@@ -45,12 +47,14 @@ def find(cls, id):
+ 
+     @classmethod
+     def create(cls, data):
+-        # TODO(adrianp): validate data
++        data = RelatedMaterialValidator.sanitize_input(data)
++        RelatedMaterialValidator(data).validate()
+         model = RelatedMaterialInternals.create(data)
+         return cls(model.id).load_from_model(model)
+ 
+     def update(self, data):
+-        # TODO(adrianp): validate data
++        data = RelatedMaterialValidator.sanitize_input(data)
++        RelatedMaterialValidator(data).validate()
+         RelatedMaterialInternals.update(self.id, data)
+         self._model = None  # force reload
+ 
+diff --git a/src/figcore/api/related_material/validator.py b/src/figcore/api/related_material/validator.py
+index e69de29bb2..0a1e012ef8 100644
+--- a/src/figcore/api/related_material/validator.py
++++ b/src/figcore/api/related_material/validator.py
+@@ -0,0 +1,60 @@
++from figcore import exc as fig_exc
++from figcore.lib.data.related_material_static import (
++    IDENTIFIER_TYPE,
++    RELATION_TYPE,
++    DEFAULT_IDENTIFIER_TYPE,
++    DEFAULT_RELATION_TYPE,
++)
++from figcore.lib.validator import Validator
++
++
++class RelatedMaterialValidator(Validator):
++    MIN_TITLE_LENGTH = 1
++    MAX_TITLE_LENGTH = 1000
++    MIN_IDENTIFIER_LENGTH = 1
++    MAX_IDENTIFIER_LENGTH = 2000
++    MANDATORY_FIELDS = ["identifier", "identifier_type", "relation"]
++
++    def __init__(self, data):
++        self.data = data
++
++    @classmethod
++    def sanitize_input(cls, data):
++        data["identifier_type"] = data.get("identifier_type", DEFAULT_IDENTIFIER_TYPE)
++
++        if data.get("identifier"):
++            data["identifier"] = cls.sanitize_url(data.get("identifier"))
++
++        data["relation"] = data.get("relation", DEFAULT_RELATION_TYPE)
++
++        if data.get("title"):
++            data["title"] = cls.sanitize_string(data["title"])
++
++        data["is_linkout"] = data.get("is_linkout", False)
++
++        return data
++
++    def validate(self):
++        for field in self.MANDATORY_FIELDS:
++            if not self.data.get(field):
++                raise fig_exc.MissingMandatoryField(field)
++
++        if not self.validate_string(self.data["identifier"], self.MIN_IDENTIFIER_LENGTH, self.MAX_IDENTIFIER_LENGTH):
++            raise fig_exc.InvalidLength(
++                "Identifier can have between {cls.MIN_IDENTIFIER_LENGTH} and {cls.MAX_IDENTIFIER_LENGTH} characters",
++                field="identifier",
++            )
++
++        if self.data["identifier_type"] not in IDENTIFIER_TYPE:
++            raise fig_exc.InvalidValue("Invalid identifier type", field="identifier_type")
++
++        if self.data["relation"] not in RELATION_TYPE:
++            raise fig_exc.InvalidValue("Invalid relation type", field="relation")
++
++        if self.data.get("title") and not self.validate_string(
++            self.data["title"], self.MIN_TITLE_LENGTH, self.MAX_TITLE_LENGTH
++        ):
++            raise fig_exc.InvalidLength(
++                "Identifier can have between {cls.MIN_TITLE_LENGTH} and {cls.MAX_TITLE_LENGTH} characters",
++                field="title",
++            )
+diff --git a/src/figcore/lib/data/related_material_static.py b/src/figcore/lib/data/related_material_static.py
+index 8b705a5d78..e3fb1c1438 100644
+--- a/src/figcore/lib/data/related_material_static.py
++++ b/src/figcore/lib/data/related_material_static.py
+@@ -1,24 +1,24 @@
+-IDENTIFIER_TYPE = [
+-    "ARK",
+-    "arXiv",
+-    "bibcode",
+-    "DOI",
+-    "EAN13",
+-    "EISSN",
+-    "Handle",
+-    "IGSN",
+-    "ISBN",
+-    "ISSN",
+-    "ISTC",
+-    "LISSN",
+-    "LSID",
+-    "PMID",
+-    "PURL",
+-    "UPC",
+-    "URL",
+-    "URN",
+-    "w3id",
+-]
++IDENTIFIER_TYPE = {
++    "ARK": {"resolver": "https://n2t.net/", "isUrl": True},
++    "arXiv": {"resolver": "https://arxiv.org/abs/", "isUrl": True},
++    "bibcode": {"resolver": "", "isUrl": False},
++    "DOI": {"resolver": "https://doi.org/", "isUrl": True},
++    "EAN13": {"resolver": "", "isUrl": False},
++    "EISSN": {"resolver": "", "isUrl": False},
++    "Handle": {"resolver": "https://handle.net/", "isUrl": True},
++    "IGSN": {"resolver": "https://igsn.org/", "isUrl": True},
++    "ISBN": {"resolver": "urn:isbn:", "isUrl": True},
++    "ISSN": {"resolver": "urn:ISSN:", "isUrl": True},
++    "ISTC": {"resolver": "", "isUrl": False},
++    "LISSN": {"resolver": "", "isUrl": False},
++    "LSID": {"resolver": "urn:lsid:", "isUrl": True},
++    "PMID": {"resolver": "https://pubmed.ncbi.nlm.nih.gov/", "isUrl": True},
++    "PURL": {"resolver": "", "isUrl": False},
++    "UPC": {"resolver": "", "isUrl": False},
++    "URL": {"resolver": "", "isUrl": False},
++    "URN": {"resolver": "", "isUrl": False},
++    "w3id": {"resolver": "https://w3id.org/", "isUrl": True},
++}
+ 
+ DEFAULT_IDENTIFIER_TYPE = "URL"
+ 
+diff --git a/src/figcore/models/dao/related_material.py b/src/figcore/models/dao/related_material.py
+index 4496e68ec9..ead0a38cdb 100644
+--- a/src/figcore/models/dao/related_material.py
++++ b/src/figcore/models/dao/related_material.py
+@@ -16,8 +16,11 @@ class RelatedMaterial(Base, ExtendedBase):
+ 
+     id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+     identifier = Column(VARCHAR(length=2000), nullable=False, server_default="", default="")
+-    identifer_type = Column(
+-        ENUM(*IDENTIFIER_TYPE), nullable=False, server_default=DEFAULT_IDENTIFIER_TYPE, default=DEFAULT_IDENTIFIER_TYPE
++    identifier_type = Column(
++        ENUM(*IDENTIFIER_TYPE.keys()),
++        nullable=False,
++        server_default=DEFAULT_IDENTIFIER_TYPE,
++        default=DEFAULT_IDENTIFIER_TYPE,
+     )
+     relation = Column(
+         ENUM(*RELATION_TYPE), nullable=False, server_default=DEFAULT_RELATION_TYPE, default=DEFAULT_RELATION_TYPE
+diff --git a/tests/api/related_material/test_api.py b/tests/api/related_material/test_api.py
+index 38e41a5f19..1b7bd3314a 100644
+--- a/tests/api/related_material/test_api.py
++++ b/tests/api/related_material/test_api.py
+@@ -7,12 +7,18 @@ class TestRelatedMaterialAPI(BaseTest):
+     def test_crud(self):
+         data = {
+             "identifier": "1234",
+-            "identifer_type": "ark",
++            "identifier_type": "ARK",
+             "relation": "Cites",
+             "title": "Some title",
+             "is_linkout": False,
+         }
+         material = RelatedMaterial.create(data)
+         material = RelatedMaterial.find(material.id)
+-        material.update({"title": "Some other title"})
++        data["title"] = "Some other title"
++        material.update(data)
++
+         self.assertEqual(material.title, "Some other title")
++        self.assertEqual(material.identifier, "1234")
++        self.assertEqual(material.identifier_type, "ARK")
++        self.assertEqual(material.relation, "Cites")
++        self.assertFalse(material.is_linkout)
+diff --git a/tests/api/related_material/test_validator.py b/tests/api/related_material/test_validator.py
+new file mode 100644
+index 0000000000..62b38d73b0
+--- /dev/null
++++ b/tests/api/related_material/test_validator.py
+@@ -0,0 +1,67 @@
++from figcore import exc as fig_exc
++
++from figcore.api.related_material.validator import RelatedMaterialValidator
++
++from unittest import TestCase
++
++
++class TestRelatedMaterialValidator(TestCase):
++    def test_passes_validation(self):
++        data = {
++            "identifier": "53355/cl010066723",
++            "title": "Some title",
++            "relation": "Cites",
++            "identifier_type": "ARK",
++            "is_linkout": False,
++        }
++
++        result = RelatedMaterialValidator.sanitize_input(data)
++        RelatedMaterialValidator(result).validate()
++
++        self.assertDictEqual(data, result)
++
++    def test_uses_defaults(self):
++        data = {"identifier": "https://figshare.com"}
++        data = RelatedMaterialValidator.sanitize_input(data)
++        RelatedMaterialValidator(data).validate()
++        expected = {
++            "identifier": "https://figshare.com",
++            "relation": "References",
++            "identifier_type": "URL",
++            "is_linkout": False,
++        }
++
++        self.assertDictEqual(data, expected)
++
++        data = {"identifier": "53355/cl010066723", "identifier_type": "ARK", "title": "La Joconde", "is_linkout": True}
++        data = RelatedMaterialValidator.sanitize_input(data)
++        RelatedMaterialValidator(data).validate()
++        expected = {
++            "identifier": "53355/cl010066723",
++            "relation": "References",
++            "identifier_type": "ARK",
++            "title": "La Joconde",
++            "is_linkout": True,
++        }
++
++        self.assertDictEqual(data, expected)
++
++    def test_fails_validation(self):
++        with self.assertRaises(fig_exc.MissingMandatoryField):
++            RelatedMaterialValidator({"title": "test"}).validate()
++
++        with self.assertRaises(fig_exc.InvalidLength):
++            RelatedMaterialValidator(
++                {"identifier": "a" * 2001, "identifier_type": "ARK", "relation": "Cites"}
++            ).validate()
++
++        with self.assertRaises(fig_exc.InvalidValue):
++            RelatedMaterialValidator({"identifier": "123", "identifier_type": "test", "relation": "Cites"}).validate()
++
++        with self.assertRaises(fig_exc.InvalidValue):
++            RelatedMaterialValidator({"identifier": "123", "identifier_type": "ARK", "relation": "test"}).validate()
++
++        with self.assertRaises(fig_exc.InvalidLength):
++            RelatedMaterialValidator(
++                {"identifier": "123", "title": "a" * 1001, "identifier_type": "ARK", "relation": "Cites"}
++            ).validate()

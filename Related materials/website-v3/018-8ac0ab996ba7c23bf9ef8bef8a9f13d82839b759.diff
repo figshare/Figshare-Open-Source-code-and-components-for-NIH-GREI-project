@@ -1,0 +1,259 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+index 1bda4e553..bfaa4fa0a 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+@@ -4,6 +4,7 @@ import DoubleChevronDownMedium from "@figshare/fcl/icons/doubleChevron/down/medi
+ import classnames from "classnames";
+ import { shape, string, bool, number, arrayOf, oneOfType } from "prop-types";
+ import getIn from "utils/getIn";
++import Registry from "utils/registry";
+ import { encodeHTML } from "utils/sanitizers";
+ import { NodeWithHighlights } from "shared/ui/highlights";
+ 
+@@ -66,6 +67,9 @@ export function RelatedMaterialsList({ materials, publicList, itemId, identifier
+   const hasLinkout = materials.some((item) => item.linkout);
+ 
+   const onShowMoreMaterials = useCallback(() => {
++    const fetchMore = Registry.get("related-materials/fetchMore");
++
++    fetchMore?.();
+     setLimit((s) => s + SHOWN_ITEM_LIMIT);
+   }, [setLimit]);
+   const rendererInfo = useMemo(() => {
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx
+index f1d7c7585..65415c4a0 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx
+@@ -30,6 +30,9 @@ export function RelatedMaterialsTileList({ materials, fieldSettings, onEdit, onR
+     observer.current = new IntersectionObserver(([entry]) => {
+       if (entry.isIntersecting) {
+         if (pagesRef.current <= materials.length) {
++
++          const fetchMore = Registry.get("related-materials/fetchMore");
++          fetchMore?.();
+           setPages((p) => p + PAGE_SIZE);
+         } else {
+           observer.current.disconnect();
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
+index 310019161..6eb2e0716 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
+@@ -9,6 +9,7 @@ import { getRelatedMaterials, getRelatedMaterialTypes, getRelatedMaterialRelatio
+ import { RelatedMaterialsList } from "./components/relatedMaterialsList";
+ import { ManageRelatedMaterials } from "./components/manageRelatedMaterials";
+ import RelatedMaterials, {
++  GQL_LIMIT,
+   useRelatedMaterials,
+   isLinkout, parseReferencesFieldError,
+   RemapMaterial, returnFocus, resolveIdentifier, delayAction,
+@@ -240,6 +241,7 @@ describe("<RelatedMaterials />", () => {
+ 
+     component.unmount();
+   });
++
+ });
+ 
+ describe("utils", () => {
+@@ -355,6 +357,42 @@ describe("utils", () => {
+ });
+ 
+ describe("useRelatedMaterials() hook", () => {
++
++  const numberOfMaterials = 60;
++  const limit = GQL_LIMIT;
++  const manyIds = Array.from(new Array(numberOfMaterials), (_, v) => v);
++  const slices = [
++    { ids: manyIds.slice(0, limit) },
++    { ids: manyIds.slice(limit) },
++  ];
++
++  const generateMaterial = (materialId) => {
++    return {
++      id: materialId,
++      identifier: `identifier-${materialId}`,
++      title: `title-${materialId}`,
++      relation: "References",
++      identifierType: "DOI",
++      isLinkout: false,
++      isUrl: true,
++      resolver: "https://doi.org/",
++    };
++  };
++
++  slices.forEach((slice) => {
++    slice.materials = slice.ids.map(generateMaterial);
++  });
++
++  const getRelatedMaterialsPastLimitMocks = [
++    {
++      request: { query: getRelatedMaterials, variables: { articleId: 1, relatedMaterialIds: slices[0].ids } },
++      result: { data: slices[0].materials },
++    },
++    {
++      request: { query: getRelatedMaterials, variables: { relatedMaterialIds: slices[1].ids } },
++      result: { data: slices[1].materials },
++    },
++  ];
+   const getRelatedMaterialsDataMock = [{
+     request: { query: getRelatedMaterials, variables: { relatedMaterialIds: [1, 2], articleId: 1 } },
+     result: {
+@@ -385,7 +423,7 @@ describe("useRelatedMaterials() hook", () => {
+     },
+   }];
+   const hook = { current: null };
+-  const defaultVariables = { value: [1, 2, 3], articleId: 1 };
++  const defaultVariables = { value: [1, 2, 3], id: 1 };
+   function Fixture({ variables = defaultVariables, options = {} }) {
+     const result = useRelatedMaterials(variables, options);
+ 
+@@ -396,9 +434,8 @@ describe("useRelatedMaterials() hook", () => {
+     return null;
+   }
+ 
+-
+   it("sorts and remaps data by default if no such options are specified", async() => {
+-    const component = mount(<MockedProvider mocks={[...getRelatedMaterialsDataMock]}>
++    const component = mount(<MockedProvider addTypename={false} mocks={[...getRelatedMaterialsDataMock]}>
+       <Fixture />
+     </MockedProvider>);
+ 
+@@ -408,4 +445,18 @@ describe("useRelatedMaterials() hook", () => {
+ 
+     component.unmount();
+   });
++
++  it("fetches materials past the GQL_LIMIT", async() => {
++    const component = mount(
++      <MockedProvider addTypename={false} mocks={[...getRelatedMaterialsPastLimitMocks]}>
++        <Fixture variables={ { value: manyIds } } />
++      </MockedProvider>
++    );
++
++    await wait(() => component.update());
++
++    expect(hook.current).toBeDefined();
++
++    component.unmount();
++  });
+ });
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+index 7d40ea53c..21e438f93 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+@@ -1,11 +1,15 @@
+-import { useState, useEffect, useMemo, useRef } from "react";
++import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+ import { useQuery } from "@apollo/react-hooks";
+ import getIn from "utils/getIn";
+ import compact from "utils/compact";
++import Registry from "utils/registry";
+ 
+ import { getRelatedMaterials } from "./index.gql";
+ import { RemapMaterial } from "./utils";
+ 
++
++export const GQL_LIMIT = 40;
++
+ /**
+  * Queries `getRelatedMaterials` and returns the result in a state hook and the query itself.
+  * @param properties - { value: string | number[], id?: string | number, version?: string | number }
+@@ -14,17 +18,86 @@ import { RemapMaterial } from "./utils";
+  */
+ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = true, remap = true }) {
+   const [materials, setMaterials] = useState([]);
+-  const variables = { relatedMaterialIds: value, articleId: id, articleVersion: version };
++  const [slices, setSlices] = useState(() => {
++    const result = [];
++    const copy = value.slice();
++
++    if (value.length < GQL_LIMIT) {
++      return [];
++    }
++
++    while (copy.length) {
++      result.push(copy.splice(0, GQL_LIMIT));
++    }
++
++    // the first pages set is always loaded
++    result.splice(0, 1);
+ 
+-  if (!isPublic) {
+-    delete variables.articleVersion;
+-  }
++    return result;
++  });
++  const variables = useMemo(() => {
++    const firstSlice = value.slice(0, GQL_LIMIT);
++    const obj = { relatedMaterialIds: firstSlice, articleId: id, articleVersion: version };
++
++    if (!isPublic) {
++      delete obj.articleVersion;
++    }
++
++    return obj;
++  }, [value, id, version, isPublic]);
+ 
+   const query = useQuery(
+     getRelatedMaterials,
+     { variables }
+   );
+ 
++  const fetchMore = useCallback(() => {
++    const nextSet = getIn(slices, "0", []);
++
++    if (!nextSet?.length) {
++      // nothing to fetch
++      return;
++    }
++
++    query.fetchMore({
++      variables: { relatedMaterialIds: nextSet },
++      updateQuery: (prev, { fetchMoreResult }) => {
++        const current = getIn(prev, "getRelatedMaterials", []);
++        const next = getIn(fetchMoreResult, "getRelatedMaterials", []);
++
++        const result = { ...prev };
++        result.getRelatedMaterials = [...current, ...next];
++
++        return result;
++      },
++    });
++
++    // remove the previous set of ids and reset the pages.
++    setSlices((p) => p.slice().splice(1, p.length));
++
++  }, [query.fetchMore, setSlices, slices]);
++
++  /**
++   * UPDATE: this will preload all related materials
++   * Only if there are more than GQL_LIMIT
++   * This is to prevent possible issues with:
++   * - reordering and then fetching more (reorder is lost)
++   * - removing and then fetching more (cannot reconcile)
++   */
++  useEffect(() => {
++    if (slices.length) {
++      fetchMore();
++    }
++  }, [slices]);
++
++  useEffect(() => {
++    Registry.set("related-materials/fetchMore", fetchMore);
++
++    return () => {
++      Registry.delete("related-materials/fetchMore");
++    };
++  }, [fetchMore]);
++
+   /**
+    * > value - represents ids and influences related-materials order for unsaved items.
+    * > serialize the value and add it as a dependency to the data effect.
+@@ -56,7 +129,7 @@ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = t
+     }
+ 
+     setMaterials(items);
+-  }, [query.data, valueSeries, sort, remap]);
++  }, [query.data, valueSeries, fetchMore, sort, remap]);
+ 
+   return { materials, setMaterials, query };
+ }

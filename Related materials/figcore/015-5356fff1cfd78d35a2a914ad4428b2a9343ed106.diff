@@ -1,0 +1,11 @@
+diff --git a/src/figcore/lib/entity_factory/__init__.py b/src/figcore/lib/entity_factory/__init__.py
+index dbcea35d9e..6627e674fd 100644
+--- a/src/figcore/lib/entity_factory/__init__.py
++++ b/src/figcore/lib/entity_factory/__init__.py
+@@ -63,6 +63,7 @@
+     embargo_request_access=0,
+     embargo_request_access_message="",
+     embargo_title="",
++    related_materials=[],
+ )
+

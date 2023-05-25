@@ -1,0 +1,73 @@
+diff --git a/src/figcore/graphql/resolvers_v2/related_material.py b/src/figcore/graphql/resolvers_v2/related_material.py
+index 9b674f4419..e3908ea8cb 100644
+--- a/src/figcore/graphql/resolvers_v2/related_material.py
++++ b/src/figcore/graphql/resolvers_v2/related_material.py
+@@ -1,5 +1,5 @@
+ from figcore.api import Article, ArticleVersion
+-from figcore.exc.graphql import InvalidParam
++from figcore.exc.graphql import InvalidParam, InsufficientPermissions
+ from figcore.lib.data.related_material_static import IDENTIFIER_TYPE
+ from figcore.graphql.utils import get_fields_eql
+ from figcore.graphql.utils.pagination.limits import MAX_REQUESTED_ENTITIES
+@@ -20,6 +20,9 @@ def get_related_materials(obj, info, related_material_ids, article_id, article_v
+         item = ArticleVersion.find(article_id, article_version)
+     else:
+         item = Article.find(article_id)
++        account = info.context.account
++        if not account or (item and item.account_id != account.id):
++            raise InsufficientPermissions(data={"article_id": article_id})
+ 
+     if not item or not set(related_material_ids).issubset(set(item.related_materials)):
+         raise InvalidParam(
+diff --git a/tests/graphql/api/related_materials/test_related_materials.py b/tests/graphql/api/related_materials/test_related_materials.py
+index 1c8f2bb50f..0b8481041f 100644
+--- a/tests/graphql/api/related_materials/test_related_materials.py
++++ b/tests/graphql/api/related_materials/test_related_materials.py
+@@ -1,5 +1,5 @@
+ from figcore.api import Account, RelatedMaterial, Article
+-from figcore.exc.graphql import InvalidParam
++from figcore.exc.graphql import InvalidParam, InsufficientPermissions
+ from figcore.graphql.utils.eql.query_generator import generate_entity_eql_query
+ 
+ from tests import BaseTestTransactionedGql
+@@ -39,6 +39,7 @@ def setUp(self):
+             "references": [self.related_material.id],
+         }
+         self.article = Article.create_article(data)
++        self.account.actions_for(self.article).publish()
+ 
+     def test_get_related_materials(self):
+         entity_props_eql = generate_entity_eql_query(
+@@ -49,6 +50,18 @@ def test_get_related_materials(self):
+         materials = self.gql_parser.query(
+             "get_related_materials",
+             params={"related_material_ids": [self.related_material.id], "article_id": self.article.id},
++            account_id=self.account.id,
++            fields=entity_props_eql["related_material"]["fields"],
++        )
++        self.assertEqual(materials[0]["identifier"], self.related_material.identifier)
++
++        materials = self.gql_parser.query(
++            "get_related_materials",
++            params={
++                "related_material_ids": [self.related_material.id],
++                "article_id": self.article.id,
++                "article_version": 1,
++            },
+             fields=entity_props_eql["related_material"]["fields"],
+         )
+         self.assertEqual(materials[0]["identifier"], self.related_material.identifier)
+@@ -63,5 +76,13 @@ def test_get_related_materials_fail(self):
+             self.gql_parser.query(
+                 "get_related_materials",
+                 params={"related_material_ids": [self.related_material.id], "article_id": 2},
++                account_id=self.account.id,
++                fields=entity_props_eql["related_material"]["fields"],
++            )
++
++        with self.assertRaises(InsufficientPermissions):
++            self.gql_parser.query(
++                "get_related_materials",
++                params={"related_material_ids": [self.related_material.id], "article_id": self.article.id},
+                 fields=entity_props_eql["related_material"]["fields"],
+             )

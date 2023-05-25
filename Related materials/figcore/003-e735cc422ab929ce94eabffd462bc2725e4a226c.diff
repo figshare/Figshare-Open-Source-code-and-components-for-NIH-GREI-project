@@ -1,0 +1,153 @@
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index cab112dd15..a482f7b415 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -1429,7 +1429,18 @@ def references(self):
+         :returns: List
+         """
+ 
+-        return self._metadata.references
++        result = self.bcheck_references()
++        return result
++
++    @property
++    @ArticleChecker.ensure("metadata")
++    def related_materials(self):
++        """Article references
++
++        :returns: List
++        """
++        result = self.bcheck_related_material()
++        return result
+ 
+     @property
+     def citation_string(self):
+@@ -2820,5 +2831,26 @@ def get_published_date(self):
+                 return date_obj
+         return None
+ 
++    def bcheck_references(self):
++        if self._metadata.references and isinstance(self._metadata.references[0], int):
++            references = []
++            for i in self._metadata.references:
++                references.append(APIEntity.ENTITIES.RelatedMaterial(i).url)
++            return references
++        return self._metadata.references
++
++    def bcheck_related_material(self):
++        if self._metadata.references and isinstance(self._metadata.references[0], str):
++            references = []
++            for reference in self._metadata.references:
++                FigcoreLogger.info(f"Converting {reference}")
++                # TODO(adrianp): differentiate between URL and DOI
++                material = APIEntity.ENTITIES.RelatedMaterial.create({"identifier": reference})
++                references.append(material.id)
++            ArticleInternals.update_references(self.id, references)
++            self._metadata = None  # force reloading metadata
++            return references
++        return self._metadata.references
++
+ 
+ APIEntity.ENTITIES.Article = Article
+diff --git a/src/figcore/api/article/validator.py b/src/figcore/api/article/validator.py
+index 2012c67aba..06104fa976 100644
+--- a/src/figcore/api/article/validator.py
++++ b/src/figcore/api/article/validator.py
+@@ -520,8 +520,10 @@ def _validate_article_references(self):
+         self.validate_list_length("references", references, self.MAX_REFERENCES_LIST_LENGTH)
+ 
+         for reference in references:
+-            if not Validator.validate_url(reference) and not Validator.validate_doi(reference):
+-                raise exc.InvalidValue("Invalid URL for references", field="references")
++            if not (
++                isinstance(reference, int) or Validator.validate_url(reference) or Validator.validate_doi(reference)
++            ):
++                raise exc.InvalidValue("Invalid value for references", field="references")
+ 
+         Validator.check_duplicates(references, field="references")
+ 
+diff --git a/src/figcore/api/related_material/api.py b/src/figcore/api/related_material/api.py
+index c766bf9b7b..494e411aee 100644
+--- a/src/figcore/api/related_material/api.py
++++ b/src/figcore/api/related_material/api.py
+@@ -8,6 +8,7 @@
+ class RelatedMaterial(APIEntity):
+     def __init__(self, id):
+         self._id = int(id)
++        self._model = None
+ 
+     @property
+     def id(self):
+@@ -60,3 +61,6 @@ def update(self, data):
+ 
+     def load_model(self):
+         self._model = RelatedMaterialInternals.get_by_id(self.id)
++
++
++APIEntity.ENTITIES.RelatedMaterial = RelatedMaterial
+diff --git a/src/figcore/internals/article/article.py b/src/figcore/internals/article/article.py
+index 73b8a0f526..b10bd389a9 100644
+--- a/src/figcore/internals/article/article.py
++++ b/src/figcore/internals/article/article.py
+@@ -24,7 +24,6 @@
+ 
+ 
+ class ArticleInternals(object):
+-
+     DB = DBConnection
+     NULLABLE_FIELDS = ("online_publish_date", "pub_accept_date", "pub_publish_date")
+ 
+@@ -851,3 +850,9 @@ def update_submission_date(cls, article_id, date):
+             update_payload = {"submission_date": date}
+             ArticleDBCalls.update_article_model(db_session, article_id, update_payload)
+             ArticleDBCalls.update_versions(db_session, article_id, update_payload)
++
++    @classmethod
++    def update_references(cls, article_id, references):
++        data = {"references": references}
++        with cls.DB.get_session() as db_session:
++            ArticleDBCalls.update_article_metadata(db_session, article_id, data)
+diff --git a/tests/api/article/test_references.py b/tests/api/article/test_references.py
+new file mode 100644
+index 0000000000..f4a5934d65
+--- /dev/null
++++ b/tests/api/article/test_references.py
+@@ -0,0 +1,38 @@
++from figcore.api import Article, Account, RelatedMaterial
++
++from figcore.internals.article import ArticleInternals
++
++from tests import BaseTestTransactioned
++
++
++class TestArticleReferences(BaseTestTransactioned):
++    @classmethod
++    def setUpClass(cls):
++        super().setUpClass()
++        cls.setup_environment()
++        cls.create_complete_environment()
++        cls.account = Account.find(1)
++
++        cls.article_data = {
++            "title": "References test",
++            "description": "lorem ipsum dolor",
++            "is_active": 1,
++            "defined_type": 3,
++            "account_id": cls.account.id,
++            "institution_id": cls.account.institution_id,
++            "group_id": cls.account.group_id,
++            "detected_license_id": 1,
++            "tags": ["test"],
++            "categories": [2],
++            "references": ["https://google.com", "10.1000/182"],
++        }
++
++    def test_create(self):
++        article = Article.create_article(self.article_data)
++        self.assertListEqual(article.references, ["https://google.com", "10.1000/182"])
++        self.assertEqual(len(article.related_materials), 2)
++        self.assertEqual(RelatedMaterial(article.related_materials[0]).identifier, "https://google.com")
++        self.assertEqual(RelatedMaterial(article.related_materials[1]).identifier, "10.1000/182")
++
++        db_references = ArticleInternals.get_metadata(article.id).references
++        self.assertListEqual(db_references, article.related_materials)

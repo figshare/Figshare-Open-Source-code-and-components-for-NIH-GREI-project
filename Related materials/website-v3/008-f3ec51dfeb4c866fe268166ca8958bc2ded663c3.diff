@@ -1,0 +1,375 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+index e065f97ca..500df5ac5 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+@@ -4,6 +4,7 @@ import React from "react";
+ import { act } from "react-dom/test-utils";
+ import Alert from "@figshare/fcl/alert";
+ import { MockedProvider, wait } from "utils/apollo/testing";
++import Select from "@figshare/components/ui/select";
+ import { GraphQLError } from "graphql";
+ 
+ import { relatedMaterialCreate, relatedMaterialUpdate } from "../../index.gql";
+@@ -224,6 +225,39 @@ describe("<ManageRelatedMaterials />", () => {
+     await wait(() => component.update());
+   }
+ 
++  async function unitStepFragmentChangeFormFieldSelect(component, { form, value }, index) {
++    act(() => {
++      component.find(`form[data-form-id="related-materials-form-${form}"]`).
++        find(Select).at(index).
++        props().
++        onToggle(true);
++    });
++
++    await wait(() => component.update());
++
++    act(() => {
++      component.find(`form[data-form-id="related-materials-form-${form}"]`).
++        find(Select).at(index).
++        props().
++        onChange(value);
++    });
++
++    act(() => {
++      component.find(`form[data-form-id="related-materials-form-${form}"]`).
++        find(Select).at(index).
++        props().
++        onToggle(true);
++    });
++  }
++
++  async function unitStepFragmentChangeFormFieldIdentifierType(component, { form, value }) {
++    await unitStepFragmentChangeFormFieldSelect(component, { form, value }, 0);
++  }
++
++  async function unitStepFragmentChangeFormFieldRelationType(component, { form, value }) {
++    await unitStepFragmentChangeFormFieldSelect(component, { form, value }, 1);
++  }
++
+   async function unitStepFragmentChangeFormFieldLinkout(component, { form, checked }) {
+     act(() => {
+       // edit the material identifier
+@@ -239,8 +273,9 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     expect(form.props()["data-form-changed"]).toEqual(true);
+ 
+-    act(() => {
+-      form.props().onSubmit({ preventDefault: jest.fn() });
++    await act(async() => {
++      await form.props().onSubmit({ preventDefault: jest.fn() });
++
+     });
+ 
+     await wait(() => component.update());
+@@ -308,6 +343,8 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-identifier" });
+     await unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-title" });
++    await unitStepFragmentChangeFormFieldIdentifierType(component, { form: "add", value: "URL" });
++    await unitStepFragmentChangeFormFieldRelationType(component, { form: "add", value: "References" });
+ 
+     await unitStepFragmentSubmitChangedForm(component, "add");
+ 
+@@ -344,6 +381,8 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-identifier" });
+     await unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-title" });
++    await unitStepFragmentChangeFormFieldIdentifierType(component, { form: "add", value: "URL" });
++    await unitStepFragmentChangeFormFieldRelationType(component, { form: "add", value: "References" });
+ 
+     await unitStepFragmentSubmitChangedForm(component, "add");
+ 
+@@ -367,6 +406,8 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-fail" });
+     await unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-fail" });
++    await unitStepFragmentChangeFormFieldIdentifierType(component, { form: "add", value: "URL" });
++    await unitStepFragmentChangeFormFieldRelationType(component, { form: "add", value: "References" });
+ 
+     await unitStepFragmentSubmitChangedForm(component, "add");
+ 
+@@ -504,6 +545,8 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     await unitStepFragmentChangeFormFieldIdentifier(component, { form: "1", value: "new-identifier" });
+     await unitStepFragmentChangeFormFieldTitle(component, { form: "1", value: "new-title" });
++    await unitStepFragmentChangeFormFieldIdentifierType(component, { form: "1", value: "URL" });
++    await unitStepFragmentChangeFormFieldRelationType(component, { form: "1", value: "References" });
+ 
+     await unitStepFragmentSubmitChangedForm(component, "1");
+ 
+@@ -533,11 +576,11 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     await unitStepFragmentChangeFormFieldIdentifier(component, { form: "1", value: "new-material-identifier" });
+     await unitStepFragmentChangeFormFieldTitle(component, { form: "1", value: "new-material-title" });
++    await unitStepFragmentChangeFormFieldIdentifierType(component, { form: "1", value: "UPC" });
++    await unitStepFragmentChangeFormFieldRelationType(component, { form: "1", value: "References" });
+ 
+     await unitStepFragmentSubmitChangedForm(component, "1");
+ 
+-    await wait(() => undefined, undefined, delay);
+-
+     // no need to test the editing replaceal.
+     expect(onMaterialsChange).toHaveBeenCalledWith(expect.arrayContaining([]), "edit");
+ 
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+index 8c1ae8c42..24187597a 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+@@ -37,8 +37,6 @@ export const RELATED_MATERIAL_FORM_SCHEMA = {
+     identifierType: {
+       id: "identifierType",
+       error: undefined,
+-      value: "URL",
+-      initial: "URL",
+       settings: {
+         type: "select",
+         resource: "identifier",
+@@ -50,8 +48,6 @@ export const RELATED_MATERIAL_FORM_SCHEMA = {
+     relationshipType: {
+       id: "relationshipType",
+       error: undefined,
+-      value: "References",
+-      initial: "References",
+       settings: {
+         type: "select",
+         resource: "relationship",
+@@ -161,4 +157,6 @@ export const RELATED_MATERIAL_FORM_VALIDATION_SCHEMA = {
+         `A maximum of ${maxLinkouts} linkout related materials are permitted.`,
+     },
+   ],
++  identifierType: [IS_REQUIRED_SCHEMA],
++  relationshipType: [IS_REQUIRED_SCHEMA],
+ };
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx
+index 0da4f3418..f6c6f08c9 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/relatedMaterialsForm.jsx
+@@ -9,12 +9,14 @@ import Select, { Option } from "@figshare/components/ui/select";
+ import { FieldError } from "@figshare/fcl/fieldError";
+ import { FormAlerts, pushFormAlert, clearFormAlerts } from "@figshare/fcl/formAlerts";
+ import uuid from "utils/uuid";
++import getIn from "utils/getIn";
+ import { useForm, Forms } from "shared/ui/forms";
+ import Registry from "utils/registry";
+ 
+ import Label from "../../../../genericFields/textField/components/label";
+ import { RelatedMaterialPropType, ResourcesPropType, ResourceStatus } from "../../constants";
+ import { tileMaterialIsSavedLinkout } from "../relatedMaterialsTileList/utils";
++import { delayAction } from "../../utils";
+ 
+ import { RELATED_MATERIAL_FORM_SCHEMA, RELATED_MATERIAL_FORM_VALIDATION_SCHEMA } from "./constants";
+ import styles from "./relatedMaterialsForm.css";
+@@ -62,26 +64,26 @@ export function RelatedMaterialsForm({
+ 
+   const validateEntireForm = useCallback(() => {
+     const form = stateRef.current;
+-    const { order, fields, formId, touched } = form;
++    const { order, fields, formId, id, touched } = form;
+     const batch = { order: [], fields: {} };
+ 
+     // see NOTE: [edgecase][linkout checkbox edit]
+-    const savedMaterialIsLinked = tileMaterialIsSavedLinkout(formId);
++    const savedMaterialIsLinked = tileMaterialIsSavedLinkout(id);
+ 
+-    order.forEach((id) => {
++    order.forEach((name) => {
+       const change = {};
+-      const field = fields[id];
++      const field = fields[name];
+ 
+       if (!field) {
+         return;
+       }
+ 
+       // add the field id for batch changes
+-      batch.order.push(id);
++      batch.order.push(name);
+ 
+       const { validation } = settingsRef.current;
+       const error = getFieldError({
+-        name: id,
++        name,
+         value: field.value,
+         at: "submit",
+         meta: {
+@@ -106,7 +108,7 @@ export function RelatedMaterialsForm({
+       }
+ 
+       // add the change for this field.
+-      batch.fields[id] = change;
++      batch.fields[name] = change;
+     });
+ 
+     batchUpdate(batch);
+@@ -193,7 +195,7 @@ export function RelatedMaterialsForm({
+     const error = getFieldError({
+       value,
+       name,
+-      at: "blur:touched",
++      at: "blur",
+       meta: {
+         touched,
+         formId,
+@@ -208,7 +210,7 @@ export function RelatedMaterialsForm({
+   const onCheckboxChange = useCallback((event) => {
+     const { name, checked } = event.target;
+     const field = stateRef.current.fields?.[name];
+-    const { formId, touched } = stateRef.current;
++    const { id, formId, touched } = stateRef.current;
+     const { validation } = settingsRef.current;
+ 
+ 
+@@ -219,7 +221,7 @@ export function RelatedMaterialsForm({
+     // as it will impact if it is valid or not.
+     // If the item was unchecked and it was part of the saved linkouts
+     // and we want to check it again, the validation must pass
+-    const savedMaterialIsLinked = tileMaterialIsSavedLinkout(formId);
++    const savedMaterialIsLinked = tileMaterialIsSavedLinkout(id);
+ 
+     // for linkout validation an external total is required
+     // we define a validation parameter for the function call here and pass it
+@@ -263,6 +265,22 @@ export function RelatedMaterialsForm({
+     updateField(name, { value, error });
+   }, [updateField, stateRef, settingsRef]);
+ 
++  const onSelectToggle = useCallback((toggled, name) => {
++    if (toggled) {
++      updateField(name, { touched: true });
++
++      return;
++    }
++
++    const delay = 100;
++
++    delayAction(() => {
++      const value = getIn(stateRef, `current.fields.${name}.value`);
++
++      onInputBlur({ target: { name, value } });
++    }, delay);
++  }, [onInputBlur]);
++
+   const onIdentifierTypeChange = useCallback((value) => {
+     onSelectChange({ value, name: "identifierType" });
+   }, [onSelectChange]);
+@@ -270,6 +288,11 @@ export function RelatedMaterialsForm({
+     onSelectChange({ value, name: "relationshipType" });
+   }, [onSelectChange]);
+ 
++  const onIdentifierTypeToggle = useCallback((toggled) =>
++    onSelectToggle(toggled, "identifierType"), [onSelectToggle]);
++  const onRelationshipTypeToggle = useCallback((toggled) =>
++    onSelectToggle(toggled, "relationshipType"), [onSelectToggle]);
++
+   return (
+     <form
+       className={classnames(styles.relatedMaterialsForm, className)}
+@@ -370,6 +393,7 @@ export function RelatedMaterialsForm({
+             placeholder={state.fields.identifierType.settings.placeholder}
+             value={state.fields.identifierType.value}
+             onChange={onIdentifierTypeChange}
++            onToggle={onIdentifierTypeToggle}
+           >{resources.identifiers.data.map(renderResource)}</Select>
+           <FieldError error={state.fields.identifierType.error} />
+         </div>
+@@ -399,6 +423,7 @@ export function RelatedMaterialsForm({
+             placeholder={state.fields.relationshipType.settings.placeholder}
+             value={state.fields.relationshipType.value}
+             onChange={onRelationshipTypeChange}
++            onToggle={onRelationshipTypeToggle}
+           >{resources.relationships.data.map(renderResource)}</Select>
+           <FieldError error={state.fields.relationshipType.error} />
+         </div>
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/relatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/relatedMaterials.jsx
+index abe4cd211..9ecb5d7e0 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/relatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/relatedMaterials.jsx
+@@ -6,7 +6,6 @@ import { FieldError } from "@figshare/fcl/fieldError";
+ 
+ import Label from "../../genericFields/textField/components/label";
+ import { ItemContext } from "../../../../../context/itemContext";
+-import { ITEM_STATUS } from "../../../../../constants";
+ 
+ import { RelatedMaterialsList } from "./components/relatedMaterialsList";
+ import { ManageRelatedMaterials } from "./components/manageRelatedMaterials";
+@@ -27,7 +26,7 @@ export function RelatedMaterials({ className, disabled, id, value, error, isRequ
+    */
+   const savedIds = useMemo(() => value, [item.id, item.version]);
+   const { materials, setMaterials } = useRelatedMaterials(
+-    { value: savedIds, version: item?.version, id: item?.id, isPublic: item?.status === ITEM_STATUS.public },
++    { value: savedIds, version: item?.version, id: item?.id, isPublic: false },
+     { sort: true, remap: true }
+   );
+   const empty = !materials?.length;
+diff --git a/src/shared/ui/forms/reducer.js b/src/shared/ui/forms/reducer.js
+index e84231314..61feba55e 100644
+--- a/src/shared/ui/forms/reducer.js
++++ b/src/shared/ui/forms/reducer.js
+@@ -25,10 +25,10 @@ export function formReducer(state, action) {
+       const definedChange = change.value !== undefined;
+       const valueChanged = (definedChange && field.value !== newField.value);
+       const originalValueChanged = newField.initial !== newField.value;
+-      const touched = valueChanged || state.touched;
++      const fieldIsTouched = valueChanged || newField.touched;
++      const formTouched = fieldIsTouched || state.touched;
+       const hasErrors = state.order.some((entryId) => !!newFields[entryId]?.error);
+ 
+-      newField.touched = valueChanged;
+       newField.changed = originalValueChanged;
+ 
+       const registryKey = `form-changes-${state.formId}`;
+@@ -48,10 +48,10 @@ export function formReducer(state, action) {
+ 
+       return {
+         ...state,
+-        touched,
++        touched: formTouched,
+         changed: state.changes.size > 0,
+         hasErrors,
+-        submittable: touched && !hasErrors,
++        submittable: formTouched && !hasErrors,
+         fields: newFields,
+       };
+     }
+diff --git a/src/shared/ui/forms/utils/validate.jsx b/src/shared/ui/forms/utils/validate.jsx
+index d32ece6c4..0d35e566e 100644
+--- a/src/shared/ui/forms/utils/validate.jsx
++++ b/src/shared/ui/forms/utils/validate.jsx
+@@ -13,22 +13,25 @@ export function validate(args, schema) {
+   let result = undefined;
+ 
+   rules.some((rule) => {
+-    const { at: applies, fn: execute } = rule;
+-    let resolves = true;
+-    let event = at;
++    const { at: ruleEvents, fn: execute } = rule;
++    // for now event will be assumed as simple event (no :parameter-decoration)
++    const event = at;
+ 
+-    // decorate event with additional modifiers
+-    // if present in the "at" string, separated by ":" and all meta values are truthy
+-    // continue and mark the extra checks as resolved
+-    if (at.includes(":")) {
+-      const [eventName, ...flags] = at.split(":");
++    const applies = ruleEvents.some((ruleEvent) => {
++      // decorated event with additional modifiers
++      if (ruleEvent.includes(":")) {
++        const [eventName, ...flags] = ruleEvent.split(":");
+ 
+-      event = eventName;
++        const resolves = flags.every((flag) => !!getIn(meta, flag, false));
+ 
+-      resolves = flags.every((flag) => !!getIn(meta, flag, false));
+-    }
++        return eventName === event && resolves;
++      }
++
++      // simple events
++      return ruleEvent === event;
++    });
+ 
+-    if (!applies.includes(at) || !resolves) {
++    if (!applies) {
+       return false;
+     }
+ 

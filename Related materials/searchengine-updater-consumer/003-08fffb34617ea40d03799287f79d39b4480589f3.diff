@@ -1,0 +1,31 @@
+diff --git a/figshare/lib/handlers/indexers/regular/browse_item_articles.py b/figshare/lib/handlers/indexers/regular/browse_item_articles.py
+index ec972458..dd89318d 100644
+--- a/figshare/lib/handlers/indexers/regular/browse_item_articles.py
++++ b/figshare/lib/handlers/indexers/regular/browse_item_articles.py
+@@ -290,9 +290,8 @@ def manage_data(self, data):
+         if "license_id" in output:
+             del output["license_id"]
+ 
+-        if not resource:
+-            resource = {"resource": {"id": "", "title": "", "doi": "", "link": ""}}
+-        output.update(resource)
++        if resource:
++            output.update(resource)
+ 
+         output["authors"] = authors
+         output["files"] = files
+@@ -317,9 +316,11 @@ def manage_data(self, data):
+             references = []
+             for material in materials:
+                 references.append(material["identifier"])
+-                if material["is_linkout"] and not output["resource"]["doi"]:
+-                    output["resource"]["doi"] = material["identifier"]
+-                    output["resource"]["title"] = material["title"]
++                if material["is_linkout"] and not output.get("resource"):
++                    output["resource"] = {
++                        "doi": material["identifier"],
++                        "title": material["title"],
++                    }
+             output["references"] = references
+ 
+         if "funding" in output:

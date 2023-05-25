@@ -1,0 +1,49 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+index 33080eeae..2fa0a4c49 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+@@ -130,5 +130,16 @@ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = t
+     setMaterials(items);
+   }, [query.data, valueSeries, fetchMore, sort, remap]);
+ 
+-  return { materials, setMaterials, query, fetchMore };
++  const done = useMemo(() => {
++    const hasSlices = !!slices.length;
++    const { loading } = query;
++
++    if (hasSlices) {
++      return false;
++    }
++
++    return !loading;
++  }, [slices.length, query.loading]);
++
++  return { materials, done, setMaterials, query, fetchMore };
+ }
+diff --git a/src/pages/item/page/components/linkback/index.jsx b/src/pages/item/page/components/linkback/index.jsx
+index 6792462d5..7c567cf74 100644
+--- a/src/pages/item/page/components/linkback/index.jsx
++++ b/src/pages/item/page/components/linkback/index.jsx
+@@ -53,7 +53,8 @@ export function Linkback(props) {
+       isPublic,
+     };
+   }, [item]);
+-  const { materials: unfiltered } = useRelatedMaterials(variables, { sort: true, remap: false });
++  const { materials: unfiltered, done } = useRelatedMaterials(variables, { sort: true, remap: false });
++
+   /* filter materials without linkout. */
+   const materials = useMemo(() => unfiltered.filter((material) => material.isLinkout), [unfiltered]);
+   const empty = !materials.length;
+@@ -92,8 +93,10 @@ export function Linkback(props) {
+ 
+   return (
+     <ul className={styles.linkback} {...props}>
+-      {linkback && renderItem(linkback, identifiers.data, relationships.data, itemId)}
+-      {materials.map((material) => renderItem(material, identifiers.data, relationships.data, itemId))}
++      {done && (<>
++        {linkback && renderItem(linkback, identifiers.data, relationships.data, itemId)}
++        {materials.map((material) => renderItem(material, identifiers.data, relationships.data, itemId))}
++      </>)}
+     </ul>
+   );
+ }

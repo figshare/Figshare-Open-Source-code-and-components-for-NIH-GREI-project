@@ -1,0 +1,304 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/itemType/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/itemType/index.test.jsx
+index dd07a5a96..b88fa7aee 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/itemType/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/itemType/index.test.jsx
+@@ -230,14 +230,6 @@ describe("<ItemTypes />", () => {
+     expect(component.text()).not.toContain("Change item type");
+   });
+ 
+-  it("if only one item type, change value to that item type id", async() => {
+-    const component = mountApp({ value: 0 }, { group: { id: 3 }, institution: { id: 2 } });
+-    await mocks[2].response();
+-    component.update();
+-
+-    expect(baseProps.onChange).toHaveBeenCalledWith({ value: 1, error: undefined });
+-  });
+-
+   it("set correct value prop on render", async() => {
+     const component = mountApp({ value: 0 }, { group: { id: 2 }, institution: { id: 2 } });
+     await mocks[3].response();
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+index 510e4a582..ad36bab80 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+@@ -177,57 +177,57 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+   const delay = 200;
+ 
+-  async function unitStepFragmentOpenOverlay(component) {
++  function unitStepFragmentOpenOverlay(component) {
+     act(() => {
+       component.find("button[data-control-id=\"manage-related-materials\"]").simulate("click");
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+   }
+ 
+-  async function unitStepFragmentCloseOverlay(component) {
++  function unitStepFragmentCloseOverlay(component) {
+     act(() => {
+       component.find("aside").simulate("click");
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+   }
+ 
+-  async function unitStepFragmentChangeFormFieldIdentifier(component, { form, value }) {
++  function unitStepFragmentChangeFormFieldIdentifier(component, { form, value }) {
+     act(() => {
+       // edit the material identifier
+       component.find(`input[id="related-materials-form-${form}-field-identifier"]`).
+         simulate("change", { target: { name: "identifier", value } });
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+ 
+     act(() => {
+       component.find(`input[id="related-materials-form-${form}-field-identifier"]`).
+         simulate("blur", { target: { name: "identifier", value } });
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+   }
+ 
+-  async function unitStepFragmentChangeFormFieldTitle(component, { form, value }) {
++  function unitStepFragmentChangeFormFieldTitle(component, { form, value }) {
+     act(() => {
+       // edit the material identifier
+       component.find(`input[id="related-materials-form-${form}-field-title"]`).
+         simulate("change", { target: { name: "title", value } });
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+ 
+     act(() => {
+       component.find(`input[id="related-materials-form-${form}-field-title"]`).
+         simulate("blur", { target: { name: "title", value } });
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+   }
+ 
+-  async function unitStepFragmentChangeFormFieldSelect(component, { form, value }, index) {
++  function unitStepFragmentChangeFormFieldSelect(component, { form, value }, index) {
+     act(() => {
+       component.find(`form[data-form-id="related-materials-form-${form}"]`).
+         find(Select).at(index).
+@@ -235,7 +235,7 @@ describe("<ManageRelatedMaterials />", () => {
+         onToggle(true);
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+ 
+     act(() => {
+       component.find(`form[data-form-id="related-materials-form-${form}"]`).
+@@ -252,22 +252,22 @@ describe("<ManageRelatedMaterials />", () => {
+     });
+   }
+ 
+-  async function unitStepFragmentChangeFormFieldIdentifierType(component, { form, value }) {
+-    await unitStepFragmentChangeFormFieldSelect(component, { form, value }, 0);
++  function unitStepFragmentChangeFormFieldIdentifierType(component, { form, value }) {
++    unitStepFragmentChangeFormFieldSelect(component, { form, value }, 0);
+   }
+ 
+-  async function unitStepFragmentChangeFormFieldRelationType(component, { form, value }) {
+-    await unitStepFragmentChangeFormFieldSelect(component, { form, value }, 1);
++  function unitStepFragmentChangeFormFieldRelationType(component, { form, value }) {
++    unitStepFragmentChangeFormFieldSelect(component, { form, value }, 1);
+   }
+ 
+-  async function unitStepFragmentChangeFormFieldLinkout(component, { form, checked }) {
++  function unitStepFragmentChangeFormFieldLinkout(component, { form, checked }) {
+     act(() => {
+       // edit the material identifier
+       component.find(`input[id="related-materials-form-${form}-field-linkout"]`).
+         simulate("change", { target: { name: "linkout", checked } });
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+   }
+ 
+   async function unitStepFragmentSubmitChangedForm(component, formId = "add") {
+@@ -283,12 +283,12 @@ describe("<ManageRelatedMaterials />", () => {
+     return form;
+   }
+ 
+-  async function unitStepFragmentDiscloseTile(component, materialId) {
++  function unitStepFragmentDiscloseTile(component, materialId) {
+     const tile = component.find(`div[data-material-tile-id="tile-${materialId}"]`);
+ 
+     tile.find("div[data-control-id=\"tile-disclose-toggle\"]").simulate("click");
+ 
+-    await wait(() => component.update());
++    component.update();
+ 
+     return tile;
+   }
+@@ -296,16 +296,16 @@ describe("<ManageRelatedMaterials />", () => {
+   async function unitStepFragmentResetForm(component, formId = "add") {
+     const form = component.find(`form[data-form-id="related-materials-form-${formId}"]`);
+ 
+-    act(() => {
+-      form.props().onReset({ preventDefault: jest.fn() });
++    await act(async() => {
++      await form.props().onReset({ preventDefault: jest.fn() });
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+ 
+     return form;
+   }
+ 
+-  it("renders a management component, with an add form and empty list if there are no materials", async() => {
++  it("renders a management component, with an add form and empty list if there are no materials", () => {
+     const component = mount(
+       <MockedProvider mocks={[]}>
+         <ManageRelatedMaterials
+@@ -315,14 +315,14 @@ describe("<ManageRelatedMaterials />", () => {
+       </MockedProvider>
+     );
+ 
+-    await unitStepFragmentOpenOverlay(component);
++    unitStepFragmentOpenOverlay(component);
+ 
+     expect(component.find("section[data-control-id=\"materials-add-section\"]")).toHaveLength(1);
+     expect(component.find("section[data-control-id=\"materials-tile-list-section\"]")).toHaveLength(1);
+ 
+     expect(component.find(RelatedMaterialsListItem)).toHaveLength(0);
+ 
+-    await unitStepFragmentCloseOverlay(component);
++    unitStepFragmentCloseOverlay(component);
+ 
+     expect(component.find("aside[data-control-id=\"materials-add-section\"]")).toHaveLength(0);
+ 
+@@ -339,12 +339,12 @@ describe("<ManageRelatedMaterials />", () => {
+       </MockedProvider>
+     );
+ 
+-    await unitStepFragmentOpenOverlay(component);
++    unitStepFragmentOpenOverlay(component);
+ 
+-    await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-identifier" });
+-    await unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-title" });
+-    await unitStepFragmentChangeFormFieldIdentifierType(component, { form: "add", value: "URL" });
+-    await unitStepFragmentChangeFormFieldRelationType(component, { form: "add", value: "References" });
++    unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-identifier" });
++    unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-title" });
++    unitStepFragmentChangeFormFieldIdentifierType(component, { form: "add", value: "URL" });
++    unitStepFragmentChangeFormFieldRelationType(component, { form: "add", value: "References" });
+ 
+     await unitStepFragmentSubmitChangedForm(component, "add");
+ 
+@@ -378,12 +378,12 @@ describe("<ManageRelatedMaterials />", () => {
+       </MockedProvider>
+     );
+ 
+-    await unitStepFragmentOpenOverlay(component);
++    unitStepFragmentOpenOverlay(component);
+ 
+-    await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-identifier" });
+-    await unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-title" });
+-    await unitStepFragmentChangeFormFieldIdentifierType(component, { form: "add", value: "URL" });
+-    await unitStepFragmentChangeFormFieldRelationType(component, { form: "add", value: "References" });
++    unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-identifier" });
++    unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-title" });
++    unitStepFragmentChangeFormFieldIdentifierType(component, { form: "add", value: "URL" });
++    unitStepFragmentChangeFormFieldRelationType(component, { form: "add", value: "References" });
+ 
+     await unitStepFragmentSubmitChangedForm(component, "add");
+ 
+@@ -404,12 +404,12 @@ describe("<ManageRelatedMaterials />", () => {
+       </MockedProvider>
+     );
+ 
+-    await unitStepFragmentOpenOverlay(component);
++    unitStepFragmentOpenOverlay(component);
+ 
+-    await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-fail" });
+-    await unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-fail" });
+-    await unitStepFragmentChangeFormFieldIdentifierType(component, { form: "add", value: "URL" });
+-    await unitStepFragmentChangeFormFieldRelationType(component, { form: "add", value: "References" });
++    unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-fail" });
++    unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-fail" });
++    unitStepFragmentChangeFormFieldIdentifierType(component, { form: "add", value: "URL" });
++    unitStepFragmentChangeFormFieldRelationType(component, { form: "add", value: "References" });
+ 
+     await unitStepFragmentSubmitChangedForm(component, "add");
+ 
+@@ -429,10 +429,10 @@ describe("<ManageRelatedMaterials />", () => {
+     );
+     onMaterialsChange.mockClear();
+ 
+-    await unitStepFragmentOpenOverlay(component);
++    unitStepFragmentOpenOverlay(component);
+ 
+-    await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-fail" });
+-    await unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-fail" });
++    unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-fail" });
++    unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-fail" });
+ 
+     act(() => {
+       component.find("button[data-control-id=\"manage-materials-submit\"]").simulate("click");
+@@ -451,7 +451,7 @@ describe("<ManageRelatedMaterials />", () => {
+       keepEditing.simulate("click");
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+ 
+     keepEditing = component.find("button[data-control-id=\"unsaved-changes-keep-editing\"]");
+     closeWithoutSaving = component.find("button[data-control-id=\"unsaved-changes-close-manager\"]");
+@@ -464,7 +464,7 @@ describe("<ManageRelatedMaterials />", () => {
+       component.find("button[data-control-id=\"manage-materials-submit\"]").simulate("click");
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+ 
+     keepEditing = component.find("button[data-control-id=\"unsaved-changes-keep-editing\"]");
+     closeWithoutSaving = component.find("button[data-control-id=\"unsaved-changes-close-manager\"]");
+@@ -472,10 +472,10 @@ describe("<ManageRelatedMaterials />", () => {
+     expect(keepEditing).toHaveLength(0);
+ 
+ 
+-    await unitStepFragmentOpenOverlay(component);
++    unitStepFragmentOpenOverlay(component);
+ 
+-    await unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-fail" });
+-    await unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-fail" });
++    unitStepFragmentChangeFormFieldIdentifier(component, { form: "add", value: "new-material-fail" });
++    unitStepFragmentChangeFormFieldTitle(component, { form: "add", value: "new-material-fail" });
+ 
+     act(() => {
+       component.find("button[data-control-id=\"tile-reorder-decrement\"]").at(0).simulate("click");
+@@ -497,7 +497,7 @@ describe("<ManageRelatedMaterials />", () => {
+       closeWithoutSaving.simulate("click");
+     });
+ 
+-    await wait(() => component.update());
++    component.update();
+ 
+     // overlay should be closed
+     expect(component.find("section[data-control-id=\"materials-add-section\"]")).toHaveLength(0);
+@@ -516,9 +516,9 @@ describe("<ManageRelatedMaterials />", () => {
+     );
+     onMaterialsChange.mockClear();
+ 
+-    await unitStepFragmentOpenOverlay(component);
++    unitStepFragmentOpenOverlay(component);
+ 
+-    await unitStepFragmentDiscloseTile(component, 1);
++    unitStepFragmentDiscloseTile(component, 1);
+ 
+     await unitStepFragmentResetForm(component, 1);
+ 

@@ -1,0 +1,264 @@
+diff --git a/src/replication/indexers/common/db_queries.py b/src/replication/indexers/common/db_queries.py
+index 57949f9..3d945e0 100644
+--- a/src/replication/indexers/common/db_queries.py
++++ b/src/replication/indexers/common/db_queries.py
+@@ -269,3 +269,17 @@
+     WHERE `altmetrics`.`article_id` = 0
+         AND `altmetrics`.`collection_id` = :element_id
+ """
++
++"""
++EXPLAIN SELECT related_material.identifier, related_material.is_linkout, related_material.title FROM `related_material` WHERE `related_material`.`id` IN (41,42);
+++------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++| id   | select_type | table            | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
+++------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++|    1 | SIMPLE      | related_material | range | PRIMARY       | PRIMARY | 8       | NULL | 2    | Using where |
+++------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++"""
++RELATED_MATERIAL_QUERY = """
++    SELECT related_material.identifier, related_material.is_linkout, related_material.title
++    FROM `related_material`
++    WHERE `related_material`.`id` IN :element_id_list
++"""
+diff --git a/src/replication/indexers/common/mappings.py b/src/replication/indexers/common/mappings.py
+index ed09557..0104763 100644
+--- a/src/replication/indexers/common/mappings.py
++++ b/src/replication/indexers/common/mappings.py
+@@ -44,6 +44,11 @@
+     "shares": "sum(stats_totals.shares)",
+ }
+ 
++related_materials_es_to_db_mapping = {
++    "title": "related_material.title",
++    "identifier": "related_material.identifier",
++    "is_linkout": "related_material.is_linkout",
++}
+ 
+ author_db_fields = get_db_fields_list(author_es_to_db_mapping)
+ categories_db_fields = get_db_fields_list(categories_es_to_db_mapping)
+@@ -51,3 +56,4 @@
+ group_db_fields = get_db_fields_list(group_es_to_db_mapping)
+ stats_altmetrics_db_fields = get_db_fields_list(stats_altmetrics_es_to_db_mapping)
+ stats_totals_db_fields = get_db_fields_list(stats_totals_es_to_db_mapping)
++related_material_db_fields = get_db_fields_list(related_materials_es_to_db_mapping)
+diff --git a/src/replication/indexers/private_item/private_item.py b/src/replication/indexers/private_item/private_item.py
+index 06dc0ce..1317992 100644
+--- a/src/replication/indexers/private_item/private_item.py
++++ b/src/replication/indexers/private_item/private_item.py
+@@ -9,11 +9,8 @@
+     get_funding,
+     get_owner,
+ )
+-from replication.indexers.common.mappings import (
+-    group_es_to_db_mapping,
+-    group_db_fields,
+-)
+-from replication.indexers.common.db_queries import GROUPS_QUERY
++from replication.indexers.common.mappings import group_es_to_db_mapping, group_db_fields, related_material_db_fields
++from replication.indexers.common.db_queries import GROUPS_QUERY, RELATED_MATERIAL_QUERY
+ from .db_queries import PRIVATE_QUERY, COLLECTIONS_QUERY, FILES_QUERY
+ from .mappings import (
+     es_to_db_mapping_private,
+@@ -28,6 +25,22 @@
+ class PrivateItem(Index):
+     ES_INDEX = "private_item"
+ 
++    @classmethod
++    def process_references(cls, es_dict):
++        es_dict["references"] = json.loads(es_dict["references"])
++        if es_dict["references"] and isinstance(es_dict["references"][0], int):
++            data = get_by_id_list(
++                cls.DATABASE, es_dict["references"], RELATED_MATERIAL_QUERY, related_material_db_fields
++            )
++            references = []
++            for material in data:
++                references.append(material["identifier"])
++                if material["is_linkout"] and not es_dict["resource"]["doi"]:
++                    es_dict["resource"]["doi"] = material["identifier"]
++                    es_dict["resource"]["title"] = material["title"]
++            es_dict["references"] = references
++        return es_dict
++
+     @classmethod
+     def on_message_private_item(cls, data):
+         entity_id = data["data"]["id"]
+@@ -45,8 +58,11 @@ def on_message_private_item(cls, data):
+             es_dict["collections"] = cls.get_collections_metadata(entity_id)
+             es_dict["files"] = cls.get_files_metadata(entity_id)
+             es_dict["owner"] = get_owner(cls.DATABASE, es_dict["owner"])
+-            es_dict["references"] = json.loads(es_dict["references"])
++
+             es_dict["resource"] = es_dict.get("resource") or {"id": "", "title": "", "doi": "", "link": ""}
++
++            cls.process_references(es_dict)
++
+             es_dict["tags"] = json.loads(es_dict["tags"])
+ 
+             all_funding_data, institution_funding_data = get_funding(cls.DATABASE, es_dict["funding"])
+diff --git a/src/replication/indexers/public_item/public_item.py b/src/replication/indexers/public_item/public_item.py
+index 04cd83d..894a19b 100644
+--- a/src/replication/indexers/public_item/public_item.py
++++ b/src/replication/indexers/public_item/public_item.py
+@@ -69,8 +69,11 @@ def on_message_public_item(cls, data):
+             es_dict["authors"] = get_authors(cls.DATABASE, es_dict["authors"])
+             es_dict["files"] = cls.get_files_metadata(entity_id, db_query=FILES_QUERY)
+             es_dict["owner"] = get_owner(cls.DATABASE, es_dict["owner"])
+-            es_dict["references"] = json.loads(es_dict["references"])
++
+             es_dict["resource"] = es_dict.get("resource") or {"id": "", "title": "", "doi": "", "link": ""}
++
++            cls.process_references(es_dict)
++
+             es_dict["restrictions"] = cls.get_embargo_data(entity_id)
+             es_dict["tags"] = json.loads(es_dict["tags"])
+ 
+diff --git a/tests/replication/private_item/data.py b/tests/replication/private_item/data.py
+index 602b7ee..3d3dfb5 100644
+--- a/tests/replication/private_item/data.py
++++ b/tests/replication/private_item/data.py
+@@ -141,6 +141,13 @@ def db_get_owner_by_id(cls):
+             "user_profile.orcid_id": "0000-0000-0000-1234",
+         }
+ 
++    @classmethod
++    def db_get_related_materials(cls):
++        return [
++            {"identifier": "https://somereference.article", "title": "test", "is_linkout": True},
++            {"identifier": "https://somereference_2.article", "title": "test2", "is_linkout": False},
++        ]
++
+     @classmethod
+     def dispatcher(cls):
+         return {
+diff --git a/tests/replication/private_item/test_private_item.py b/tests/replication/private_item/test_private_item.py
+index 0951a3c..b93eaaa 100644
+--- a/tests/replication/private_item/test_private_item.py
++++ b/tests/replication/private_item/test_private_item.py
+@@ -132,3 +132,47 @@ def test_private_item_insert_on_different_index(mocker):
+     es_api_patch.assert_called_once_with(
+         index="private_item_070319", es_id=item_db_data["article.id"], data=test_data.es_message()
+     )
++
++
++def test_private_item_related_materials(mocker):
++    test_data = data.TestPrivateItemInsertData
++
++    item_db_data = test_data.db_get_item_by_id()
++    authors_db_data = test_data.db_get_authors_by_ids()
++    categories_db_data = test_data.db_get_categories_by_ids()
++    collections_db_data = test_data.db_get_collections_by_item_id()
++    associated_groups = test_data.db_get_associated_groups()
++    content_groups = test_data.db_get_content_groups()
++    files_db_data = test_data.db_get_files()
++    funding_data = test_data.db_get_funding_by_ids()
++    owner_data = test_data.db_get_owner_by_id()
++    related_materials_db_data = test_data.db_get_related_materials()
++
++    item_db_data["article_metadata.references"] = "[1, 2]"
++    item_db_data["article_resource.resource_title"] = ""
++    item_db_data["article_resource.resource_doi"] = ""
++
++    es_api_patch: MagicMock = mocker.patch.object(EsApi, "upsert_document")
++    mocker.patch.object(DbApi, "get_first", side_effect=[item_db_data, owner_data])
++    mocker.patch.object(
++        DbApi,
++        "get_multiple",
++        side_effect=[
++            authors_db_data,
++            categories_db_data,
++            collections_db_data,
++            files_db_data,
++            related_materials_db_data,
++            funding_data,
++            associated_groups,
++            content_groups,
++        ],
++    )
++
++    PrivateItem.on_message_private_item(test_data.dispatcher())
++
++    expected = test_data.es_message()
++    expected["resource"]["title"] = "test"
++    expected["resource"]["doi"] = "https://somereference.article"
++
++    es_api_patch.assert_called_once_with(index="private_item", es_id=item_db_data["article.id"], data=expected)
+diff --git a/tests/replication/public_item/data.py b/tests/replication/public_item/data.py
+index 9da9392..d9db3eb 100644
+--- a/tests/replication/public_item/data.py
++++ b/tests/replication/public_item/data.py
+@@ -195,6 +195,13 @@ def db_get_owner_by_id(cls):
+             "user_profile.orcid_id": "0000-0000-0000-1234",
+         }
+ 
++    @classmethod
++    def db_get_related_materials(cls):
++        return [
++            {"identifier": "https://somereference.article", "title": "test", "is_linkout": True},
++            {"identifier": "https://somereference_2.article", "title": "test2", "is_linkout": False},
++        ]
++
+     @classmethod
+     def dispatcher(cls):
+         return {
+diff --git a/tests/replication/public_item/test_public_item.py b/tests/replication/public_item/test_public_item.py
+index 49143d4..f9cdec9 100644
+--- a/tests/replication/public_item/test_public_item.py
++++ b/tests/replication/public_item/test_public_item.py
+@@ -417,3 +417,57 @@ def test_public_item_insert_on_different_index(mocker):
+     es_api_patch.assert_called_once_with(
+         index="public_item_070319", es_id=item_db_data["article_version.article_id"], data=test_data.es_message()
+     )
++
++
++def test_public_item_related_materials(mocker):
++    test_data = data.TestPublicItemInsertData
++
++    item_db_data = test_data.db_get_item_by_id()
++    authors_db_data = test_data.db_get_authors_by_ids()
++    categories_db_data = test_data.db_get_categories_by_ids()
++    funding_data = test_data.db_get_funding_by_ids()
++    files_db_data = test_data.db_get_files()
++    owner_data = test_data.db_get_owner_by_id()
++    embargo_data = test_data.db_get_embargo_config_data()
++    stats_totals_data = test_data.db_get_stats_totals()
++    stats_altmetric_data = test_data.db_get_stats_altmetric()
++    associated_institutions = test_data.db_get_associated_institutions()
++    associated_groups = test_data.db_get_associated_groups()
++    content_groups = test_data.db_get_content_groups()
++    custom_fields = test_data.db_get_custom_fields()
++    related_materials_db_data = test_data.db_get_related_materials()
++
++    item_db_data["article_metadata_version.references"] = "[1, 2]"
++    item_db_data["article_resource.resource_title"] = ""
++    item_db_data["article_resource.resource_doi"] = ""
++
++    es_api_patch: MagicMock = mocker.patch.object(EsApi, "create_or_update_document")
++    mocker.patch.object(
++        DbApi, "get_first", side_effect=[item_db_data, owner_data, stats_totals_data, stats_altmetric_data]
++    )
++    mocker.patch.object(
++        DbApi,
++        "get_multiple",
++        side_effect=[
++            authors_db_data,
++            files_db_data,
++            related_materials_db_data,
++            embargo_data,
++            categories_db_data,
++            funding_data,
++            associated_groups,
++            content_groups,
++            associated_institutions,
++            custom_fields,
++        ],
++    )
++
++    PublicItem.on_message_public_item(test_data.dispatcher())
++
++    expected = test_data.es_message()
++    expected["resource"]["title"] = "test"
++    expected["resource"]["doi"] = "https://somereference.article"
++
++    es_api_patch.assert_called_once_with(
++        index="public_item", es_id=item_db_data["article_version.article_id"], data=test_data.es_message()
++    )

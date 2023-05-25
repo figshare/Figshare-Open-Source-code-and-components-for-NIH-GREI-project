@@ -1,0 +1,176 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
+index 4208eb062..8e306c913 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
+@@ -1,5 +1,5 @@
+ import { mount } from "enzyme";
+-import React from "react";
++import React, { useEffect } from "react";
+ import { act } from "react-dom/test-utils";
+ import { MockedProvider, wait } from "utils/apollo/testing";
+ import { GraphQLError } from "graphql";
+@@ -9,6 +9,7 @@ import { getRelatedMaterials, getRelatedMaterialTypes, getRelatedMaterialRelatio
+ import { RelatedMaterialsList } from "./components/relatedMaterialsList";
+ import { ManageRelatedMaterials } from "./components/manageRelatedMaterials";
+ import RelatedMaterials, {
++  useRelatedMaterials,
+   isLinkout, parseReferencesFieldError,
+   RemapMaterial, returnFocus, resolveIdentifier, delayAction,
+ } from "./index";
+@@ -352,3 +353,59 @@ describe("utils", () => {
+     expect(awaitedLongerResult).toBe(2);
+   });
+ });
++
++describe("useRelatedMaterials() hook", () => {
++  const getRelatedMaterialsDataMock = [{
++    request: { query: getRelatedMaterials, variables: { relatedMaterialIds: [1, 2], articleId: 1 } },
++    result: {
++      data: {
++        getRelatedMaterials: [
++          {
++            id: 1,
++            identifier: "identifier-one",
++            title: "identifier-one-title",
++            relation: "IsMetadataFor",
++            identifierType: "UPC",
++            isLinkout: true,
++            isUrl: false,
++            resolver: "urn:upc:",
++          },
++          {
++            id: 2,
++            identifier: "identifier-two",
++            title: "",
++            relation: "IsCitedBy",
++            identifierType: "DOI",
++            isLinkout: false,
++            isUrl: true,
++            resolver: "https://doi.org/",
++          },
++        ],
++      },
++    },
++  }];
++  const hook = { current: null };
++  const defaultVariables = { value: [1, 2, 3], articleId: 1 };
++  function Fixture({ variables = defaultVariables, options = {} }) {
++    const result = useRelatedMaterials(variables, options);
++
++    useEffect(() => {
++      hook.current = result;
++    }, [result]);
++
++    return null;
++  }
++
++
++  it("sorts and remaps data by default if no such options are specified", async() => {
++    const component = mount(<MockedProvider mocks={[...getRelatedMaterialsDataMock]}>
++      <Fixture />
++    </MockedProvider>);
++
++    await wait(() => component.update());
++
++    expect(hook.current).toBeDefined();
++
++    component.unmount();
++  });
++});
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/relatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/relatedMaterials.jsx
+index dee82d41f..abe4cd211 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/relatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/relatedMaterials.jsx
+@@ -6,6 +6,7 @@ import { FieldError } from "@figshare/fcl/fieldError";
+ 
+ import Label from "../../genericFields/textField/components/label";
+ import { ItemContext } from "../../../../../context/itemContext";
++import { ITEM_STATUS } from "../../../../../constants";
+ 
+ import { RelatedMaterialsList } from "./components/relatedMaterialsList";
+ import { ManageRelatedMaterials } from "./components/manageRelatedMaterials";
+@@ -26,7 +27,7 @@ export function RelatedMaterials({ className, disabled, id, value, error, isRequ
+    */
+   const savedIds = useMemo(() => value, [item.id, item.version]);
+   const { materials, setMaterials } = useRelatedMaterials(
+-    { value: savedIds, version: item?.version, id: item?.id },
++    { value: savedIds, version: item?.version, id: item?.id, isPublic: item?.status === ITEM_STATUS.public },
+     { sort: true, remap: true }
+   );
+   const empty = !materials?.length;
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+index b6505e9ac..7d40ea53c 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+@@ -12,11 +12,17 @@ import { RemapMaterial } from "./utils";
+  * @param  options { sort : true, remap: true }
+  * @returns \{ materials, setMaterials, query \}
+  */
+-export function useRelatedMaterials({ value, id, version }, { sort = true, remap = true }) {
++export function useRelatedMaterials({ value, id, version, isPublic }, { sort = true, remap = true }) {
+   const [materials, setMaterials] = useState([]);
++  const variables = { relatedMaterialIds: value, articleId: id, articleVersion: version };
++
++  if (!isPublic) {
++    delete variables.articleVersion;
++  }
++
+   const query = useQuery(
+     getRelatedMaterials,
+-    { variables: { relatedMaterialIds: value, articleId: id, articleVersion: version } }
++    { variables }
+   );
+ 
+   /**
+diff --git a/src/pages/item/page/components/linkback/index.jsx b/src/pages/item/page/components/linkback/index.jsx
+index 7c0e845bf..31f99cc85 100644
+--- a/src/pages/item/page/components/linkback/index.jsx
++++ b/src/pages/item/page/components/linkback/index.jsx
+@@ -8,6 +8,7 @@ import { resolveIdentifier } from
+   "pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils";
+ 
+ import Context from "../../context";
++import { ITEM_STATUS } from "../../../../account/itemEdit/constants";
+ 
+ import { LinkbackCard } from "./card";
+ import styles from "./index.css";
+@@ -49,6 +50,7 @@ export function Linkback(props) {
+       id: getIn(item, "id"),
+       version: getIn(item, "version"),
+       value: getIn(item, "references.items", getIn(item, "references", [])),
++      isPublic: getIn(item, "status", ITEM_STATUS.private) === ITEM_STATUS.public,
+     };
+   }, [item]);
+   const { materials: unfiltered } = useRelatedMaterials(variables, { sort: true, remap: false });
+diff --git a/src/pages/item/page/components/linkback/index.test.jsx b/src/pages/item/page/components/linkback/index.test.jsx
+index d69e3ccef..e80ba3fb3 100644
+--- a/src/pages/item/page/components/linkback/index.test.jsx
++++ b/src/pages/item/page/components/linkback/index.test.jsx
+@@ -140,6 +140,7 @@ describe("<Linkback />", () => {
+     const testItem = {
+       id: 12000,
+       version: 0,
++      status: "public",
+       references: [1, 2, 3],
+       linkbackCollection: {
+         resourceTitle: "test-title",
+diff --git a/src/pages/item/page/components/relatedMaterials/index.jsx b/src/pages/item/page/components/relatedMaterials/index.jsx
+index 69f3b3110..542296cc9 100644
+--- a/src/pages/item/page/components/relatedMaterials/index.jsx
++++ b/src/pages/item/page/components/relatedMaterials/index.jsx
+@@ -8,6 +8,7 @@ import { useRelatedMaterials } from
+   "pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials";
+ 
+ import Context from "../../context";
++import { ITEM_STATUS } from "../../../../account/itemEdit/constants";
+ 
+ import style from "./index.css";
+ 
+@@ -20,6 +21,7 @@ export function RelatedMaterials(props) {
+       id: getIn(item, "id"),
+       version: getIn(item, "version"),
+       value: getIn(item, "references.items", getIn(item, "references", [])),
++      isPublic: getIn(item, "status", ITEM_STATUS.private) === ITEM_STATUS.public,
+     };
+   }, [item]);
+   const { materials } = useRelatedMaterials(variables, { sort: true, remap: true });

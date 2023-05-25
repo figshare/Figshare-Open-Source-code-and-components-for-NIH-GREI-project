@@ -1,0 +1,49 @@
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index de670e5a64..4cf0aee395 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -2103,16 +2103,14 @@ def process_update_data(self, data, **options):
+                     data["references"], self.account_id
+                 )
+ 
+-        if data.get("references") and not isinstance(data["references"][0], int) and self.related_materials:
++        if data.get("references") and isinstance(data["references"][0], str) and self.related_materials:
+             # we need to handle the case where the item has related materials
+             # associated and we try to update it with old style references (list
+             # of URLs or DOIs); this could happen via the REST API for example:
+             # you GET the item, copy-paste its `references` (which is
+             # backwards-compatible) and PUT the item
+             result = []
+-            existing = {
+-                rm.identifier: rm.id for rm in self.ENTITIES.RelatedMaterial.find_by_id_list(self.related_materials)
+-            }
++            existing = {rm.link: rm.id for rm in self.ENTITIES.RelatedMaterial.find_by_id_list(self.related_materials)}
+             for reference in data["references"]:
+                 if reference in existing:
+                     result.append(existing[reference])
+diff --git a/tests/api/article/test_references.py b/tests/api/article/test_references.py
+index 16092e8440..072ad9352a 100644
+--- a/tests/api/article/test_references.py
++++ b/tests/api/article/test_references.py
+@@ -116,7 +116,9 @@ def test_update_references_when_having_related_materials(self):
+         self.assertEqual(len(article.related_materials), 2)
+         initial_db_references = ArticleInternals.get_metadata(article.id).references
+ 
+-        article.update_article({"references": ["https://google.com", "https://bing.com", "10.1000/182"]})
++        article.update_article(
++            {"references": ["https://google.com", "https://bing.com", "https://doi.org/10.1000/182"]}
++        )
+ 
+         self.assertEqual(len(article.related_materials), 3)
+         db_references = ArticleInternals.get_metadata(article.id).references
+@@ -142,7 +144,9 @@ def test_update_references_no_related_material(self):
+         self.assertEqual(len(article.related_materials), 2)
+         initial_db_references = ArticleInternals.get_metadata(article.id).references
+ 
+-        article.update_article({"references": ["https://google.com", "https://bing.com", "10.1000/182"]})
++        article.update_article(
++            {"references": ["https://google.com", "https://bing.com", "https://doi.org/10.1000/182"]}
++        )
+         db_references = ArticleInternals.get_metadata(article.id).references
+ 
+         self.assertEqual(initial_db_references[0], db_references[0])

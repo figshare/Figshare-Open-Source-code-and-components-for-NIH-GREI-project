@@ -1,0 +1,410 @@
+diff --git a/figshare/lib/handlers/indexers/regular/browse_item_articles.py b/figshare/lib/handlers/indexers/regular/browse_item_articles.py
+index f0ce8efb..ec972458 100644
+--- a/figshare/lib/handlers/indexers/regular/browse_item_articles.py
++++ b/figshare/lib/handlers/indexers/regular/browse_item_articles.py
+@@ -178,6 +178,13 @@ class ElasticsearchBrowseArticleIndexer(
+             " left outer join `collection_resource_version` cvr on cvr.collection_id = cv.collection_id and cvr.version = cv.version "
+             "where ca.article_id = {article_id} and ca.article_version = {article_version}"
+         ),
++        # EXPLAIN SELECT identifier FROM related_material, title, is_linkout WHERE ID IN (41,42);
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        # | id   | select_type | table            | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        # |    1 | SIMPLE      | related_material | range | PRIMARY       | PRIMARY | 8       | NULL | 2    | Using where |
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        "related_materials": "select identifier, title, is_linkout from related_material where id in ({related_material_ids})",
+     }
+ 
+     def _load_info(self, element_id):
+@@ -283,8 +290,9 @@ def manage_data(self, data):
+         if "license_id" in output:
+             del output["license_id"]
+ 
+-        if resource:
+-            output.update(resource)
++        if not resource:
++            resource = {"resource": {"id": "", "title": "", "doi": "", "link": ""}}
++        output.update(resource)
+ 
+         output["authors"] = authors
+         output["files"] = files
+@@ -299,10 +307,21 @@ def manage_data(self, data):
+             output["tags"] = None
+         try:
+             output["references"] = json.loads(output["references"])
+-            output["references"] = [reference for reference in output["references"]]
+         except ValueError:
+             output["references"] = None
+ 
++        if output.get("references") and isinstance(output["references"][0], int):
++            query = queries["related_materials"]
++            related_material_ids = ",".join([str(reference) for reference in output["references"]])
++            materials = manager.execute(query.format(related_material_ids=related_material_ids))
++            references = []
++            for material in materials:
++                references.append(material["identifier"])
++                if material["is_linkout"] and not output["resource"]["doi"]:
++                    output["resource"]["doi"] = material["identifier"]
++                    output["resource"]["title"] = material["title"]
++            output["references"] = references
++
+         if "funding" in output:
+             try:
+                 output["fundings"] = self.get_fundings(output["funding"])
+diff --git a/figshare/lib/handlers/indexers/regular/collection_items.py b/figshare/lib/handlers/indexers/regular/collection_items.py
+index 4e1f3297..40e35176 100644
+--- a/figshare/lib/handlers/indexers/regular/collection_items.py
++++ b/figshare/lib/handlers/indexers/regular/collection_items.py
+@@ -122,6 +122,13 @@ class ElasticsearchCollectionItemsIndexer(
+             "from category "
+             "where id in ({category_ids})"
+         ),
++        # EXPLAIN SELECT identifier, title, is_linkout FROM related_material WHERE ID IN (41,42);
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        # | id   | select_type | table            | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        # |    1 | SIMPLE      | related_material | range | PRIMARY       | PRIMARY | 8       | NULL | 2    | Using where |
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        "related_materials": "select identifier, title, is_linkout from related_material where id in ({related_material_ids})",
+     }
+ 
+     def _load_info(self, element_id, message, article_version=None):
+@@ -258,10 +265,25 @@ def manage_data(self, data):
+         if "references" in output:
+             try:
+                 output["references"] = json.loads(output["references"])
+-                output["references"] = [reference for reference in output["references"]]
+             except ValueError:
+                 output["references"] = []
+ 
++        if not resource:
++            resource = {"resource": {"id": "", "title": "", "doi": "", "link": ""}}
++        output.update(resource)
++
++        if output.get("references") and isinstance(output["references"][0], int):
++            query = queries["related_materials"]
++            related_material_ids = ",".join([str(reference) for reference in output["references"]])
++            materials = manager.execute(query.format(related_material_ids=related_material_ids))
++            references = []
++            for material in materials:
++                references.append(material["identifier"])
++                if material["is_linkout"] and not output["resource"]["doi"]:
++                    output["resource"]["doi"] = material["identifier"]
++                    output["resource"]["title"] = material["title"]
++            output["references"] = references
++
+         if "license_id" in output:
+             del output["license_id"]
+ 
+@@ -272,9 +294,6 @@ def manage_data(self, data):
+         if not collections:
+             collections = []
+ 
+-        if resource:
+-            output.update(resource)
+-
+         output["authors"] = authors
+         output["files"] = files
+ 
+diff --git a/figshare/lib/handlers/indexers/regular/curation_entries.py b/figshare/lib/handlers/indexers/regular/curation_entries.py
+index 2874798e..7ace1f6d 100644
+--- a/figshare/lib/handlers/indexers/regular/curation_entries.py
++++ b/figshare/lib/handlers/indexers/regular/curation_entries.py
+@@ -151,6 +151,14 @@ class ElasticsearchCurationEntriesIndexer(
+             "where "
+             "   cc.curation_id = {curation_id}"
+         ),
++
++        # EXPLAIN SELECT identifier FROM related_material WHERE ID IN (41,42);
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        # | id   | select_type | table            | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        # |    1 | SIMPLE      | related_material | range | PRIMARY       | PRIMARY | 8       | NULL | 2    | Using where |
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        "related_materials": "select identifier from related_material where id in ({related_material_ids})"
+     }
+ 
+     @property
+@@ -452,6 +460,13 @@ def _references(self, output):
+             output["references"] = None
+             logger.auto(exception=exc)
+ 
++        if output.get("references") and isinstance(output["references"][0], int):
++            query = self.EXTRA_QUERIES["related_materials"]
++            related_material_ids = ",".join([str(reference) for reference in output["references"]])
++            with self._get_db_manager("extra queries") as manager:
++                materials = manager.execute(query.format(related_material_ids=related_material_ids))
++            output["references"] = [material["identifier"] for material in materials]
++
+     def _tags(self, output):
+         try:
+             tags = output["tags"]
+diff --git a/figshare/lib/handlers/indexers/regular/item_articles.py b/figshare/lib/handlers/indexers/regular/item_articles.py
+index f587e762..c071ba78 100644
+--- a/figshare/lib/handlers/indexers/regular/item_articles.py
++++ b/figshare/lib/handlers/indexers/regular/item_articles.py
+@@ -200,6 +200,13 @@ class ElasticsearchArticlesIndexer(
+             "   left outer join `collection_resource` cr on cr.collection_id = c.id "
+             "where ca.article_id = {article_id}"
+         ),
++        # EXPLAIN SELECT identifier, title, is_linkout FROM related_material WHERE ID IN (41,42);
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        # | id   | select_type | table            | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        # |    1 | SIMPLE      | related_material | range | PRIMARY       | PRIMARY | 8       | NULL | 2    | Using where |
++        # +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
++        "related_materials": "select identifier, title, is_linkout from related_material where id in ({related_material_ids})",
+     }
+ 
+     def get_identity_key(self, message):
+@@ -286,7 +293,17 @@ def manage_data(self, data):
+ 
+         try:
+             output["references"] = json.loads(output["references"])
+-            output["references"] = [reference for reference in output["references"]]
++            if output["references"] and isinstance(output["references"][0], int):
++                query = queries["related_materials"]
++                related_material_ids = ",".join([str(reference) for reference in output["references"]])
++                materials = manager.execute(query.format(related_material_ids=related_material_ids))
++                references = []
++                for material in materials:
++                    references.append(material["identifier"])
++                    if material["is_linkout"]:
++                        resource = {"doi": material["identifier"], "title": material["title"]}
++                        output["resource"].append(resource)
++                output["references"] = references
+         except ValueError:
+             output["references"] = None
+ 
+diff --git a/figshare/lib/handlers/mixins/category_mixin.py b/figshare/lib/handlers/mixins/category_mixin.py
+index d99fd683..9def4847 100644
+--- a/figshare/lib/handlers/mixins/category_mixin.py
++++ b/figshare/lib/handlers/mixins/category_mixin.py
+@@ -268,9 +268,9 @@ def _prepare_old_style_data(self, categories_ids, institution_id, unify=False):
+             with Timer("Build category path:"):
+                 path, depth = self._build_category_path(category_custom_id, self._category_tree)
+ 
+-            parent = {"id": category["parent_id"] if category["parent_id"] else 0}
++            parent = {"id": category.get("parent_id") or 0}
+ 
+-            if category["parent_title"]:
++            if category.get("parent_title"):
+                 parent["title"] = category["parent_title"]
+ 
+             taxonomies[taxonomy_name]["categories"].append(
+diff --git a/figshare/tests/test_indexers.py b/figshare/tests/test_indexers.py
+index 4c37d68e..cd3a08be 100644
+--- a/figshare/tests/test_indexers.py
++++ b/figshare/tests/test_indexers.py
+@@ -6,6 +6,12 @@
+ from figshare.config import config as es_config
+ from figshare.lib.exceptions import ForbiddenIndexingOperation
+ from figshare.lib.handlers.indexers.common import CommonElasticsearchIndexer
++from figshare.lib.handlers.indexers.regular import (
++    ElasticsearchArticlesIndexer,
++    ElasticsearchBrowseArticleIndexer,
++    ElasticsearchCollectionItemsIndexer,
++    ElasticsearchCurationEntriesIndexer,
++)
+ 
+ 
+ def test_load_info_blacklist():
+@@ -42,3 +48,198 @@ def test_put_blacklist(mocker):
+     indexer.do_insert(message)
+ 
+     es_connector_mock.assert_called_once()
++
++
++def test_item_articles_indexer(mocker):
++    article_data = {
++        "embargo_type": "0",
++        "id": 1,
++        "authors": [],
++        "institution_id": 0,
++        "custom_fields": [],
++        "references": "[1]",
++        "tags": "",
++        "associated_institutions": "",
++        "categories": "",
++        "group_id": 0,
++    }
++
++    related_materials_data = [{"identifier": "urn:123", "title": "test", "is_linkout": True}]
++    db_mock = mocker.patch("figshare.lib.handlers.indexers.common.CommonElasticsearchIndexer._get_db_manager")
++    db_mock.return_value.__enter__.return_value.execute.side_effect = [
++        article_data,
++        (),
++        (),
++        (),
++        (),
++        related_materials_data,
++    ]
++    es_connector_mock = mocker.patch("figshare.lib.elasticsearch.ElasticsearchConnector.es_post")
++
++    os.environ["APP_ENV"] = "test"
++    config = es_config.load_from_env(os.environ.get("APP_ENV"))
++    indexer = ElasticsearchArticlesIndexer(config, False)
++    message = {"data": {"id": 10006, "doc_type": "item"}, "table": "article"}
++    indexer.do_insert(message)
++
++    assert ["urn:123"] == es_connector_mock.call_args_list[0][0][1]["doc"]["references"]
++    assert "urn:123" == es_connector_mock.call_args_list[0][0][1]["doc"]["resource"][0]["doi"]
++
++
++def test_browse_articles_indexer(mocker):
++    article_data = {
++        "embargo_type": "0",
++        "id": 1,
++        "authors": [],
++        "institution_id": 0,
++        "custom_fields": [],
++        "references": "[1]",
++        "tags": "",
++        "associated_institutions": "",
++        "categories": "",
++        "group_id": 0,
++        "version": 1,
++        "is_embargoed": False,
++    }
++
++    related_materials_data = [{"identifier": "urn:123", "title": "test", "is_linkout": True}]
++    db_mock = mocker.patch("figshare.lib.handlers.indexers.common.CommonElasticsearchIndexer._get_db_manager")
++    db_mock.return_value.__enter__.return_value.execute.side_effect = [
++        article_data,
++        (),
++        (),
++        (),
++        (),
++        (),
++        related_materials_data,
++    ]
++    es_connector_mock = mocker.patch("figshare.lib.elasticsearch.ElasticsearchConnector.es_post")
++
++    os.environ["APP_ENV"] = "test"
++    config = es_config.load_from_env(os.environ.get("APP_ENV"))
++    indexer = ElasticsearchBrowseArticleIndexer(config, False)
++    message = {"data": {"article_id": 10006, "doc_type": "item"}, "table": "article_version"}
++    indexer.do_insert(message)
++
++    assert ["urn:123"] == es_connector_mock.call_args_list[0][0][1]["doc"]["references"]
++    assert "urn:123" == es_connector_mock.call_args_list[0][0][1]["doc"]["resource"]["doi"]
++
++
++def test_collection_items_indexer(mocker):
++    article_data = {
++        "embargo_type": "0",
++        "id": 1,
++        "authors": "[]",
++        "institution_id": 0,
++        "custom_fields": [],
++        "references": "[1]",
++        "tags": "[]",
++        "associated_institutions": "",
++        "categories": "[1]",
++        "group_id": 0,
++        "version": 1,
++        "is_embargoed": False,
++    }
++
++    related_materials_data = [{"identifier": "urn:123", "title": "test", "is_linkout": True}]
++    db_mock = mocker.patch("figshare.lib.handlers.indexers.common.CommonElasticsearchIndexer._get_db_manager")
++    db_mock.return_value.__enter__.return_value.execute.side_effect = [
++        article_data,
++        (
++            {
++                "collection_version": 1,
++                "collection_id": 1,
++                "collection_version_number": 1,
++                "collection_title": "",
++                "private": 1,
++                "order_number": 1,
++            },
++        ),
++        (),
++        (),
++        (),
++        {"id": 1},
++        (
++            {
++                "forcode": "",
++                "category_id": 1,
++                "custom_id": 0,
++                "taxonomy_name": "test",
++                "taxonomy_id": 1,
++                "descendant_id": 1,
++                "title": "test",
++            },
++        ),
++        ({"descendant_id": 1, "category_id": 1},),
++        ({"descendant_id": 1, "category_id": 1},),
++        (),
++        related_materials_data,
++    ]
++    es_connector_mock = mocker.patch("figshare.lib.elasticsearch.ElasticsearchConnector.es_post")
++
++    os.environ["APP_ENV"] = "test"
++    config = es_config.load_from_env(os.environ.get("APP_ENV"))
++    indexer = ElasticsearchCollectionItemsIndexer(config, False)
++    message = {"data": {"id": 10006, "doc_type": "item", "version": 1}, "table": "article"}
++    indexer.do_insert(message)
++
++    assert ["urn:123"] == es_connector_mock.call_args_list[0][0][1]["doc"]["references"]
++    assert "urn:123" == es_connector_mock.call_args_list[0][0][1]["doc"]["resource"]["doi"]
++
++
++def test_curation_entries_indexer(mocker):
++    article_data = {
++        "embargo_type": "0",
++        "id": 1,
++        "authors": [],
++        "institution_id": 0,
++        "custom_fields": [],
++        "references": "[1]",
++        "tags": "[]",
++        "associated_institutions": "{}",
++        "categories": "[]",
++        "group_id": 0,
++        "license_id": 1,
++    }
++
++    related_materials_data = [{"identifier": "urn:123"}]
++    db_mock = mocker.patch("figshare.lib.handlers.indexers.common.CommonElasticsearchIndexer._get_db_manager")
++    db_mock.return_value.__enter__.return_value.execute.side_effect = [
++        {"id": 1},
++        {
++            "details.status": "pending",
++            "item.id": 1,
++            "id": 1,
++            "details.institution.id": 1,
++            "details.comments_count": 0,
++            "details.group.id": 1,
++        },
++        article_data,
++        (),
++        (),
++        related_materials_data,
++        (),
++        {"id": 1},
++        (
++            {
++                "forcode": "",
++                "category_id": 1,
++                "custom_id": 0,
++                "taxonomy_name": "test",
++                "taxonomy_id": 1,
++                "descendant_id": 1,
++                "title": "test",
++            },
++        ),
++        ({"descendant_id": 1, "category_id": 1},),
++        ({"descendant_id": 1, "category_id": 1},),
++    ]
++    es_connector_mock = mocker.patch("figshare.lib.elasticsearch.ElasticsearchConnector.es_post")
++
++    os.environ["APP_ENV"] = "test"
++    config = es_config.load_from_env(os.environ.get("APP_ENV"))
++    indexer = ElasticsearchCurationEntriesIndexer(config, False)
++    message = {"data": {"_fixed_id_key": 10006, "doc_type": "entry", "curation_status": "pending"}, "table": "article"}
++    indexer.do_insert(message)
++
++    assert ["urn:123"] == es_connector_mock.call_args_list[0][0][1]["doc"]["item"]["references"]

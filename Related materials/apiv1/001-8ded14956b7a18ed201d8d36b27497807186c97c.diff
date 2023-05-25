@@ -1,0 +1,74 @@
+diff --git a/figshare_api2/app/presenters/article.py b/figshare_api2/app/presenters/article.py
+index b8bc6dbf..e8973506 100644
+--- a/figshare_api2/app/presenters/article.py
++++ b/figshare_api2/app/presenters/article.py
+@@ -1,9 +1,6 @@
+-from __future__ import absolute_import
+-
+-import six
+-
+-from figcore.api import Article, Group
++from figcore.api import Article, Group, RelatedMaterial
+ from figcore.lib.presenter import FieldSkipped, Presenter, computed, field, helpers
++
+ from figshare_api.config import config
+ from figshare_api2.app.presenters.base import figshare_article_url
+ from figshare_api2.utils import article_is_confidential
+@@ -13,6 +10,7 @@
+ from .file import FilePresenter
+ from .funding import FundingPresenter
+ from .license import LicensePresenter
++from .related_material import RelatedMaterialPresenter
+ 
+ 
+ class ArticleEmbargoOptionsPresenter(Presenter):
+@@ -114,7 +112,7 @@ def get_timeline(self, presenter):
+ 
+         timeline["firstOnline"] = timeline.pop("onlinePublication", None)
+ 
+-        filtered_timeline = {k: v for k, v in six.iteritems(timeline) if v}
++        filtered_timeline = {k: v for k, v in timeline.items() if v}
+ 
+         if self.raw_data.institution:
+             enabled_timeline_options = self.raw_data.institution.config.options.get("timeline", {}).get("enabled") or []
+@@ -205,6 +203,11 @@ class ArticlePresenterL1(ArticlePresenter, ArticleEmbargoPresenter):
+     references = field("references")
+     has_linked_file = computed("_has_linked_file")
+     citation = field("citation_string")
++    related_materials = computed("get_related_materials")
++
++    def get_related_materials(self, presenter):
++        materials = RelatedMaterial.find_by_id_list(self.raw_field("related_materials"))
++        return RelatedMaterialPresenter.list(materials)
+ 
+     def get_is_confidential(self, presenter):
+         return article_is_confidential(self._entity)
+diff --git a/figshare_api2/app/presenters/related_material.py b/figshare_api2/app/presenters/related_material.py
+new file mode 100644
+index 00000000..e7642c1f
+--- /dev/null
++++ b/figshare_api2/app/presenters/related_material.py
+@@ -0,0 +1,12 @@
++from figcore.lib.presenter import Presenter, field
++
++
++class RelatedMaterialPresenter(Presenter):
++    id = field("id")
++    identifier = field("identifier")
++    title = field("title")
++    relation = field("relation")
++    identifier_type = field("identifier_type")
++    is_linkout = field("is_linkout")
++    link = field("link")
++
+diff --git a/requirements_development.txt b/requirements_development.txt
+index 53e62973..ef11348c 100644
+--- a/requirements_development.txt
++++ b/requirements_development.txt
+@@ -1,5 +1,5 @@
+ -r requirements.txt
+ 
+--e git+ssh://git@github.com/figshare/figcore.git@master#egg=figcore
++-e git+ssh://git@github.com/figshare/figcore.git@adrianp/feature/related-materials#egg=figcore
+ 
+ -e .

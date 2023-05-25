@@ -1,0 +1,137 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/index.test.jsx
+index 537cf5b3e..8c9f9655d 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/index.test.jsx
+@@ -40,6 +40,7 @@ describe("<RelatedMaterialsListItem />", () => {
+         relation="References"
+         title="title"
+         titleHasWords={false}
++        titleIsDefined={true}
+         type="DOI"
+       />
+     );
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+index bfaa4fa0a..4692c0767 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsList.jsx
+@@ -32,6 +32,7 @@ function renderRelatedMaterial(
+   const sanitizedIdentifier = encodeHTML.decode(encodeHTML(resolvedIdentifier));
+   const displayTitle = title || resolvedIdentifier;
+   const encodedTitle = encodeHTML.decode(encodeHTML(displayTitle));
++  const titleIsDefined = !!title;
+   /**
+    * For lists that are rendered in the item/preview pages
+    * search highlights are needed for the material title.
+@@ -53,6 +54,7 @@ function renderRelatedMaterial(
+       relation={relation}
+       title={titleNode}
+       titleHasWords={titleHasWords}
++      titleIsDefined={titleIsDefined}
+       type={type}
+     />
+   );
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx
+index 342fdd220..66010f3ba 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsList/relatedMaterialsListItem.jsx
+@@ -11,6 +11,7 @@ import styles from "./relatedMaterialsListItem.css";
+ export function RelatedMaterialsListItem({
+   id, identifier, title, type, relation,
+   order, isUrl, isLinkout, titleHasWords, isPublic,
++  titleIsDefined,
+ }) {
+   const isResolved = isUrl && identifier.includes("://");
+   const href = isResolved ? identifier : `//${identifier}`;
+@@ -48,7 +49,12 @@ export function RelatedMaterialsListItem({
+             </Button>
+             {isPublic && <ReadcubeButton identifier={identifier} />}
+           </>
+-        ) : (<span className={styles.text} data-node-id="material-title"><i>{title}</i> ({identifier})</span>)}
++        ) : (
++          <span className={styles.text} data-node-id="material-title">
++            <i>{title}</i>
++            {titleIsDefined && <>{" "}({ identifier })</>}
++          </span>
++        )}
+       </div>
+     </li>
+   );
+@@ -65,8 +71,9 @@ RelatedMaterialsListItem.propTypes = {
+   type: string.isRequired,
+   isPublic: bool,
+   titleHasWords: bool,
++  titleIsDefined: bool,
+ };
+ 
+-RelatedMaterialsListItem.defaultProps = { titleHasWords: true, isPublic: false };
++RelatedMaterialsListItem.defaultProps = { titleHasWords: true, isPublic: false, titleIsDefined: false };
+ 
+ export default RelatedMaterialsListItem;
+diff --git a/src/pages/item/page/components/linkback/card.jsx b/src/pages/item/page/components/linkback/card.jsx
+index 2f4d49cc9..1db4a532a 100644
+--- a/src/pages/item/page/components/linkback/card.jsx
++++ b/src/pages/item/page/components/linkback/card.jsx
+@@ -9,7 +9,10 @@ import { encodeHTML } from "utils/sanitizers";
+ import styles from "./card.css";
+ 
+ 
+-export function LinkbackCard({ id, itemId, title, relation, identifier, type, isUrl, journal, titleHasWords }) {
++export function LinkbackCard({
++  id, itemId, title, relation, identifier, type, journal,
++  isUrl, titleHasWords, titleIsDefined,
++}) {
+   const isResolved = isUrl && identifier.includes("://");
+   const href = isResolved ? identifier : `//${identifier}`;
+ 
+@@ -49,9 +52,15 @@ export function LinkbackCard({ id, itemId, title, relation, identifier, type, is
+             className={styles.text}
+             data-linkback-material-text-identifier={identifier}
+           >
+-            <NodeWithHighlights itemId={itemId} tag="i" text={encodeHTML(title)} />{" ("}
+-            <NodeWithHighlights itemId={itemId} tag="span" text={encodeHTML(identifier)} />
+-            {")"}
++            <NodeWithHighlights itemId={itemId} tag="i" text={encodeHTML(title)} />{
++              titleIsDefined && (
++                <>
++                  {" ("}
++                  <NodeWithHighlights itemId={itemId} tag="span" text={encodeHTML(identifier)} />
++                  {")"}
++                </>
++              )
++            }
+           </span>
+         )}
+       </div>
+@@ -69,10 +78,12 @@ LinkbackCard.propTypes = {
+   itemId: oneOfType([string, number]),
+   journal: string,
+   titleHasWords: bool,
++  titleIsDefined: bool,
+ };
+ 
+ LinkbackCard.defaultProps = {
+   itemId: undefined,
+   journal: undefined,
+   titleHasWords: true,
++  titleIsDefined: false,
+ };
+diff --git a/src/pages/item/page/components/linkback/index.jsx b/src/pages/item/page/components/linkback/index.jsx
+index 7c567cf74..80defcfca 100644
+--- a/src/pages/item/page/components/linkback/index.jsx
++++ b/src/pages/item/page/components/linkback/index.jsx
+@@ -23,6 +23,7 @@ function renderItem(material, identifiers, relationships, itemId) {
+   const journal = getIn(material, "meta.publication");
+   const displayTitle = title || resolvedIdentifier;
+   const titleHasWords = displayTitle.search(/\s/) !== -1;
++  const titleIsDefined = !!title;
+ 
+   return (
+     <li key={id} className={styles.item}>
+@@ -35,6 +36,7 @@ function renderItem(material, identifiers, relationships, itemId) {
+         relation={relationship}
+         title={displayTitle}
+         titleHasWords={titleHasWords}
++        titleIsDefined={titleIsDefined}
+         type={identifierType}
+       />
+     </li>

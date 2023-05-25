@@ -1,0 +1,303 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.gql b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.gql
+index 7f4ecdd6e..5fca70609 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.gql
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.gql
+@@ -1,5 +1,5 @@
+-query getRelatedMaterials($relatedMaterialIds: Json!, $articleId: Int!, $articleVersion: Int) {
+-  getRelatedMaterials(relatedMaterialIds: $relatedMaterialIds, articleId: $articleId, articleVersion: $articleVersion) {
++query getRelatedMaterials($relatedMaterialIds: Json!, $articleId: Int!, $articleVersion: Int, $token: String) {
++  getRelatedMaterials(relatedMaterialIds: $relatedMaterialIds, articleId: $articleId, articleVersion: $articleVersion, token: $token) {
+       id
+       identifier
+       title
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+index 06fb2a578..d46c5ee0b 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+@@ -16,7 +16,7 @@ export const GQL_LIMIT = 40;
+  * @param  options { sort : true, remap: true }
+  * @returns \{ materials, setMaterials, query \}
+  */
+-export function useRelatedMaterials({ value, id, version, isPublic }, { sort = true, remap = true }) {
++export function useRelatedMaterials({ value, id, version, isPublic, token }, { sort = true, remap = true }) {
+   const [materials, setMaterials] = useState([]);
+   const fetching = useRef(false);
+   const [slices, setSlices] = useState(() => {
+@@ -44,8 +44,12 @@ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = t
+       delete obj.articleVersion;
+     }
+ 
++    if (token) {
++      obj.token = token;
++    }
++
+     return obj;
+-  }, [value, id, version, isPublic]);
++  }, [value, id, version, isPublic, token]);
+ 
+   const query = useQuery(
+     getRelatedMaterials,
+diff --git a/src/pages/item/page/app.test.jsx b/src/pages/item/page/app.test.jsx
+index 819efed5c..9c0833fc6 100644
+--- a/src/pages/item/page/app.test.jsx
++++ b/src/pages/item/page/app.test.jsx
+@@ -1,5 +1,5 @@
+ import PropTypes from "prop-types";
+-import React, { Component } from "react";
++import React, { Component, useEffect } from "react";
+ import { mount } from "enzyme";
+ import RegisterView from "shared/registerView";
+ 
+@@ -7,6 +7,7 @@ import domainData from "./mocks/domainData";
+ import publicItem from "./mocks/item";
+ import { ItemDisplay as ItemPublicPage } from "./app";
+ import BackButton from "./components/backButton";
++import { usePrivateLinkToken } from "./usePrivateLinkToken";
+ 
+ 
+ jest.mock("./components/actions");
+@@ -127,3 +128,39 @@ describe("<ItemPublicPage />", () => {
+     expect(page.find(BackButton)).toHaveLength(1);
+   });
+ });
++
++describe("usePrivateLinkToken() hook", () => {
++  const hookRef = { current: undefined };
++  function Fixture() {
++    const token = usePrivateLinkToken();
++
++    useEffect(() => {
++      hookRef.current = token;
++    }, [token]);
++
++    return null;
++  }
++
++  it("returns nothing if location.pathname does not include a private link token", () => {
++    const component = mount(<Fixture />);
++
++    expect(hookRef.current).toEqual(undefined);
++
++    component.unmount();
++  });
++
++  it("returns an extracted token if it is present in location.pathname", () => {
++    const spy = jest.spyOn(window, "location", "get");
++    spy.mockImplementation(() => {
++      return { pathname: "domain/s/thetoken" };
++    });
++    const component = mount(<Fixture />);
++
++    expect(hookRef.current).toEqual("thetoken");
++
++    spy.mockRestore();
++
++    component.unmount();
++  });
++
++});
+diff --git a/src/pages/item/page/components/linkback/index.jsx b/src/pages/item/page/components/linkback/index.jsx
+index 34e72c7f8..b7623e53c 100644
+--- a/src/pages/item/page/components/linkback/index.jsx
++++ b/src/pages/item/page/components/linkback/index.jsx
+@@ -8,6 +8,7 @@ import { resolveIdentifier } from
+   "pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils";
+ 
+ import Context from "../../context";
++import { usePrivateLinkToken } from "../../usePrivateLinkToken";
+ 
+ import { LinkbackCard } from "./card";
+ import styles from "./index.css";
+@@ -46,16 +47,22 @@ function renderItem(material, identifiers, relationships, itemId) {
+ export function Linkback(props) {
+   const { item, domainData, isPublic } = useContext(Context);
+   const { identifiers, relationships } = useIdentifiersAndRelationshipsResource();
++  const token = usePrivateLinkToken();
+   const variables = useMemo(() => {
+-    return {
++    const obj = {
+       id: getIn(item, "id"),
+       version: getIn(item, "version"),
+       value: getIn(item, "references.items", getIn(item, "references", [])),
+       isPublic,
+     };
+-  }, [item]);
+-  const { materials: unfiltered, done } = useRelatedMaterials(variables, { sort: true, remap: false });
+ 
++    if (token) {
++      obj.token = token;
++    }
++
++    return obj;
++  }, [item, token]);
++  const { materials: unfiltered, done } = useRelatedMaterials(variables, { sort: true, remap: false });
+   /* filter materials without linkout. */
+   const materials = useMemo(() => unfiltered.filter((material) => material.isLinkout), [unfiltered]);
+   /** retrieve backwards compatibility resource information if it exists */
+diff --git a/src/pages/item/page/components/linkback/index.test.jsx b/src/pages/item/page/components/linkback/index.test.jsx
+index 7611eb18a..1decd484e 100644
+--- a/src/pages/item/page/components/linkback/index.test.jsx
++++ b/src/pages/item/page/components/linkback/index.test.jsx
+@@ -39,6 +39,16 @@ describe("<Linkback />", () => {
+     request: { query: getRelatedMaterials, variables: { relatedMaterialIds: [] } },
+     result: { data: { getRelatedMaterials: [] } },
+   }];
++  const getRelatedMaterialsWithTokenMock = [{
++    request: {
++      query: getRelatedMaterials,
++      variables: {
++        token: "privatelinktoken", relatedMaterialIds: [2],
++        articleId: 12000, version: 0, isPublic: undefined,
++      },
++    },
++    result: { data: { getRelatedMaterials: [] } },
++  }];
+   const getRelatedMaterialsDataMock = [{
+     request: {
+       query: getRelatedMaterials,
+@@ -238,4 +248,30 @@ describe("<Linkback />", () => {
+ 
+     expect(component.isEmptyRender()).toEqual(true);
+   });
++  it("sends private link token if found in url", async() => {
++    const spy = jest.spyOn(window, "location", "get");
++    spy.mockImplementation(() => {
++      return { pathname: "domain/s/privatelinktoken" };
++    });
++
++    const testItem = {
++      id: 12000,
++      version: 0,
++      references: [2],
++    };
++
++    const component = mount(
++      <LinkbackWrapped
++        domainData={ { } }
++        item={testItem}
++        mocks={[...getRelatedMaterialsWithTokenMock]}
++      />
++    );
++
++    await wait(() => component.update());
++
++    expect(component.isEmptyRender()).toEqual(true);
++
++    spy.mockRestore();
++  });
+ });
+diff --git a/src/pages/item/page/components/relatedMaterials/index.jsx b/src/pages/item/page/components/relatedMaterials/index.jsx
+index 41f1f270f..477287de0 100644
+--- a/src/pages/item/page/components/relatedMaterials/index.jsx
++++ b/src/pages/item/page/components/relatedMaterials/index.jsx
+@@ -8,6 +8,7 @@ import { useRelatedMaterials } from
+   "pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials";
+ 
+ import Context from "../../context";
++import { usePrivateLinkToken } from "../../usePrivateLinkToken";
+ 
+ import style from "./index.css";
+ 
+@@ -15,14 +16,21 @@ import style from "./index.css";
+ export function RelatedMaterials(props) {
+   const { item, isPublic } = useContext(Context);
+   const resources = useIdentifiersAndRelationshipsResource();
++  const token = usePrivateLinkToken();
+   const variables = useMemo(() => {
+-    return {
++    const variablesObject = {
+       id: getIn(item, "id"),
+       version: getIn(item, "version"),
+       value: getIn(item, "references.items", getIn(item, "references", [])),
+       isPublic,
+     };
+-  }, [item]);
++
++    if (token) {
++      variablesObject.token = token;
++    }
++
++    return variablesObject;
++  }, [item, token]);
+   const { materials } = useRelatedMaterials(variables, { sort: true, remap: true });
+ 
+   if (!materials?.length) {
+diff --git a/src/pages/item/page/components/relatedMaterials/index.test.jsx b/src/pages/item/page/components/relatedMaterials/index.test.jsx
+index 0ce144c64..3c71abd96 100644
+--- a/src/pages/item/page/components/relatedMaterials/index.test.jsx
++++ b/src/pages/item/page/components/relatedMaterials/index.test.jsx
+@@ -38,6 +38,29 @@ describe("<RelatedMaterials />", () => {
+     request: { query: getRelatedMaterials, variables: { relatedMaterialIds: [] } },
+     result: { data: { getRelatedMaterials: [] } },
+   }];
++  const getRelatedMaterialsWithTokenMock = [{
++    request: {
++      query: getRelatedMaterials,
++      variables: {
++        token: "privatelinktoken", relatedMaterialIds: [1],
++        articleId: 12000, version: undefined, isPublic: undefined,
++      },
++    },
++    result: {
++      data: {
++        getRelatedMaterials: [{
++          id: 1,
++          identifier: "identifier-one",
++          title: "identifier-one-title",
++          relation: "IsMetadataFor",
++          identifierType: "UPC",
++          isLinkout: true,
++          isUrl: false,
++          resolver: "urn:upc:",
++        }],
++      },
++    },
++  }];
+   const getRelatedMaterialsDataMock = [{
+     request: { query: getRelatedMaterials, variables: { articleId: 12000, relatedMaterialIds: [1, 2, 3] } },
+     result: {
+@@ -112,6 +135,24 @@ describe("<RelatedMaterials />", () => {
+     await wait(() => tested.update());
+ 
+     expect(tested.isEmptyRender()).toEqual(false);
+-    expect("li").toHaveLength(2);
++  });
++
++  it("sends private link token if found in url", async() => {
++    const spy = jest.spyOn(window, "location", "get");
++    spy.mockImplementation(() => {
++      return { pathname: "domain/s/privatelinktoken" };
++    });
++
++    const testItem = {
++      id: 12000,
++      references: [1],
++    };
++
++    const tested = mount(<RelatedMaterialsWrapped item={testItem} mocks={[...getRelatedMaterialsWithTokenMock]} />);
++
++    await wait(() => tested.update());
++    expect(tested.isEmptyRender()).toEqual(false);
++
++    spy.mockRestore();
+   });
+ });
+diff --git a/src/pages/item/page/usePrivateLinkToken.jsx b/src/pages/item/page/usePrivateLinkToken.jsx
+new file mode 100644
+index 000000000..c6bdb001c
+--- /dev/null
++++ b/src/pages/item/page/usePrivateLinkToken.jsx
+@@ -0,0 +1,13 @@
++import { useMemo } from "react";
++import getIn from "utils/getIn";
++
++
++export function usePrivateLinkToken() {
++  return useMemo(() => {
++    const pathname = getIn(window, "location.pathname", "");
++    const tokenMatcher = /^.*\/s\/(\w*)\/?/gm;
++    const match = tokenMatcher.exec(pathname);
++
++    return getIn(match, "1", undefined);
++  }, []);
++}

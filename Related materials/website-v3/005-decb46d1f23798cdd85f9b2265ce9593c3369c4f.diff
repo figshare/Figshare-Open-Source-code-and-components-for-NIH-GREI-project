@@ -1,0 +1,42 @@
+diff --git a/src/pages/account/itemEdit/main/form/index.jsx b/src/pages/account/itemEdit/main/form/index.jsx
+index 28e650192..94c552f00 100644
+--- a/src/pages/account/itemEdit/main/form/index.jsx
++++ b/src/pages/account/itemEdit/main/form/index.jsx
+@@ -26,6 +26,8 @@ export default class Form extends Component {
+ 
+     const { itemFields } = this.props;
+     this.state = getStateFromFieldsSchema(itemFields);
++
++    this.addAdditionalFormStateChanges(this.state);
+   }
+ 
+   componentDidMount() {
+@@ -280,12 +282,28 @@ export default class Form extends Component {
+         }
+       });
+ 
++      this.addAdditionalFormStateChanges(newState);
++
+       const newValidity = this.getFormValidity(newState.order, newState);
+ 
+       return { ...newState, ...newValidity };
+     }, () => this.props.onUpdateAppState(this.state));
+   }
+ 
++  addAdditionalFormStateChanges = (state) => {
++    // mutation, careful
++    // adding additional state changes that have to be reflected immediately after all form state is defined
++    const groupLinkbackMandatory = getIn(state, "group.value.linkbackMandatory", false);
++    const resourceDOIMandatory = getIn(state, "resource_doi.isRequired", false);
++
++    const referencesIsRequired = groupLinkbackMandatory || resourceDOIMandatory;
++
++    if (referencesIsRequired && !getIn(state, "references.isRequired", false) && state.references) {
++      state.references.isRequired = true;
++      state.references.settings.isRequired = true;
++    }
++  }
++
+   getFormState = () => this.state;
+   getSavedFields = () => this.props.itemFields;
+ }

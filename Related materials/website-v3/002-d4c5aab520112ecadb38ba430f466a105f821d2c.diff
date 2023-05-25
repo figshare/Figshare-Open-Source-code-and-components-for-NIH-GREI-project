@@ -1,0 +1,13 @@
+diff --git a/src/pages/account/itemEdit/utils.jsx b/src/pages/account/itemEdit/utils.jsx
+index 41a9033de..570588bdd 100644
+--- a/src/pages/account/itemEdit/utils.jsx
++++ b/src/pages/account/itemEdit/utils.jsx
+@@ -188,7 +188,7 @@ export function checkFieldsForPublishSpecificErrors(formState, group) {
+   }
+ 
+   const groupLinkbackMandatory = getIn(formState, "group.value.linkbackMandatory", false);
+-  const resourceDOIMandatory = getIn(formState, "resource_doi", false);
++  const resourceDOIMandatory = getIn(formState, "resource_doi.isRequired", false);
+   const linkbackMandatory = groupLinkbackMandatory || resourceDOIMandatory;
+ 
+   const anyLinkouts = getIn(Registry.get("item-edit/related-materials"), "current", []).

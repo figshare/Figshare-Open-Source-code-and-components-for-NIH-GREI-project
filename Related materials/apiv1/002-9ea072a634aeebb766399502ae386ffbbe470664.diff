@@ -1,0 +1,108 @@
+diff --git a/figshare_api2/app/parsers/article.py b/figshare_api2/app/parsers/article.py
+index 731ed07f..94f58d8c 100644
+--- a/figshare_api2/app/parsers/article.py
++++ b/figshare_api2/app/parsers/article.py
+@@ -17,7 +17,6 @@
+ 
+ 
+ class ArticleParser(Presenter, CommonParsingHelper):
+-
+     title = computed("parse_title")
+     description = field("description", skipif=value_is_none)
+     tags = computed("tags_list")
+@@ -39,6 +38,7 @@ class ArticleParser(Presenter, CommonParsingHelper):
+     online_publish_date = computed("get_online_publish_date")
+     pub_publish_date = computed("get_pub_publish_date")
+     pub_accept_date = computed("get_pub_accept_date")
++    related_materials = computed("related_materials_list")
+ 
+     def __init__(self, entity, institution, additional_data=None):
+         self.institution = institution
+@@ -109,7 +109,6 @@ def get_funding(self, presenter):
+ 
+ 
+ class ArticleAuthorParser(Presenter, CommonParsingHelper):
+-
+     authors = computed("authors_with_constraint")
+ 
+     def authors_with_constraint(self, presenter):
+diff --git a/figshare_api2/app/parsers/base.py b/figshare_api2/app/parsers/base.py
+index 66267348..52c9d624 100644
+--- a/figshare_api2/app/parsers/base.py
++++ b/figshare_api2/app/parsers/base.py
+@@ -105,6 +105,17 @@ def authors_list(self, presenter):
+ 
+         return result
+ 
++    def related_materials_list(self, presenter):
++        related_materials = self._expect_list_or_none("related_materials")
++        if not (
++            all([isinstance(e, int) for e in related_materials])
++            or all([isinstance(e, dict) for e in related_materials])
++        ):
++            raise exceptions.InvalidParams(
++                "related_materials", "Related materials can be a list of integers or a list of dictionaries"
++            )
++        return related_materials
++
+     def categories_list(self, presenter):
+         categories = self._expect_list_or_none("categories")
+         items = int_list("categories", categories)
+diff --git a/figshare_api2/app/views/article/private.py b/figshare_api2/app/views/article/private.py
+index 19231a18..63186774 100644
+--- a/figshare_api2/app/views/article/private.py
++++ b/figshare_api2/app/views/article/private.py
+@@ -64,6 +64,8 @@ def create_article(self, oauth):
+         if "title" not in article_dict:
+             raise exceptions.MissingParams("title")
+ 
++        article_dict["references"] = article_dict.get("related_materials", article_dict.get("references"))
++
+         article = account.create_article(article_dict, get_first_perfect_match_author=True)
+ 
+         response = httpexceptions.HTTPCreated()
+@@ -76,7 +78,6 @@ def create_article(self, oauth):
+ 
+ 
+ class ArticlesPrivateSearchView(View):
+-
+     route = "account_articles_search"
+ 
+     @view(request_method="POST")
+@@ -104,7 +105,6 @@ def search_articles(self, oauth):
+ 
+ 
+ class ArticlesPrivateReportView(View):
+-
+     route = "account_articles_report"
+ 
+     @view(request_method="GET")
+@@ -159,6 +159,8 @@ def update_article(self, oauth):
+             update_data["categories"] = categories
+ 
+         article_dict = ArticleParser(update_data, institution, additional_data)
++        article_dict["references"] = article_dict.get("related_materials", article_dict.get("references"))
++
+         account.actions_for(article).update(article_dict, get_first_perfect_match_author=True)
+ 
+         response = httpexceptions.HTTPResetContent()
+@@ -212,6 +214,7 @@ def update_article_version(self, oauth):
+             update_data["categories"] = categories
+ 
+         article_dict = ArticleVersionParser(update_data, account.institution)
++        article_dict["references"] = article_dict.get("related_materials", article_dict.get("references"))
+         account.actions_for(article_version).update(article_dict)
+ 
+         response = httpexceptions.HTTPResetContent()
+diff --git a/figshare_api2/app/views/projects/private_articles.py b/figshare_api2/app/views/projects/private_articles.py
+index ee4f00f7..ac370d8e 100644
+--- a/figshare_api2/app/views/projects/private_articles.py
++++ b/figshare_api2/app/views/projects/private_articles.py
+@@ -33,6 +33,7 @@ def add_article(self, oauth):
+         additional_data = {"institution_id": project.institution_id, "group_id": project.group_id}
+ 
+         article_dict = ArticleParser(self.json_body, institution=institution, additional_data=additional_data)
++        article_dict["references"] = article_dict.get("related_materials", article_dict.get("references"))
+ 
+         if "title" not in article_dict:
+             raise exceptions.MissingParams("title")

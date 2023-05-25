@@ -1,0 +1,142 @@
+diff --git a/src/figcore/api/article/validator.py b/src/figcore/api/article/validator.py
+index ee9a797958..4ba5e30474 100644
+--- a/src/figcore/api/article/validator.py
++++ b/src/figcore/api/article/validator.py
+@@ -538,7 +538,7 @@ def _validate_article_references(self):
+                 or Validator.validate_doi(reference)
+                 or Validator.validate_urn(reference)
+             ):
+-                raise exc.InvalidValue(f"Invalid value for references: {reference}", field="references")
++                raise exc.InvalidValue(f"Invalid value for related materials: {reference}", field="references")
+ 
+         values = references
+         if references and isinstance(references[0], int):
+diff --git a/src/figcore/graphql/resolvers_v2/related_material.py b/src/figcore/graphql/resolvers_v2/related_material.py
+index f8946cb950..9b674f4419 100644
+--- a/src/figcore/graphql/resolvers_v2/related_material.py
++++ b/src/figcore/graphql/resolvers_v2/related_material.py
+@@ -1,10 +1,11 @@
++from figcore.api import Article, ArticleVersion
+ from figcore.exc.graphql import InvalidParam
+ from figcore.lib.data.related_material_static import IDENTIFIER_TYPE
+ from figcore.graphql.utils import get_fields_eql
+ from figcore.graphql.utils.pagination.limits import MAX_REQUESTED_ENTITIES
+ 
+ 
+-def get_related_materials(obj, info, related_material_ids, **kwargs):
++def get_related_materials(obj, info, related_material_ids, article_id, article_version=None):
+     select_query = get_fields_eql(info)
+     return_type_name = info.return_type.of_type.name
+ 
+@@ -15,6 +16,18 @@ def get_related_materials(obj, info, related_material_ids, **kwargs):
+             param_value=related_material_ids,
+         )
+ 
++    if article_version:
++        item = ArticleVersion.find(article_id, article_version)
++    else:
++        item = Article.find(article_id)
++
++    if not item or not set(related_material_ids).issubset(set(item.related_materials)):
++        raise InvalidParam(
++            message=f"Invalid list of related material IDs",
++            param_name="RelatedMaterialIds",
++            param_value=related_material_ids,
++        )
++
+     filters = {"id": {"operator": "in", "value": related_material_ids}}
+     data = {
+         "type_name": return_type_name,
+diff --git a/src/figcore/graphql/schema/queries.py b/src/figcore/graphql/schema/queries.py
+index f28ec57735..b1eac5b31c 100644
+--- a/src/figcore/graphql/schema/queries.py
++++ b/src/figcore/graphql/schema/queries.py
+@@ -988,7 +988,11 @@ def search_profile(cls):
+     def get_related_materials(cls):
+         return {
+             "scopes": ["website"],
+-            "params": [{"name": "related_material_ids", "type": "Json", "mandatory": True}],
++            "params": [
++                {"name": "related_material_ids", "type": "Json", "mandatory": True},
++                {"name": "article_id", "type": "Int", "mandatory": True},
++                {"name": "article_version", "type": "Int", "mandatory": False},
++            ],
+             "type": ["RelatedMaterial"],
+             "resolver": get_related_materials,
+         }
+diff --git a/tests/graphql/api/related_materials/__init__.py b/tests/graphql/api/related_materials/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/tests/graphql/api/related_materials/test_related_materials.py b/tests/graphql/api/related_materials/test_related_materials.py
+new file mode 100644
+index 0000000000..1c8f2bb50f
+--- /dev/null
++++ b/tests/graphql/api/related_materials/test_related_materials.py
+@@ -0,0 +1,67 @@
++from figcore.api import Account, RelatedMaterial, Article
++from figcore.exc.graphql import InvalidParam
++from figcore.graphql.utils.eql.query_generator import generate_entity_eql_query
++
++from tests import BaseTestTransactionedGql
++
++
++class TestRelatedMaterials(BaseTestTransactionedGql):
++    @classmethod
++    def setUpClass(cls):
++        super(TestRelatedMaterials, cls).setUpClass()
++        cls.setup_environment()
++        cls.create_complete_environment()
++
++    def setUp(self):
++        self.account = Account.find(1)
++
++        data = {
++            "account_id": 1,
++            "identifier": "53355/cl010066723",
++            "title": "Some title",
++            "relation": "Cites",
++            "identifier_type": "ARK",
++            "is_linkout": False,
++        }
++        self.related_material = RelatedMaterial.create(data)
++
++        data = {
++            "title": "asa",
++            "description": "asafafasasa",
++            "is_active": 1,
++            "defined_type": 3,
++            "account_id": self.account.id,
++            "institution_id": self.account.institution_id,
++            "group_id": self.account.group_id,
++            "detected_license_id": 1,
++            "tags": ["ab", "bc", "da"],
++            "categories": [2, 3, 4],
++            "references": [self.related_material.id],
++        }
++        self.article = Article.create_article(data)
++
++    def test_get_related_materials(self):
++        entity_props_eql = generate_entity_eql_query(
++            entity_name="RelatedMaterial",
++            parser=self.gql_parser,
++        )
++
++        materials = self.gql_parser.query(
++            "get_related_materials",
++            params={"related_material_ids": [self.related_material.id], "article_id": self.article.id},
++            fields=entity_props_eql["related_material"]["fields"],
++        )
++        self.assertEqual(materials[0]["identifier"], self.related_material.identifier)
++
++    def test_get_related_materials_fail(self):
++        entity_props_eql = generate_entity_eql_query(
++            entity_name="RelatedMaterial",
++            parser=self.gql_parser,
++        )
++
++        with self.assertRaises(InvalidParam):
++            self.gql_parser.query(
++                "get_related_materials",
++                params={"related_material_ids": [self.related_material.id], "article_id": 2},
++                fields=entity_props_eql["related_material"]["fields"],
++            )

@@ -1,0 +1,66 @@
+diff --git a/src/figcore/graphql/resolvers_v2/related_material.py b/src/figcore/graphql/resolvers_v2/related_material.py
+index e3908ea8cb..0c086c9f28 100644
+--- a/src/figcore/graphql/resolvers_v2/related_material.py
++++ b/src/figcore/graphql/resolvers_v2/related_material.py
+@@ -5,7 +5,7 @@
+ from figcore.graphql.utils.pagination.limits import MAX_REQUESTED_ENTITIES
+ 
+ 
+-def get_related_materials(obj, info, related_material_ids, article_id, article_version=None):
++def get_related_materials(obj, info, related_material_ids, article_id, article_version=None, token=None):
+     select_query = get_fields_eql(info)
+     return_type_name = info.return_type.of_type.name
+ 
+@@ -21,7 +21,10 @@ def get_related_materials(obj, info, related_material_ids, article_id, article_v
+     else:
+         item = Article.find(article_id)
+         account = info.context.account
+-        if not account or (item and item.account_id != account.id):
++        if not (
++            (account and item and item.account_id == account.id)
++            or (item and item.private_link and token == item.private_link.token)
++        ):
+             raise InsufficientPermissions(data={"article_id": article_id})
+ 
+     if not item or not set(related_material_ids).issubset(set(item.related_materials)):
+diff --git a/src/figcore/graphql/schema/queries.py b/src/figcore/graphql/schema/queries.py
+index b94498b87b..39dac8c5be 100644
+--- a/src/figcore/graphql/schema/queries.py
++++ b/src/figcore/graphql/schema/queries.py
+@@ -1,5 +1,5 @@
+ from figcore.lib.debug import deprecated
+-from figcore.lib.data.related_material_static import IDENTIFIER_TYPE, RELATION_TYPE
++from figcore.lib.data.related_material_static import RELATION_TYPE
+ from figcore.graphql.acl_checks.generic import (
+     check_permissions_for_account,
+     check_permissions_for_private_article,
+@@ -994,6 +994,7 @@ def get_related_materials(cls):
+                 {"name": "related_material_ids", "type": "Json", "mandatory": True},
+                 {"name": "article_id", "type": "Int", "mandatory": True},
+                 {"name": "article_version", "type": "Int", "mandatory": False},
++                {"name": "token", "type": "String", "mandatory": False},
+             ],
+             "type": ["RelatedMaterial"],
+             "resolver": get_related_materials,
+diff --git a/tests/graphql/api/related_materials/test_related_materials.py b/tests/graphql/api/related_materials/test_related_materials.py
+index 0b8481041f..9267a7329a 100644
+--- a/tests/graphql/api/related_materials/test_related_materials.py
++++ b/tests/graphql/api/related_materials/test_related_materials.py
+@@ -66,6 +66,17 @@ def test_get_related_materials(self):
+         )
+         self.assertEqual(materials[0]["identifier"], self.related_material.identifier)
+ 
++        materials = self.gql_parser.query(
++            "get_related_materials",
++            params={
++                "related_material_ids": [self.related_material.id],
++                "article_id": self.article.id,
++                "token": self.account.generate_private_link(self.article).token,
++            },
++            fields=entity_props_eql["related_material"]["fields"],
++        )
++        self.assertEqual(materials[0]["identifier"], self.related_material.identifier)
++
+     def test_get_related_materials_fail(self):
+         entity_props_eql = generate_entity_eql_query(
+             entity_name="RelatedMaterial",

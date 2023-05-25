@@ -1,0 +1,70 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/index.test.jsx
+index 66bdbffea..a465227a2 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/index.test.jsx
+@@ -262,9 +262,16 @@ describe("<RelatedMaterialsTileList />", () => {
+       window.IntersectionObserversInterface.invokeAll({ isIntersecting: true });
+     });
+ 
++    act(() => {
++      window.IntersectionObserversInterface.invokeAll({ isIntersecting: true });
++    });
++
++    act(() => {
++      window.IntersectionObserversInterface.invokeAll({ isIntersecting: true });
++    });
++
+     component.update();
+ 
+-    // eslint-disable-next-line no-magic-numbers
+     expect(component.find("li")).toHaveLength(numberOfMaterials);
+   });
+ });
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx
+index 26025102f..d827eb4ed 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx
+@@ -25,16 +25,21 @@ export function RelatedMaterialsTileList({ materials, fieldSettings, onEdit, onR
+   }, [pages]);
+ 
+   useEffect(() => {
+-    const observer = new IntersectionObserver(([entry]) => {
+-      if (entry.isIntersecting && pagesRef.current <= materials.length) {
+-        setPages((p) => p + PAGE_SIZE);
++    const observer = {};
++    observer.current = new IntersectionObserver(([entry]) => {
++      if (entry.isIntersecting) {
++        if (pagesRef.current <= materials.length) {
++          setPages((p) => p + PAGE_SIZE);
++        } else {
++          observer.current.disconnect();
++        }
+       }
+     }, { threshold: 0.8 });
+ 
+-    observer.observe(ref.current);
++    observer.current.observe(ref.current);
+ 
+     return () => {
+-      observer.disconnect();
++      observer.current.disconnect();
+     };
+   }, [ref, pagesRef, setPages, materials.length]);
+ 
+@@ -102,7 +107,7 @@ export function RelatedMaterialsTileList({ materials, fieldSettings, onEdit, onR
+       >
+         {`${linkoutTotal}/${maxLinkouts} are shown in the linkout area`}
+       </p>
+-      <ol ref={ref} className={style.list} data-node-id="related-materials-editable-tiles">
++      <ol className={style.list} data-node-id="related-materials-editable-tiles">
+         {shown.map((material, index) => (
+           <li key={material.id} className={style.item}>
+             <span className={style.index}>{`${index + 1}.`}</span>
+@@ -123,6 +128,7 @@ export function RelatedMaterialsTileList({ materials, fieldSettings, onEdit, onR
+           </li>
+         ))}
+       </ol>
++      <div ref={ref} data-node-id="related-materials-editable-tiles-list-terminal" />
+     </>);
+ }
+ 

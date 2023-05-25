@@ -1,0 +1,145 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
+index 6eb2e0716..a78fce4f9 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/index.test.jsx
+@@ -13,6 +13,7 @@ import RelatedMaterials, {
+   useRelatedMaterials,
+   isLinkout, parseReferencesFieldError,
+   RemapMaterial, returnFocus, resolveIdentifier, delayAction,
++  mergeGetRelatedMaterialQueryFetchMoreResult,
+ } from "./index";
+ 
+ 
+@@ -389,7 +390,7 @@ describe("useRelatedMaterials() hook", () => {
+       result: { data: slices[0].materials },
+     },
+     {
+-      request: { query: getRelatedMaterials, variables: { relatedMaterialIds: slices[1].ids } },
++      request: { query: getRelatedMaterials, variables: { articleId: 1, relatedMaterialIds: slices[1].ids } },
+       result: { data: slices[1].materials },
+     },
+   ];
+@@ -449,7 +450,7 @@ describe("useRelatedMaterials() hook", () => {
+   it("fetches materials past the GQL_LIMIT", async() => {
+     const component = mount(
+       <MockedProvider addTypename={false} mocks={[...getRelatedMaterialsPastLimitMocks]}>
+-        <Fixture variables={ { value: manyIds } } />
++        <Fixture variables={ { value: manyIds, id: 1 } } />
+       </MockedProvider>
+     );
+ 
+@@ -457,6 +458,17 @@ describe("useRelatedMaterials() hook", () => {
+ 
+     expect(hook.current).toBeDefined();
+ 
++    await expect(hook.current.fetchMore()).resolves.toBe(undefined);
++
+     component.unmount();
+   });
++
++  it("mergeGetRelatedMaterialQueryFetchMoreResult() merges material query data", () => {
++
++    const merged = mergeGetRelatedMaterialQueryFetchMoreResult(
++      { getRelatedMaterials: slices[0].materials },
++      { fetchMoreResult: { getRelatedMaterials: slices[1].materials } });
++
++    expect(merged).toEqual({ getRelatedMaterials: [...slices[0].materials, ...slices[1].materials] });
++  });
+ });
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+index b45e03732..33080eeae 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+@@ -5,7 +5,7 @@ import compact from "utils/compact";
+ import Registry from "utils/registry";
+ 
+ import { getRelatedMaterials } from "./index.gql";
+-import { RemapMaterial } from "./utils";
++import { RemapMaterial, mergeGetRelatedMaterialQueryFetchMoreResult } from "./utils";
+ 
+ 
+ export const GQL_LIMIT = 40;
+@@ -65,15 +65,7 @@ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = t
+ 
+       await query.fetchMore({
+         variables: { relatedMaterialIds: nextSet },
+-        updateQuery: (prev, { fetchMoreResult }) => {
+-          const current = getIn(prev, "getRelatedMaterials", []);
+-          const next = getIn(fetchMoreResult, "getRelatedMaterials", []);
+-
+-          const result = { ...prev };
+-          result.getRelatedMaterials = [...current, ...next];
+-
+-          return result;
+-        },
++        updateQuery: mergeGetRelatedMaterialQueryFetchMoreResult,
+       });
+     } catch (e) {
+       // eslint-disable-next-line no-console
+@@ -92,6 +84,19 @@ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = t
+     };
+   }, [fetchMore]);
+ 
++  /**
++   * UPDATE: this will preload all related materials
++   * Only if there are more than GQL_LIMIT
++   * This is to prevent possible issues with:
++   * - reordering and then fetching more (reorder is lost)
++   * - removing and then fetching more (cannot reconcile)
++   */
++  useEffect(() => {
++    if (slices.length) {
++      fetchMore();
++    }
++  }, [slices]);
++
+   /**
+    * > value - represents ids and influences related-materials order for unsaved items.
+    * > serialize the value and add it as a dependency to the data effect.
+@@ -125,5 +130,5 @@ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = t
+     setMaterials(items);
+   }, [query.data, valueSeries, fetchMore, sort, remap]);
+ 
+-  return { materials, setMaterials, query };
++  return { materials, setMaterials, query, fetchMore };
+ }
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils.jsx
+index c88b3b042..434102ba7 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/utils.jsx
+@@ -1,4 +1,5 @@
+ import compact from "utils/compact";
++import getIn from "utils/getIn";
+ 
+ 
+ export function resolveIdentifier(identifier, type, resolver) {
+@@ -124,3 +125,13 @@ export function delayAction(callback, delay = actionDelay) {
+     }, delay);
+   });
+ }
++
++export function mergeGetRelatedMaterialQueryFetchMoreResult(prev, { fetchMoreResult }) {
++  const current = getIn(prev, "getRelatedMaterials", []);
++  const next = getIn(fetchMoreResult, "getRelatedMaterials", []);
++
++  const result = { ...prev };
++  result.getRelatedMaterials = [...current, ...next];
++
++  return result;
++}
+diff --git a/src/pages/account/itemEdit/main/form/index.jsx b/src/pages/account/itemEdit/main/form/index.jsx
+index 94c552f00..b988d3c85 100644
+--- a/src/pages/account/itemEdit/main/form/index.jsx
++++ b/src/pages/account/itemEdit/main/form/index.jsx
+@@ -234,11 +234,6 @@ export default class Form extends Component {
+           case "categories":
+             updates[fieldId] = value.map((individualValue) => individualValue.id);
+             break;
+-          case "references":
+-            if (value?.length) {
+-              updates[fieldId] = value;
+-            }
+-            break;
+           case "group":
+             updates[fieldId] = value?.id;
+             break;

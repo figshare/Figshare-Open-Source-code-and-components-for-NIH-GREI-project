@@ -1,0 +1,300 @@
+diff --git a/scripts/sql_migrations/2023-05.sql b/scripts/sql_migrations/2023-05.sql
+index b43158778b..5e60e8c76d 100644
+--- a/scripts/sql_migrations/2023-05.sql
++++ b/scripts/sql_migrations/2023-05.sql
+@@ -6,5 +6,7 @@ CREATE TABLE `related_material` (
+   `relation` enum('IsCitedBy','Cites','IsSupplementTo','IsSupplementedBy','IsContinuedBy','Continues','Describes','IsDescribedBy','HasMetadata','IsMetadataFor','HasVersion','IsVersionOf','IsNewVersionOf','IsPreviousVersionOf','IsPartOf','HasPart','IsPublishedIn','IsReferencedBy','References','IsDocumentedBy','Documents','IsCompiledBy','Compiles','IsVariantFormOf','IsOriginalFormOf','IsIdenticalTo','IsReviewedBy','Reviews','IsDerivedFrom','IsSourceOf','IsRequiredBy','Requires','IsObsoletedBy','Obsoletes') NOT NULL DEFAULT 'References',
+   `title` varchar(2000) NOT NULL DEFAULT '',
+   `is_linkout` tinyint(3) unsigned NOT NULL DEFAULT 0,
+-  PRIMARY KEY (`id`)
++  PRIMARY KEY (`id`),
++  KEY `account_id` (`account_id`),
++  CONSTRAINT `related_material_ibfk_1` FOREIGN KEY (`account_id`) REFERENCES `account` (`id`)
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index b1dca1da85..b00749f9dc 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -2094,20 +2094,16 @@ def process_update_data(self, data, **options):
+         )
+ 
+         data = ArticleValidator.sanitize_input(data, **options)
+-        validator = ArticleValidator(self, data)
+-        if not skip_validation:
+-            validator.validate_update_data()
+ 
+-        references = data.get("references")
+-
+-        if references and isinstance(references[0], str):
+-            data["references"] = [Text(x).format_url() for x in references]
++        if data.get("references"):
++            if isinstance(data["references"][0], str):
++                data["references"] = [Text(x).format_url() for x in data["references"]]
++            elif isinstance(data["references"][0], dict):
++                data["references"] = self.ENTITIES.RelatedMaterial.process_related_materials_list(
++                    data["references"], self.account_id
++                )
+ 
+-        if (
+-            references
+-            and not isinstance(references[0], int)
+-            and self.related_materials
+-        ):
++        if data.get("references") and not isinstance(data["references"][0], int) and self.related_materials:
+             # we need to handle the case where the item has related materials
+             # associated and we try to update it with old style references (list
+             # of URLs or DOIs); this could happen via the REST API for example:
+@@ -2128,6 +2124,10 @@ def process_update_data(self, data, **options):
+                     result.append(material.id)
+             data["references"] = result
+ 
++        validator = ArticleValidator(self, data)
++        if not skip_validation:
++            validator.validate_update_data()
++
+         data = self._process_embargo(data, validator=validator, article=self)
+         data = self._process_embargo_metadata(data, validator)
+         data = self._process_private_changes(data)
+@@ -2861,7 +2861,7 @@ def bcheck_references(self):
+         if self._metadata.references and isinstance(self._metadata.references[0], int):
+             references = []
+             for i in self._metadata.references:
+-                references.append(APIEntity.ENTITIES.RelatedMaterial(i).url)
++                references.append(APIEntity.ENTITIES.RelatedMaterial(i).link)
+             return references
+         return self._metadata.references
+ 
+diff --git a/src/figcore/api/article/version_api.py b/src/figcore/api/article/version_api.py
+index 3e675ebd2c..7e33b8a6c0 100644
+--- a/src/figcore/api/article/version_api.py
++++ b/src/figcore/api/article/version_api.py
+@@ -1768,7 +1768,7 @@ def bcheck_references(self):
+         if self._metadata.references and isinstance(self._metadata.references[0], int):
+             references = []
+             for i in self._metadata.references:
+-                references.append(APIEntity.ENTITIES.RelatedMaterial(i).url)
++                references.append(APIEntity.ENTITIES.RelatedMaterial(i).link)
+             return references
+         return self._metadata.references
+ 
+diff --git a/src/figcore/api/related_material/api.py b/src/figcore/api/related_material/api.py
+index bc44fd045e..487f7d769c 100644
+--- a/src/figcore/api/related_material/api.py
++++ b/src/figcore/api/related_material/api.py
+@@ -59,26 +59,44 @@ def find(cls, id):
+             return cls(model.id).load_from_model(model)
+ 
+     @classmethod
+-    def find_by_id_list(cls, id_list):
+-        models = RelatedMaterialInternals.get_by_id_list(id_list)
+-        result = []
++    def find_by_id_list(cls, id_list, account_id=None, return_dict=False):
++        models = RelatedMaterialInternals.get_by_id_list(id_list, account_id)
++        result = {} if return_dict else []
+         for model in models:
+-            result.append(cls(model.id).load_from_model(model))
++            material = cls(model.id).load_from_model(model)
++            if return_dict:
++                result[model.id] = material
++            else:
++                result.append(material)
+         return result
+ 
+     @classmethod
+     def create(cls, data):
+         data = RelatedMaterialValidator.sanitize_input(data)
+-        RelatedMaterialValidator(data).validate()
++        RelatedMaterialValidator(data).validate_for_create()
+         model = RelatedMaterialInternals.create(data)
+         return cls(model.id).load_from_model(model)
+ 
+     def update(self, data):
+         data = RelatedMaterialValidator.sanitize_input(data)
+-        RelatedMaterialValidator(data).validate()
++        RelatedMaterialValidator(data).validate_for_update()
+         RelatedMaterialInternals.update(self.id, data)
+         self._model = None  # force reload
+ 
++    @classmethod
++    def process_related_materials_list(cls, materials, account_id):
++        ids = filter(lambda i: i is not None, [m.get("id") for m in materials])
++        existing = cls.find_by_id_list(ids, account_id=account_id, return_dict=True)
++        result = []
++        for material in materials:
++            if material.get("id") not in existing:
++                material.update({"account_id": account_id})
++                item = cls.create(material)
++            else:
++                item = existing[material["id"]]
++            result.append(item.id)
++        return result
++
+     def load_model(self):
+         self._model = RelatedMaterialInternals.get_by_id(self.id)
+ 
+diff --git a/src/figcore/api/related_material/validator.py b/src/figcore/api/related_material/validator.py
+index 4fcd24659b..f3f2c4ebff 100644
+--- a/src/figcore/api/related_material/validator.py
++++ b/src/figcore/api/related_material/validator.py
+@@ -14,12 +14,15 @@ class RelatedMaterialValidator(Validator):
+     MIN_IDENTIFIER_LENGTH = 1
+     MAX_IDENTIFIER_LENGTH = 2000
+     MANDATORY_FIELDS = ["account_id", "identifier", "identifier_type", "relation"]
++    ALLOWED_FIELDS = ["id", "account_id", "identifier", "identifier_type", "relation", "title", "is_linkout"]
+ 
+     def __init__(self, data):
+         self.data = data
+ 
+     @classmethod
+     def sanitize_input(cls, data):
++        data = {k: v for k, v in data.items() if k in cls.ALLOWED_FIELDS}
++
+         data["identifier_type"] = data.get("identifier_type", DEFAULT_IDENTIFIER_TYPE)
+ 
+         if data.get("identifier"):
+@@ -34,7 +37,7 @@ def sanitize_input(cls, data):
+ 
+         return data
+ 
+-    def validate(self):
++    def validate_for_create(self):
+         for field in self.MANDATORY_FIELDS:
+             if not self.data.get(field):
+                 raise fig_exc.MissingMandatoryField(field)
+@@ -61,3 +64,29 @@ def validate(self):
+                 "Identifier can have between {cls.MIN_TITLE_LENGTH} and {cls.MAX_TITLE_LENGTH} characters",
+                 field="title",
+             )
++
++    def validate_for_update(self):
++        if self.data.get("accont_id") and not self.validate_int(self.data["account_id"]):
++            raise fig_exc.InvalidValue("Invalid account ID", field="account_id")
++
++        if self.data.get("identifier") and not self.validate_string(
++            self.data["identifier"], self.MIN_IDENTIFIER_LENGTH, self.MAX_IDENTIFIER_LENGTH
++        ):
++            raise fig_exc.InvalidLength(
++                "Identifier can have between {cls.MIN_IDENTIFIER_LENGTH} and {cls.MAX_IDENTIFIER_LENGTH} characters",
++                field="identifier",
++            )
++
++        if self.data.get("identifier_type") and self.data["identifier_type"] not in IDENTIFIER_TYPE:
++            raise fig_exc.InvalidValue("Invalid identifier type", field="identifier_type")
++
++        if self.data.get("relation") and self.data["relation"] not in RELATION_TYPE:
++            raise fig_exc.InvalidValue("Invalid relation type", field="relation")
++
++        if self.data.get("title") and not self.validate_string(
++            self.data["title"], self.MIN_TITLE_LENGTH, self.MAX_TITLE_LENGTH
++        ):
++            raise fig_exc.InvalidLength(
++                "Identifier can have between {cls.MIN_TITLE_LENGTH} and {cls.MAX_TITLE_LENGTH} characters",
++                field="title",
++            )
+diff --git a/src/figcore/internals/db_calls/related_material.py b/src/figcore/internals/db_calls/related_material.py
+index 81472c540e..f0ad09274c 100644
+--- a/src/figcore/internals/db_calls/related_material.py
++++ b/src/figcore/internals/db_calls/related_material.py
+@@ -6,17 +6,25 @@ class RelatedMaterialDBCalls(BaseDBCalls):
+     MODEL = RelatedMaterial_model
+ 
+     @classmethod
+-    def get_related_materials_by_ids(cls, db_session, related_material_ids):
++    def get_related_materials_by_ids(cls, db_session, related_material_ids, account_id=None):
+         """
+-        MariaDB [core]> EXPLAIN SELECT related_material.id, related_material.account_id, related_material.identifier, related_material.identifier_type, related_material.relation, related_material.title, related_material.is_linkout FROM related_material WHERE related_material.id IN (36, 38, 43, 41, 44, 45, 46);
++        EXPLAIN SELECT related_material.id, related_material.account_id, related_material.identifier, related_material.identifier_type, related_material.relation, related_material.title, related_material.is_linkout FROM related_material WHERE related_material.id IN (36, 38, 43, 41, 44, 45, 46);
+         +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
+         | id   | select_type | table            | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
+         +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
+         |    1 | SIMPLE      | related_material | range | PRIMARY       | PRIMARY | 8       | NULL | 7    | Using where |
+         +------+-------------+------------------+-------+---------------+---------+---------+------+------+-------------+
+-        1 row in set (0.000 sec)
++
++        EXPLAIN SELECT related_material.id, related_material.account_id, related_material.identifier, related_material.identifier_type, related_material.relation, related_material.title, related_material.is_linkout FROM related_material WHERE related_material.id IN (41, 45) AND related_material.account_id = 1000004;
++        +------+-------------+------------------+-------+---------------------------------+---------+---------+------+------+-------------+
++        | id   | select_type | table            | type  | possible_keys                   | key     | key_len | ref  | rows | Extra       |
++        +------+-------------+------------------+-------+---------------------------------+---------+---------+------+------+-------------+
++        |    1 | SIMPLE      | related_material | range | PRIMARY,related_material_ibfk_1 | PRIMARY | 8       | NULL | 2    | Using where |
++        +------+-------------+------------------+-------+---------------------------------+---------+---------+------+------+-------------+
+         """
+         query = db_session.query(cls.MODEL)
+         query = query.filter(cls.MODEL.id.in_(related_material_ids))
++        if account_id:
++            query = query.filter(cls.MODEL.account_id == account_id)
+         result = query.all()
+         return result
+diff --git a/src/figcore/internals/related_material/related_material.py b/src/figcore/internals/related_material/related_material.py
+index 7801a9af9e..ed350f3e60 100644
+--- a/src/figcore/internals/related_material/related_material.py
++++ b/src/figcore/internals/related_material/related_material.py
+@@ -34,8 +34,8 @@ def _create_model(cls, data):
+         return model
+ 
+     @classmethod
+-    def get_by_id_list(cls, related_material_ids):
++    def get_by_id_list(cls, related_material_ids, account_id=None):
+         with cls.DB.get_session(readonly=True) as db_session:
+-            models = RelatedMaterialDBCalls.get_related_materials_by_ids(db_session, related_material_ids)
++            models = RelatedMaterialDBCalls.get_related_materials_by_ids(db_session, related_material_ids, account_id)
+ 
+         return models
+diff --git a/src/figcore/models/dao/related_material.py b/src/figcore/models/dao/related_material.py
+index bb9afe54e5..8bcc848e91 100644
+--- a/src/figcore/models/dao/related_material.py
++++ b/src/figcore/models/dao/related_material.py
+@@ -1,5 +1,5 @@
++from sqlalchemy import Column, ForeignKeyConstraint
+ from sqlalchemy.dialects.mysql import BIGINT, TINYINT, VARCHAR, ENUM
+-from sqlalchemy import Column
+ 
+ from figcore.lib.data.related_material_static import (
+     IDENTIFIER_TYPE,
+@@ -13,6 +13,10 @@
+ 
+ class RelatedMaterial(Base, ExtendedBase):
+     __tablename__ = "related_material"
++    __table_args__ = (
++        ForeignKeyConstraint(["account_id"], ["account.id"], ondelete="restrict"),
++        {"mysql_engine": "InnoDB"},
++    )
+ 
+     id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+     account_id = Column(BIGINT(unsigned=True), nullable=False, server_default="0", default=0)
+diff --git a/tests/api/article/test_references.py b/tests/api/article/test_references.py
+index 1d202a5e4b..5df6f855e2 100644
+--- a/tests/api/article/test_references.py
++++ b/tests/api/article/test_references.py
+@@ -156,3 +156,32 @@ def test_resource_validation(self):
+         )
+         article.update_article({"references": [material.id]})
+         self.account.actions_for(article).publish()
++
++    def test_related_materials_list(self):
++        material = RelatedMaterial.create(
++            {"identifier": "https://google.com", "account_id": self.account.id, "is_linkout": False}
++        )
++        article_data = {
++            "title": "References test",
++            "description": "lorem ipsum dolor",
++            "is_active": 1,
++            "defined_type": 3,
++            "account_id": self.account.id,
++            "institution_id": self.account.institution_id,
++            "group_id": self.account.group_id,
++            "detected_license_id": 1,
++            "tags": ["test"],
++            "categories": [2],
++            "references": [material.id],
++        }
++        article = Article.create_article(article_data)
++
++        update_data = {
++            "references": [
++                {"identifier": "https://bing.com", "is_linkout": False},
++                {"id": material.id, "is_linkout": True},
++            ]
++        }
++        article.update_article(update_data)
++        self.assertEqual(len(article.related_materials), 2)
++        self.assertFalse(RelatedMaterial(article.related_materials[1]).is_linkout)

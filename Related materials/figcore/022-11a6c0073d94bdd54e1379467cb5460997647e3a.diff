@@ -1,0 +1,12 @@
+diff --git a/src/figcore/api/article/validator.py b/src/figcore/api/article/validator.py
+index 084d4e7414..cd41ae76a6 100644
+--- a/src/figcore/api/article/validator.py
++++ b/src/figcore/api/article/validator.py
+@@ -538,6 +538,7 @@ def _validate_article_references(self):
+         for reference in references:
+             if not (
+                 isinstance(reference, int)
++                or isinstance(reference, dict)
+                 or Validator.validate_url(reference)
+                 or Validator.validate_doi(reference)
+                 or Validator.validate_urn(reference)

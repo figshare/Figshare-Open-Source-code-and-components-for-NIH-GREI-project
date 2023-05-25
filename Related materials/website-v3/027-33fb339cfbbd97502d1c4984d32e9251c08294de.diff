@@ -1,0 +1,14 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
+index 4dfe0859b..3eb5cae4a 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
+@@ -263,8 +263,7 @@ export function ManageRelatedMaterials({ disabled, materials, onMaterialsChange,
+         title="Unsaved changes"
+       />
+       <OverlayContent>
+-        <div>Closing without saving will discard any changes you{"'"}ve made,{" "}
+-          such as <b>adding</b>, <b>removing</b>, <b>editing</b> or <b>reordering</b> materials.</div>
++        <div>Closing without saving will discard any changes you made.</div>
+       </OverlayContent>
+       <OverlayFooter className={styles.confirmationFooter}>
+         <>

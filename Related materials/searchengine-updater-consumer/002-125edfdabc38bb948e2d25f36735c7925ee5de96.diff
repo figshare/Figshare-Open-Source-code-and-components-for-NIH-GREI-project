@@ -1,0 +1,13 @@
+diff --git a/figshare/lib/handlers/indexers/regular/item_articles.py b/figshare/lib/handlers/indexers/regular/item_articles.py
+index c071ba78..0f83773e 100644
+--- a/figshare/lib/handlers/indexers/regular/item_articles.py
++++ b/figshare/lib/handlers/indexers/regular/item_articles.py
+@@ -300,7 +300,7 @@ def manage_data(self, data):
+                 references = []
+                 for material in materials:
+                     references.append(material["identifier"])
+-                    if material["is_linkout"]:
++                    if material["is_linkout"] and not resource:
+                         resource = {"doi": material["identifier"], "title": material["title"]}
+                         output["resource"].append(resource)
+                 output["references"] = references

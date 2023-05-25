@@ -1,0 +1,326 @@
+diff --git a/src/figcore/lib/identifier/doi/__init__.py b/src/figcore/lib/identifier/doi/__init__.py
+index 5d2ae47662..bf4155491e 100644
+--- a/src/figcore/lib/identifier/doi/__init__.py
++++ b/src/figcore/lib/identifier/doi/__init__.py
+@@ -19,6 +19,7 @@
+ from figcore.api.grid import Grid
+ from figcore.api.custom_field import CustomField
+ from figcore.api.item_type import ItemType
++from figcore.api.related_material import RelatedMaterial
+ from figcore.exc import DOIServiceError, InvalidDOIRequest, InvalidDOIService
+ from figcore.lib.data.citation_static import FIGSHARE_BRANDING
+ from figcore.lib.file_helpers import FileHelper
+@@ -98,7 +99,6 @@ def https_open(self, req):
+ 
+ 
+ class DOIHelper(object):
+-
+     can_customize_doi = True
+     user_managed = False
+     SUFFIX_MAPPING = {
+@@ -217,6 +217,7 @@ def article_data(self, article):
+             "publisher": self._get_publisher(article),
+             "funding": self._process_funding(article),
+             "version": article.version,
++            "related_materials": article.related_materials,
+         }
+ 
+     def collection_data(self, collection):
+@@ -348,6 +349,14 @@ def _build_authors_node(root, authors):
+ 
+                     affiliation.set("schemeURI", scheme_uri)
+ 
++    @staticmethod
++    def _add_relation_node(parent, identifier_type, relation, identifier):
++        node = ET.SubElement(parent, "relatedIdentifier")
++        node.set("relatedIdentifierType", identifier_type)
++        node.set("relationType", relation)
++        node.text = identifier
++        return node
++
+     def build_xml(self, item_data):
+         # Include XML schema
+         root = ET.Element("resource")
+@@ -422,32 +431,24 @@ def build_xml(self, item_data):
+             size_in_bytes.text = "{} Bytes".format(item_data["size"])
+ 
+         # Set the related identifiers
+-        resource_doi = item_data.get("resource_doi")
+         next_version = item_data.get("next_version")
+         is_last_version = item_data.get("is_last_version")
+         base_identifier = identifier.text.rsplit(".", 1)[0]
+-        has_related_identifiers = resource_doi or next_version or is_last_version
++        related_materials = item_data.get("related_materials")
++        has_related_identifiers = next_version or is_last_version or related_materials
+ 
+         if has_related_identifiers:
+             related_ids = ET.SubElement(root, "relatedIdentifiers")
+ 
+-            if resource_doi:
+-                resource_doi = ET.SubElement(related_ids, "relatedIdentifier")
+-                resource_doi.set("relatedIdentifierType", "DOI")
+-                resource_doi.set("relationType", "IsSupplementTo")
+-                resource_doi.text = item_data["resource_doi"]
+-
+             if item_data.get("is_last_version") and self.can_customize_doi:
+-                base_doi = ET.SubElement(related_ids, "relatedIdentifier")
+-                base_doi.set("relatedIdentifierType", "DOI")
+-                base_doi.set("relationType", "IsIdenticalTo")
+-                base_doi.text = base_identifier
++                self._add_relation_node(related_ids, "DOI", "IsIdenticalTo", base_identifier)
+ 
+             if item_data.get("next_version") and self.can_customize_doi:
+-                newer_doi = ET.SubElement(related_ids, "relatedIdentifier")
+-                newer_doi.set("relatedIdentifierType", "DOI")
+-                newer_doi.set("relationType", "IsPreviousVersionOf")
+-                newer_doi.text = base_identifier
++                self._add_relation_node(related_ids, "DOI", "IsPreviousVersionOf", base_identifier)
++
++            for i in related_materials:
++                material = RelatedMaterial(i)
++                self._add_relation_node(related_ids, material.identifier_type, material.relation, material.identifier)
+ 
+         # Set the license information
+         rights_list = ET.SubElement(root, "rightsList")
+@@ -481,7 +482,6 @@ def build_xml(self, item_data):
+ 
+ 
+ class NullDOIHelper(DOIHelper):
+-
+     can_customize_doi = False
+     user_managed = True
+ 
+@@ -788,7 +788,6 @@ def _mint_draft_doi(self, item_data):
+ 
+ 
+ class AndsDOIHelper(DOIHelper):
+-
+     can_customize_doi = False
+ 
+     def __init__(self, **config):
+@@ -919,6 +918,53 @@ def _mint_doi(self, item_data):
+ class CrossrefDOIHelper(DOIHelper):
+     """Helper for minting DOIs via the Crossref Content Registration service"""
+ 
++    ACCEPTED_IDENTIIFIER_TYPES = [
++        "doi",
++        "issn",
++        "isbn",
++        "uri",
++        "pmid",
++        "pmcid",
++        "purl",
++        "arxiv",
++        "ark",
++        "handle",
++        "uuid",
++        "ecli",
++        "accession",
++    ]
++
++    ACCEPTED_RELATION_TYPES = [
++        "isDerivedFrom",
++        "hasDerivation",
++        "isReviewOf",
++        "hasReview",
++        "isCommentOn",
++        "hasComment",
++        "isReplyTo",
++        "hasReply",
++        "basedOnData",
++        "isDataBasisFor",
++        "hasRelatedMaterial",
++        "isRelatedMaterial",
++        "isCompiledBy",
++        "compiles",
++        "isDocumentedBy",
++        "documents",
++        "isSupplementTo",
++        "isSupplementedBy",
++        "isContinuedBy",
++        "continues",
++        "isPartOf",
++        "hasPart",
++        "references",
++        "isReferencedBy",
++        "isBasedOn",
++        "isBasisFor",
++        "requires",
++        "isRequiredBy",
++    ]
++
+     def __init__(self, **config):
+         super(CrossrefDOIHelper, self).__init__(**config)
+         self.request_url = config["request_url"]
+@@ -1011,6 +1057,40 @@ def build_author_xml_element(contributors, author):
+             orcid = ET.SubElement(person_name, "ORCID")
+             orcid.text = "https://orcid.org/{}".format(author[1])
+ 
++    @classmethod
++    def build_relations_xml(cls, parent, item_data):
++        has_resource = item_data.get("resource_doi")
++        has_related = item_data.get("related_materials")
++
++        if has_resource or has_related:
++            rel_program = ET.SubElement(parent, "rel:program")
++
++            if item_data.get("resource_doi"):
++                related = ET.SubElement(rel_program, "rel:related_item")
++                preprint = ET.SubElement(related, "rel:intra_work_relation")
++                preprint.set("relationship-type", "isPreprintOf")
++                preprint.set("identifier-type", "doi")
++                preprint.text = item_data["resource_doi"]
++
++            for i in item_data.get("related_materials", []):
++                material = RelatedMaterial.find(i)
++                related = ET.SubElement(rel_program, "rel:related_item")
++                preprint = ET.SubElement(related, "rel:inter_work_relation")
++
++                relation = material.relation[0].lower() + material.relation[1:]
++                if relation not in cls.ACCEPTED_RELATION_TYPES:
++                    relation = "references"
++                    if relation.startswith("is"):
++                        relation = "isReferencedBy"
++                preprint.set("relationship-type", relation)
++
++                identifier_type = material.identifier_type.lower()
++                if identifier_type not in cls.ACCEPTED_IDENTIIFIER_TYPES:
++                    identifier_type = "other"
++                preprint.set("identifier-type", identifier_type)
++
++                preprint.text = material.identifier
++
+     def build_posted_content_xml(self, item_data, body):
+         posted_content = ET.SubElement(body, "posted_content")
+         posted_content.set("type", item_data["crossref_type"])
+@@ -1044,13 +1124,7 @@ def build_posted_content_xml(self, item_data, body):
+             license_ref = ET.SubElement(ai_program, "ai:license_ref")
+             license_ref.text = item_data["license_url"]
+ 
+-        if item_data.get("resource_doi"):
+-            rel_program = ET.SubElement(posted_content, "rel:program")
+-            related = ET.SubElement(rel_program, "rel:related_item")
+-            preprint = ET.SubElement(related, "rel:intra_work_relation")
+-            preprint.set("relationship-type", "isPreprintOf")
+-            preprint.set("identifier-type", "doi")
+-            preprint.text = item_data["resource_doi"]
++        self.build_relations_xml(posted_content, item_data)
+ 
+         doi_data = ET.SubElement(posted_content, "doi_data")
+         doi = ET.SubElement(doi_data, "doi")
+@@ -1106,13 +1180,7 @@ def build_dissertation_xml(self, item_data, body):
+             license_ref = ET.SubElement(ai_program, "ai:license_ref")
+             license_ref.text = item_data["license_url"]
+ 
+-        if item_data.get("resource_doi"):
+-            rel_program = ET.SubElement(dissertation, "rel:program")
+-            related = ET.SubElement(rel_program, "rel:related_item")
+-            preprint = ET.SubElement(related, "rel:intra_work_relation")
+-            preprint.set("relationship-type", "isPreprintOf")
+-            preprint.set("identifier-type", "doi")
+-            preprint.text = item_data["resource_doi"]
++        self.build_relations_xml(dissertation, item_data)
+ 
+         doi_data = ET.SubElement(dissertation, "doi_data")
+         doi = ET.SubElement(doi_data, "doi")
+@@ -1183,13 +1251,7 @@ def build_journal_xml(self, item_data, body):
+             license_ref = ET.SubElement(ai_program, "ai:license_ref")
+             license_ref.text = item_data["license_url"]
+ 
+-        if item_data.get("resource_doi"):
+-            rel_program = ET.SubElement(journal_article, "rel:program")
+-            related = ET.SubElement(rel_program, "rel:related_item")
+-            preprint = ET.SubElement(related, "rel:intra_work_relation")
+-            preprint.set("relationship-type", "isPreprintOf")
+-            preprint.set("identifier-type", "doi")
+-            preprint.text = item_data["resource_doi"]
++        self.build_relations_xml(journal_article, item_data)
+ 
+         doi_data = ET.SubElement(journal_article, "doi_data")
+         doi = ET.SubElement(doi_data, "doi")
+@@ -1272,13 +1334,7 @@ def build_conference_xml(self, item_data, body):
+             license_ref = ET.SubElement(ai_program, "ai:license_ref")
+             license_ref.text = item_data["license_url"]
+ 
+-        if item_data.get("resource_doi"):
+-            rel_program = ET.SubElement(conference_paper, "rel:program")
+-            related = ET.SubElement(rel_program, "rel:related_item")
+-            preprint = ET.SubElement(related, "rel:intra_work_relation")
+-            preprint.set("relationship-type", "isPreprintOf")
+-            preprint.set("identifier-type", "doi")
+-            preprint.text = item_data["resource_doi"]
++        self.build_relations_xml(conference_paper, item_data)
+ 
+         doi_data = ET.SubElement(conference_paper, "doi_data")
+         doi = ET.SubElement(doi_data, "doi")
+@@ -1363,13 +1419,7 @@ def build_chapter_xml(self, item_data, body):
+             license_ref = ET.SubElement(ai_program, "ai:license_ref")
+             license_ref.text = item_data["license_url"]
+ 
+-        if item_data.get("resource_doi"):
+-            rel_program = ET.SubElement(chapter, "rel:program")
+-            related = ET.SubElement(rel_program, "rel:related_item")
+-            preprint = ET.SubElement(related, "rel:intra_work_relation")
+-            preprint.set("relationship-type", "isPreprintOf")
+-            preprint.set("identifier-type", "doi")
+-            preprint.text = item_data["resource_doi"]
++        self.build_relations_xml(chapter, item_data)
+ 
+         doi_data = ET.SubElement(chapter, "doi_data")
+         doi = ET.SubElement(doi_data, "doi")
+@@ -1488,13 +1538,7 @@ def build_book_xml(self, item_data, body):
+             license_ref = ET.SubElement(ai_program, "ai:license_ref")
+             license_ref.text = item_data["license_url"]
+ 
+-        if item_data.get("resource_doi"):
+-            rel_program = ET.SubElement(book_metadata, "rel:program")
+-            related = ET.SubElement(rel_program, "rel:related_item")
+-            preprint = ET.SubElement(related, "rel:intra_work_relation")
+-            preprint.set("relationship-type", "isPreprintOf")
+-            preprint.set("identifier-type", "doi")
+-            preprint.text = item_data["resource_doi"]
++        self.build_relations_xml(book_metadata, item_data)
+ 
+         doi_data = ET.SubElement(book_metadata, "doi_data")
+         doi = ET.SubElement(doi_data, "doi")
+diff --git a/tests/api/account/test_doi.py b/tests/api/account/test_doi.py
+index 8dee1cc9a8..e72bbc567b 100644
+--- a/tests/api/account/test_doi.py
++++ b/tests/api/account/test_doi.py
+@@ -1,20 +1,19 @@
+-# -*- coding: utf-8 -*-
+-
+-
+ from copy import deepcopy
+ import datetime
+ import json
+ import mock
+ import os
+-import unittest
+-import six
+-import urllib.request
+-import urllib.request, six.moves.urllib.error, six.moves.urllib.parse
+ import random
+ import string
++import unittest
+ 
+ from lxml import etree as ET
+ from mock import PropertyMock, patch
++import six
++from six.moves import range
++import urllib.request
++import six.moves.urllib.error
++import six.moves.urllib.parse
+ 
+ from figcore.api import (
+     Account,
+@@ -32,8 +31,8 @@
+ from figcore.api.collection.api import CollectionGenerateDOITask, CollectionUpdateDOITask
+ from figcore.exc import InvalidDOIService
+ from figcore.lib.identifier.doi import DOIService, DOIHelper, EzidDOIHelper, NullDOIHelper, DOI_SERVICE_MAPPING
++
+ from tests import BaseTestTransactioned
+-from six.moves import range
+ 
+ 
+ class TestDOIUtils(BaseTestTransactioned):

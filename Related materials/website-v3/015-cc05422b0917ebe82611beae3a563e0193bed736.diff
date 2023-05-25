@@ -1,0 +1,295 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
+index 9066abe2a..47f59abe4 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/manageRelatedMaterials.jsx
+@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from "react";
+ import PropTypes from "prop-types";
+ import { Button } from "@figshare/fcl/button";
+ import { Overlay, OverlayHeader, OverlayFooter, OverlayContent } from "@figshare/fcl/overlay";
++import { pushFormAlert } from "@figshare/fcl/formAlerts";
+ import { useMutation } from "@apollo/react-hooks";
+ import getIn from "utils/getIn";
+ import parseGraphQLError from "utils/apollo/parseGraphQLError";
+@@ -130,16 +131,38 @@ export function ManageRelatedMaterials({ disabled, materials, onMaterialsChange,
+     try {
+       const result = await editMaterialMutation(payload);
+       const edited = getIn(result, "data.relatedMaterialUpdate");
++      const newId = edited.id;
+       const editedRemapped = RemapMaterial.queryToType(edited);
+ 
++
++      /**
++       * Editing related materials returns new ids for the materials
++       * This will inevitably re-mount the tiles, and they will
++       * no longer be registered as disclosed after the set changes.
++       * Make sure to add the new id to the disclosed list before making `setMaterials` change
++       */
++      const disclose = Registry.get("related-materials/tile-list/onDisclose");
++
++      disclose?.({ id: edited.id, isDisclosed: true });
++
+       await dispatch({
+         type: "EDIT_RELATED_MATERIAL",
+         material: editedRemapped,
+         prev: oldEntry,
+         id: relatedMaterialId,
++        newId,
+       });
+ 
+-      await delayAction(() => onMaterialsChange(stateRef.current.materials, "edit"));
++      await delayAction(() => {
++        onMaterialsChange(stateRef.current.materials, "edit");
++
++        pushFormAlert({
++          channel: `related-materials-form-${newId}`,
++          content: <span>Changes saved successfully.</span>,
++          type: "success",
++          timeout: 5000,
++        });
++      });
+     } catch (e) {
+       // throw back so form component can handle it
+       throw new Error(`Could not edit material. ${parseGraphQLError(e)}`);
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/index.test.jsx
+index a465227a2..2a9c51ea8 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/index.test.jsx
+@@ -1,5 +1,7 @@
++/* eslint-disable max-lines */
+ import { mount } from "enzyme";
+-import React from "react";
++import React, { useState, useCallback } from "react";
++import { func } from "prop-types";
+ import { act } from "react-dom/test-utils";
+ import { MockedProvider } from "@apollo/react-testing";
+ import { wait } from "utils/apollo/testing";
+@@ -290,7 +292,6 @@ describe("<RelatedMaterialTile />", () => {
+   const onEdit = jest.fn();
+   const onRemove = jest.fn();
+   const onReorder = jest.fn();
+-  const onDisclosed = jest.fn();
+   const handleDrag = jest.fn();
+   const handleDrop = jest.fn();
+ 
+@@ -298,7 +299,6 @@ describe("<RelatedMaterialTile />", () => {
+     onEdit,
+     onRemove,
+     onReorder,
+-    onDisclosed,
+     handleDrag,
+     handleDrop,
+     fieldSettings,
+@@ -307,12 +307,29 @@ describe("<RelatedMaterialTile />", () => {
+     draggable: true,
+   };
+ 
++  function DiscloseableFixture({ children }) {
++    const [disclosed, setDisclosed] = useState(false);
++
++    const onDisclose = useCallback(({ isDisclosed }) => {
++      setDisclosed(isDisclosed);
++    });
++
++    return (<>{children({ disclosed, onDisclose })}</>);
++  }
++
++  DiscloseableFixture.propTypes = { children: func.isRequired };
++
+   it("renders a disclose-able, editable material tile", async() => {
+     const component = mount(
+-      <RelatedMaterialTile
+-        {...defaultProps}
+-        material={material}
+-      />
++      <DiscloseableFixture>
++        {(disclosureProps) => (
++          <RelatedMaterialTile
++            {...defaultProps}
++            {...disclosureProps}
++            material={material}
++          />
++        )}
++      </DiscloseableFixture>
+     );
+ 
+     expect(component.find("div[data-material-tile-id=\"tile-material-1\"]")).toHaveLength(1);
+@@ -380,10 +397,15 @@ describe("<RelatedMaterialTile />", () => {
+ 
+   it("a material editor can be closed if there are unsaved or uncleared form changes", async() => {
+     const component = mount(
+-      <RelatedMaterialTile
+-        {...defaultProps}
+-        material={material}
+-      />
++      <DiscloseableFixture>
++        {(disclosureProps) => (
++          <RelatedMaterialTile
++            {...defaultProps}
++            {...disclosureProps}
++            material={material}
++          />
++        )}
++      </DiscloseableFixture>
+     );
+ 
+     expect(component.find("div[data-material-tile-id=\"tile-material-1\"]")).toHaveLength(1);
+@@ -443,10 +465,15 @@ describe("<RelatedMaterialTile />", () => {
+ 
+   it("cannot submit an edit that has validation errors", async() => {
+     const component = mount(
+-      <RelatedMaterialTile
+-        {...defaultProps}
+-        material={material}
+-      />
++      <DiscloseableFixture>
++        {(disclosureProps) => (
++          <RelatedMaterialTile
++            {...defaultProps}
++            {...disclosureProps}
++            material={material}
++          />
++        )}
++      </DiscloseableFixture>
+     );
+ 
+     onEdit.mockClear();
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
+index d7a198bcd..f0f5ee169 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
+@@ -36,10 +36,10 @@ export function RelatedMaterialTile(
+     handleDrag,
+     handleDrop,
+     draggable,
+-    onDisclosed,
++    disclosed,
++    onDisclose,
+   }) {
+   const itemRef = useRef(null);
+-  const [disclosed, setDisclosed] = useState(false);
+   const [changed, setChanged] = useState(false);
+   const handleMoveUp = useCallback((event) => {
+     event.stopPropagation();
+@@ -60,10 +60,9 @@ export function RelatedMaterialTile(
+     }
+ 
+     if (used !== current) {
+-      setDisclosed(used);
+-      onDisclosed(material.id, used);
++      onDisclose({ id: material.id, isDisclosed: used });
+     }
+-  }, [material.id, itemRef, setDisclosed, onDisclosed]);
++  }, [material.id, itemRef, onDisclose]);
+ 
+   const removeMaterial = useCallback(() =>
+     onRemove(material.id), [onRemove]);
+@@ -220,6 +219,7 @@ export function RelatedMaterialTile(
+ }
+ 
+ RelatedMaterialTile.propTypes = {
++  disclosed: bool.isRequired,
+   draggable: bool.isRequired,
+   fieldSettings: any.isRequired,
+   handleDrag: func.isRequired,
+@@ -228,7 +228,7 @@ RelatedMaterialTile.propTypes = {
+   isLast: bool.isRequired,
+   linkoutTotal: number.isRequired,
+   material: RelatedMaterialPropType.isRequired,
+-  onDisclosed: func.isRequired,
++  onDisclose: func.isRequired,
+   onEdit: func.isRequired,
+   onRemove: func.isRequired,
+   onReorder: func.isRequired,
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx
+index d827eb4ed..f1d7c7585 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTileList.jsx
+@@ -1,6 +1,7 @@
+ import React, { useCallback, useMemo, useRef, useState, useEffect } from "react";
+ import { any, func } from "prop-types";
+ import getIn from "utils/getIn";
++import Registry from "utils/registry";
+ 
+ import { RelatedMaterialListPropType, DEFAULT_RELATED_MATERIALS_FIELD_SETTINGS } from "../../constants";
+ import { getLinkoutTotal } from "../../utils";
+@@ -12,7 +13,7 @@ import style from "./relatedMaterialsTileList.css";
+ const PAGE_SIZE = 10;
+ 
+ export function RelatedMaterialsTileList({ materials, fieldSettings, onEdit, onRemove, onReorder }) {
+-  const [disclosed, setDisclosed] = useState([]);
++  const [disclosed, setDisclosed] = useState(new Set());
+   const linkoutTotal = useMemo(() => getLinkoutTotal(materials), [materials]);
+   const ref = useRef(null);
+   const [pages, setPages] = useState(PAGE_SIZE);
+@@ -80,24 +81,42 @@ export function RelatedMaterialsTileList({ materials, fieldSettings, onEdit, onR
+     draggedRef.current = id;
+   }, [draggedRef]);
+ 
+-  const handleDisclose = useCallback((id, isDisclosed) => {
+-    setDisclosed((prevDisclosed) => {
+-      const copyPrev = prevDisclosed.slice();
++  const onDisclose = useCallback(({ id, isDisclosed }) => {
++    setDisclosed((set) => {
++      const exists = set.has(id);
+ 
+-      if (isDisclosed && !copyPrev.includes(id)) {
+-        copyPrev.push(id);
+-      } else {
+-        const index = copyPrev.indexOf(id);
+-        if (index > -1) {
+-          copyPrev.splice(index, 1);
+-        }
++      if (isDisclosed && !exists) {
++        const newSet = new Set(set);
++
++        newSet.add(id);
++
++        return newSet;
++      }
++
++      if (!isDisclosed && exists) {
++        const newSet = new Set(set);
++
++        newSet.delete(id);
++
++        return newSet;
+       }
+ 
+-      return copyPrev;
++      // nothing changes
++      return set;
+     });
+   }, [setDisclosed]);
+ 
+-  const canDrag = useMemo(() => disclosed.length < 1, [disclosed, materials]);
++  useEffect(() => {
++    Registry.set("related-materials/tile-list/disclosed", disclosed);
++    Registry.set("related-materials/tile-list/onDisclose", onDisclose);
++
++    return () => {
++      Registry.delete("related-materials/tile-list/disclosed", disclosed);
++      Registry.delete("related-materials/tile-list/onDisclose", onDisclose);
++    };
++  }, [disclosed, onDisclose]);
++
++  const canDrag = useMemo(() => disclosed.size < 1, [disclosed, materials]);
+ 
+   return (
+     <>
+@@ -112,6 +131,7 @@ export function RelatedMaterialsTileList({ materials, fieldSettings, onEdit, onR
+           <li key={material.id} className={style.item}>
+             <span className={style.index}>{`${index + 1}.`}</span>
+             <RelatedMaterialTile
++              disclosed={disclosed.has(material.id)}
+               draggable={canDrag}
+               fieldSettings={fieldSettings}
+               handleDrag={handleDrag}
+@@ -120,7 +140,7 @@ export function RelatedMaterialsTileList({ materials, fieldSettings, onEdit, onR
+               isLast={index === materials.length - 1}
+               linkoutTotal={linkoutTotal}
+               material={material}
+-              onDisclosed={handleDisclose}
++              onDisclose={onDisclose}
+               onEdit={onEdit}
+               onRemove={onRemove}
+               onReorder={handleIncrementalMove}

@@ -1,0 +1,110 @@
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index 8780f56018..03f322ee6b 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -2840,13 +2840,28 @@ def bcheck_references(self):
+         return self._metadata.references
+ 
+     def bcheck_related_material(self):
+-        if self._metadata.references and isinstance(self._metadata.references[0], str):
++        if (self._metadata.references and isinstance(self._metadata.references[0], str)) or (
++            not self.metadata.references and self.resource
++        ):
+             references = []
+-            for reference in self._metadata.references:
+-                FigcoreLogger.info(f"Converting {reference}")
+-                # TODO(adrianp): differentiate between URL and DOI
++            if self._metadata.references:
++                for reference in self._metadata.references:
++                    FigcoreLogger.info(f"Converting {reference}")
++                    # TODO(adrianp): differentiate between URL and DOI
++                    material = APIEntity.ENTITIES.RelatedMaterial.create(
++                        {"identifier": reference, "account_id": self.account.id}
++                    )
++                    references.append(material.id)
++            if self.resource:
+                 material = APIEntity.ENTITIES.RelatedMaterial.create(
+-                    {"identifier": reference, "account_id": self.account.id}
++                    {
++                        "identifier": self.resource.resource_doi,
++                        "identifier_type": "DOI",
++                        "title": self.resource.resource_title,
++                        "relation": "IsSupplementTo",
++                        "account_id": self.account.id,
++                        "is_linkout": True,
++                    }
+                 )
+                 references.append(material.id)
+             ArticleInternals.update_references(self.id, references)
+diff --git a/src/figcore/api/article/validator.py b/src/figcore/api/article/validator.py
+index 54c6d114ce..098e79732d 100644
+--- a/src/figcore/api/article/validator.py
++++ b/src/figcore/api/article/validator.py
+@@ -26,7 +26,7 @@ class ArticleValidator(Validator):
+     MIN_UNPUBLISH_REASON_LENGTH = 5
+     MAX_FUNDING_LIST_LENGTH = 100
+     MAX_REFERENCES_LIST_LENGTH = 100
+-    MAX_LINKOUTS = 3
++    MAX_LINKOUTS = 5
+     FIELDS_MAPPING = ArticleFieldsMapping.MAPPING
+ 
+     def __init__(self, article_api, form_data):
+diff --git a/tests/api/article/test_references.py b/tests/api/article/test_references.py
+index f4a5934d65..0580a11220 100644
+--- a/tests/api/article/test_references.py
++++ b/tests/api/article/test_references.py
+@@ -13,22 +13,21 @@ def setUpClass(cls):
+         cls.create_complete_environment()
+         cls.account = Account.find(1)
+ 
+-        cls.article_data = {
++    def test_create_has_references(self):
++        article_data = {
+             "title": "References test",
+             "description": "lorem ipsum dolor",
+             "is_active": 1,
+             "defined_type": 3,
+-            "account_id": cls.account.id,
+-            "institution_id": cls.account.institution_id,
+-            "group_id": cls.account.group_id,
++            "account_id": self.account.id,
++            "institution_id": self.account.institution_id,
++            "group_id": self.account.group_id,
+             "detected_license_id": 1,
+             "tags": ["test"],
+             "categories": [2],
+             "references": ["https://google.com", "10.1000/182"],
+         }
+-
+-    def test_create(self):
+-        article = Article.create_article(self.article_data)
++        article = Article.create_article(article_data)
+         self.assertListEqual(article.references, ["https://google.com", "10.1000/182"])
+         self.assertEqual(len(article.related_materials), 2)
+         self.assertEqual(RelatedMaterial(article.related_materials[0]).identifier, "https://google.com")
+@@ -36,3 +35,25 @@ def test_create(self):
+ 
+         db_references = ArticleInternals.get_metadata(article.id).references
+         self.assertListEqual(db_references, article.related_materials)
++
++    def test_create_has_resource(self):
++        article_data = {
++            "title": "References test",
++            "description": "lorem ipsum dolor",
++            "is_active": 1,
++            "defined_type": 3,
++            "account_id": self.account.id,
++            "institution_id": self.account.institution_id,
++            "group_id": self.account.group_id,
++            "detected_license_id": 1,
++            "tags": ["test"],
++            "categories": [2],
++            "resource_doi": "10.100/123"
++        }
++        article = Article.create_article(article_data)
++        self.assertEqual(len(article.related_materials), 1)
++        self.assertEqual(RelatedMaterial(article.related_materials[0]).identifier, "10.100/123")
++        self.assertTrue(RelatedMaterial(article.related_materials[0]).is_linkout)
++
++        db_references = ArticleInternals.get_metadata(article.id).references
++        self.assertListEqual(db_references, article.related_materials)

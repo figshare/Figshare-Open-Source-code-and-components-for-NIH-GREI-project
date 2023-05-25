@@ -1,0 +1,137 @@
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index 4cf0aee395..dc66cec476 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -16,6 +16,7 @@
+ from figcore.lib.data.article_fields_mapping import ArticleFieldsMapping
+ from figcore.lib.data.article_static import ArticleStatic
+ from figcore.lib.data.file_static import VIRUS_SCAN_CODES
++from figcore.lib.data.related_material_static import IDENTIFIER_TYPE, RESOURCE_IDENTIFIER_TYPE, RESOURCE_RELATION_TYPE
+ from figcore.lib.identifier import DOIService, HandleService
+ from figcore.lib.logs import FigcoreLogger
+ from figcore.lib.oai import OAIUtil
+@@ -2281,6 +2282,18 @@ def update_article(self, data, **options):
+ 
+         data = self._handle_sherpa_journal(data, group)
+ 
++        if not (self.resource_doi or data.get("resource_doi")) and self.related_materials:
++            for i in self.related_materials:
++                material = self.ENTITIES.RelatedMaterial.find(i)
++                if (
++                    material.is_linkout
++                    and material.identifier_type == RESOURCE_IDENTIFIER_TYPE
++                    and material.relation == RESOURCE_RELATION_TYPE
++                ):
++                    data["resource_doi"] = material.identifier
++                    data["resource_title"] = material.title or material.identifier
++                    break
++
+         if make_version:
+             self._reset_export_pdf_data(data)
+ 
+@@ -2476,6 +2489,17 @@ def create_article(cls, data, **options):
+                     data["references"], data["account_id"]
+                 )
+ 
++        if data.get("references") and isinstance(data["references"][0], int) and not data.get("resource_doi"):
++            for material in cls.ENTITIES.RelatedMaterial.find_by_id_list(data["references"]):
++                if (
++                    material.is_linkout
++                    and material.identifier_type == RESOURCE_IDENTIFIER_TYPE
++                    and material.relation == RESOURCE_RELATION_TYPE
++                ):
++                    data["resource_doi"] = material.identifier
++                    data["resource_title"] = material.title or material.identifier
++                    break
++
+         models = ArticleInternals.create_article(data, owner_is_author=owner_is_author)
+         api = Article(models["article_id"])
+ 
+diff --git a/src/figcore/lib/data/related_material_static.py b/src/figcore/lib/data/related_material_static.py
+index a37632fc16..085e15cc10 100644
+--- a/src/figcore/lib/data/related_material_static.py
++++ b/src/figcore/lib/data/related_material_static.py
+@@ -20,8 +20,6 @@
+     "w3id": {"resolver": "https://w3id.org/", "is_url": True},
+ }
+ 
+-DEFAULT_IDENTIFIER_TYPE = "URL"
+-
+ RELATION_TYPE = [
+     "IsCitedBy",
+     "Cites",
+@@ -60,3 +58,6 @@
+ ]
+ 
+ DEFAULT_RELATION_TYPE = "References"
++DEFAULT_IDENTIFIER_TYPE = "URL"
++RESOURCE_IDENTIFIER_TYPE = "DOI"
++RESOURCE_RELATION_TYPE = "IsSupplementTo"
+diff --git a/tests/api/article/test_references.py b/tests/api/article/test_references.py
+index 072ad9352a..0febdd99f2 100644
+--- a/tests/api/article/test_references.py
++++ b/tests/api/article/test_references.py
+@@ -237,3 +237,63 @@ def test_version_backwards_compatible_references(self):
+ 
+         version = ArticleVersion.find(article.id, 1)
+         self.assertEquals(RelatedMaterial(version.related_materials[0]).identifier, article_data["references"][0])
++
++    def test_material_updates_resource_doi(self):
++        article_data = {
++            "title": "References test",
++            "description": "lorem ipsum dolor",
++            "is_active": 1,
++            "defined_type": 3,
++            "account_id": self.account.id,
++            "institution_id": self.account.institution_id,
++            "group_id": self.account.group_id,
++            "detected_license_id": 1,
++            "tags": ["test"],
++            "categories": [2],
++        }
++        article = Article.create_article(article_data)
++        self.account.actions_for(article).publish()
++
++        material = RelatedMaterial.create(
++            {
++                "identifier": "10.123/1234",
++                "account_id": self.account.id,
++                "is_linkout": True,
++                "identifier_type": "DOI",
++                "relation": "IsSupplementTo",
++            }
++        )
++        article.update_article({"title": "Another version", "references": [material.id]})
++        self.account.actions_for(article).publish()
++
++        first = ArticleVersion.find(article.id, 1)
++        second = ArticleVersion.find(article.id, 2)
++        self.assertEqual(article.resource_doi, material.identifier)
++        self.assertFalse(first.resource_doi)
++        self.assertEqual(second.resource_doi, material.identifier)
++
++    def test_material_creates_resource_doi(self):
++        material = RelatedMaterial.create(
++            {
++                "identifier": "10.123/1234",
++                "account_id": self.account.id,
++                "is_linkout": True,
++                "identifier_type": "DOI",
++                "relation": "IsSupplementTo",
++            }
++        )
++        article_data = {
++            "title": "References test",
++            "description": "lorem ipsum dolor",
++            "is_active": 1,
++            "defined_type": 3,
++            "account_id": self.account.id,
++            "institution_id": self.account.institution_id,
++            "group_id": self.account.group_id,
++            "detected_license_id": 1,
++            "tags": ["test"],
++            "categories": [2],
++            "references": [material.id],
++        }
++        article = Article.create_article(article_data)
++        self.assertEqual(article.resource_doi, material.identifier)

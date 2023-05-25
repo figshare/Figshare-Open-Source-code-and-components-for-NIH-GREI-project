@@ -1,0 +1,36 @@
+diff --git a/src/figcore/api/related_material/validator.py b/src/figcore/api/related_material/validator.py
+index 9831ae4c73..3b778f28ae 100644
+--- a/src/figcore/api/related_material/validator.py
++++ b/src/figcore/api/related_material/validator.py
+@@ -10,10 +10,10 @@
+ 
+ 
+ class RelatedMaterialValidator(Validator):
+-    MIN_TITLE_LENGTH = 1
++    MIN_TITLE_LENGTH = 3
+     MAX_TITLE_LENGTH = 1000
+-    MIN_IDENTIFIER_LENGTH = 1
+-    MAX_IDENTIFIER_LENGTH = 2000
++    MIN_IDENTIFIER_LENGTH = 3
++    MAX_IDENTIFIER_LENGTH = 1000
+     MANDATORY_FIELDS = ["account_id", "identifier", "identifier_type", "relation"]
+     ALLOWED_FIELDS = ["id", "account_id", "identifier", "identifier_type", "relation", "title", "is_linkout"]
+ 
+diff --git a/tests/api/related_material/test_validator.py b/tests/api/related_material/test_validator.py
+index 4661a66aa5..980ce308cd 100644
+--- a/tests/api/related_material/test_validator.py
++++ b/tests/api/related_material/test_validator.py
+@@ -84,3 +84,13 @@ def test_fails_validation(self):
+                     "relation": "Cites",
+                 }
+             ).validate_for_create()
++
++        with self.assertRaises(fig_exc.InvalidLength):
++            RelatedMaterialValidator(
++                {"account_id": 1, "identifier": "1", "identifier_type": "ARK", "relation": "Cites"}
++            ).validate_for_create()
++
++        with self.assertRaises(fig_exc.InvalidLength):
++            RelatedMaterialValidator(
++                {"account_id": 1, "identifier": "123", "title": 1, "identifier_type": "ARK", "relation": "Cites"}
++            ).validate_for_create()

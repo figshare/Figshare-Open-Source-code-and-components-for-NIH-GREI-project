@@ -1,0 +1,30 @@
+diff --git a/src/figcore/api/article/validator.py b/src/figcore/api/article/validator.py
+index 4ba5e30474..084d4e7414 100644
+--- a/src/figcore/api/article/validator.py
++++ b/src/figcore/api/article/validator.py
+@@ -248,6 +248,10 @@ def _validate_resource_type(self):
+             raise exc.InvalidLength("Invalid resource_type length", field="resource_type")
+ 
+     def _check_related_materials_linkout(self):
++        references = self.form_data.get("references")
++        if isinstance(references, list) and (len(references) == 0 or isinstance(references[0], str)):
++            # references were updated using an old interface (e.g., review screen)
++            return False
+         related_materials = self._get_final_value("related_materials")
+         if related_materials and isinstance(related_materials[0], int):
+             for material in related_materials:
+diff --git a/tests/api/article/test_references.py b/tests/api/article/test_references.py
+index 263179a2f0..5176e0fa9d 100644
+--- a/tests/api/article/test_references.py
++++ b/tests/api/article/test_references.py
+@@ -159,6 +159,10 @@ def test_resource_validation(self):
+         article.update_article({"references": [material.id]})
+         self.account.actions_for(article).publish()
+ 
++        article.update_article({"references": ["https://google1.com"]})
++        with self.assertRaises(fig_exc.MissingMandatoryValue):
++            self.account.actions_for(article).publish()
++
+     def test_related_materials_list(self):
+         material = RelatedMaterial.create(
+             {"identifier": "https://google.com", "account_id": self.account.id, "is_linkout": False}

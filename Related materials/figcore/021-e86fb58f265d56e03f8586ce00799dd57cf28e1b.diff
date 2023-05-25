@@ -1,0 +1,57 @@
+diff --git a/src/figcore/api/batch_edit/article.py b/src/figcore/api/batch_edit/article.py
+index 70d86fc4a2..ccd5de48cf 100644
+--- a/src/figcore/api/batch_edit/article.py
++++ b/src/figcore/api/batch_edit/article.py
+@@ -2,6 +2,7 @@
+ from datetime import datetime
+ from sqlalchemy import inspect
+ 
++from figcore.lib.api_entity import APIEntity
+ from figcore.exc import InvalidParam
+ from ...lib.logs import FigcoreLogger
+ 
+@@ -265,20 +266,22 @@ def _prepare_data_for_references(self, payload, ensure_compatibility=False):
+ 
+             return False
+ 
+-        references = list(self.article.references)
++        references = [
++            rm.identifier for rm in APIEntity.ENTITIES.RelatedMaterial.find_by_id_list(self.article.related_materials)
++        ]
+         reference_payload = payload.get("payload")
+ 
+         if action == "add":
+-            references += [reference for reference in reference_payload if reference not in references]
++            new_references = references + [reference for reference in reference_payload if reference not in references]
+ 
+         if action == "replace":
+-            references = [reference for reference in reference_payload]
++            new_references = [reference for reference in reference_payload]
+ 
+         if action == "clear":
+-            references = []
++            new_references = []
+ 
+-        if references != self.article.references:
+-            return {"references": references}
++        if new_references != references:
++            return {"references": new_references}
+ 
+         return False
+ 
+diff --git a/tests/api/batch_edit/test_article.py b/tests/api/batch_edit/test_article.py
+index 7ef8d134cd..e70a3d7979 100644
+--- a/tests/api/batch_edit/test_article.py
++++ b/tests/api/batch_edit/test_article.py
+@@ -247,7 +247,10 @@ def test_references_add_action(self):
+         field_factory = ArticleBatchEdit(self.article)
+         references_data = field_factory.prepare_field_data_from_payload(references_payload, "references")
+ 
+-        self.assertEqual(references + [reference for reference in payload], references_data["references"])
++        self.assertEqual(
++            references + [self.data["resource_doi"]] + [reference for reference in payload],
++            references_data["references"],
++        )
+ 
+     def test_references_replace_action(self):
+         payload = ["https://google.ro"]

@@ -1,0 +1,324 @@
+diff --git a/scripts/sql_migrations/2023-05.sql b/scripts/sql_migrations/2023-05.sql
+new file mode 100644
+index 0000000000..ddfc03ab16
+--- /dev/null
++++ b/scripts/sql_migrations/2023-05.sql
+@@ -0,0 +1,9 @@
++CREATE TABLE `related_material` (
++  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
++  `identifier` varchar(2000) NOT NULL DEFAULT '',
++  `identifer_type` enum('ARK','arXiv','bibcode','DOI','EAN13','EISSN','Handle','IGSN','ISBN','ISSN','ISTC','LISSN','LSID','PMID','PURL','UPC','URL','URN','w3id') NOT NULL DEFAULT 'URL',
++  `relation` enum('IsCitedBy','Cites','IsSupplementTo','IsSupplementedBy','IsContinuedBy','Continues','Describes','IsDescribedBy','HasMetadata','IsMetadataFor','HasVersion','IsVersionOf','IsNewVersionOf','IsPreviousVersionOf','IsPartOf','HasPart','IsPublishedIn','IsReferencedBy','References','IsDocumentedBy','Documents','IsCompiledBy','Compiles','IsVariantFormOf','IsOriginalFormOf','IsIdenticalTo','IsReviewedBy','Reviews','IsDerivedFrom','IsSourceOf','IsRequiredBy','Requires','IsObsoletedBy','Obsoletes') NOT NULL DEFAULT 'References',
++  `title` varchar(2000) NOT NULL DEFAULT '',
++  `is_linkout` tinyint(3) unsigned NOT NULL DEFAULT 0,
++  PRIMARY KEY (`id`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+diff --git a/src/figcore/api/__init__.py b/src/figcore/api/__init__.py
+index f8fb049c24..9c48027ebf 100644
+--- a/src/figcore/api/__init__.py
++++ b/src/figcore/api/__init__.py
+@@ -78,6 +78,7 @@
+ from .rating.api import Rating
+ from .rating_category.api import RatingCategory
+ from .recovery.api import RecoveryToken
++from .related_material import RelatedMaterial
+ from .requests.api import Request
+ from .role.api import Role
+ from .role_assignment.api import RoleAssignment
+diff --git a/src/figcore/api/related_material/__init__.py b/src/figcore/api/related_material/__init__.py
+new file mode 100644
+index 0000000000..52b72d2b40
+--- /dev/null
++++ b/src/figcore/api/related_material/__init__.py
+@@ -0,0 +1 @@
++from .api import RelatedMaterial
+diff --git a/src/figcore/api/related_material/api.py b/src/figcore/api/related_material/api.py
+new file mode 100644
+index 0000000000..cf1ceffaa1
+--- /dev/null
++++ b/src/figcore/api/related_material/api.py
+@@ -0,0 +1,58 @@
++from figcore.internals.related_material import RelatedMaterialInternals
++from figcore.lib.api_entity import APIEntity
++from figcore.lib.checker import Checker
++
++
++class RelatedMaterial(APIEntity):
++    def __init__(self, id):
++        self._id = int(id)
++
++    @property
++    def id(self):
++        return self._id
++
++    @property
++    @Checker.ensure("model")
++    def identifier(self):
++        return self._model.identifier
++
++    @property
++    @Checker.ensure("model")
++    def identifer_type(self):
++        return self._model.identifer_type
++
++    @property
++    @Checker.ensure("model")
++    def relation(self):
++        return self._model.relation
++
++    @property
++    @Checker.ensure("model")
++    def title(self):
++        return self._model.title
++
++    @property
++    @Checker.ensure("model")
++    def is_linkout(self):
++        return self._model.is_linkout
++
++    @classmethod
++    def find(cls, id):
++        model = RelatedMaterialInternals.get_by_id(id)
++
++        if model:
++            return cls(model.id).load_from_model(model)
++
++    @classmethod
++    def create(cls, data):
++        # TODO(adrianp): validate data
++        model = RelatedMaterialInternals.create(data)
++        return cls(model.id).load_from_model(model)
++
++    def update(self, data):
++        # TODO(adrianp): validate data
++        RelatedMaterialInternals.update(self.id, data)
++        self._model = None  # force reload
++
++    def load_model(self):
++        self._model = RelatedMaterialInternals.get_by_id(self.id)
+diff --git a/src/figcore/api/related_material/validator.py b/src/figcore/api/related_material/validator.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/src/figcore/internals/db_calls/base.py b/src/figcore/internals/db_calls/base.py
+index 5891e07970..ef7d5895ee 100644
+--- a/src/figcore/internals/db_calls/base.py
++++ b/src/figcore/internals/db_calls/base.py
+@@ -257,3 +257,15 @@ def _process_status_filters(cls, query, model, filters):
+             query = query.filter(False)
+ 
+         return query
++
++    @classmethod
++    def get_by_id(cls, db_session, id):
++        query = db_session.query(cls.MODEL)
++        query = query.filter(cls.MODEL.id == id)
++        return query.first()
++
++    @classmethod
++    def update(cls, db_session, id, data):
++        query = db_session.query(cls.MODEL)
++        query = query.filter(cls.MODEL.id == id)
++        query.update(data, synchronize_session=False)
+diff --git a/src/figcore/internals/db_calls/related_material.py b/src/figcore/internals/db_calls/related_material.py
+new file mode 100644
+index 0000000000..65c4a04a4a
+--- /dev/null
++++ b/src/figcore/internals/db_calls/related_material.py
+@@ -0,0 +1,7 @@
++from .base import BaseDBCalls
++from figcore.models.dao import RelatedMaterial as RelatedMaterial_model
++
++
++class RelatedMaterialDBCalls(BaseDBCalls):
++
++    MODEL = RelatedMaterial_model
+diff --git a/src/figcore/internals/related_material/__init__.py b/src/figcore/internals/related_material/__init__.py
+new file mode 100644
+index 0000000000..f2c701bce4
+--- /dev/null
++++ b/src/figcore/internals/related_material/__init__.py
+@@ -0,0 +1,4 @@
++from .related_material import RelatedMaterialInternals
++
++
++__all__ = ["RelatedMaterialInternals"]
+diff --git a/src/figcore/internals/related_material/related_material.py b/src/figcore/internals/related_material/related_material.py
+new file mode 100644
+index 0000000000..4a2ec7f6f0
+--- /dev/null
++++ b/src/figcore/internals/related_material/related_material.py
+@@ -0,0 +1,35 @@
++from figcore.internals.db_calls.related_material import RelatedMaterialDBCalls
++from figcore.lib.db import DBConnection
++from figcore.models.dao.related_material import RelatedMaterial as RelatedMaterial_model
++
++
++class RelatedMaterialInternals(object):
++
++    DB = DBConnection
++
++    @classmethod
++    def get_by_id(cls, id):
++        with cls.DB.get_session(readonly=True) as db_session:
++            return RelatedMaterialDBCalls.get_by_id(db_session, id)
++
++    @classmethod
++    def create(cls, data):
++        related_material = cls._create_model(data)
++        with cls.DB.get_session() as db_session:
++            RelatedMaterialDBCalls.persist(db_session, related_material, flush=True)
++
++        return related_material
++
++    @classmethod
++    def update(cls, id, data):
++        with cls.DB.get_session() as db_session:
++            RelatedMaterialDBCalls.update(db_session, id, data)
++
++    @classmethod
++    def _create_model(cls, data):
++        model = RelatedMaterial_model()
++        for key, value in data.items():
++            if value is not None:
++                setattr(model, key, value)
++
++        return model
+diff --git a/src/figcore/lib/data/related_material_static.py b/src/figcore/lib/data/related_material_static.py
+new file mode 100644
+index 0000000000..8b705a5d78
+--- /dev/null
++++ b/src/figcore/lib/data/related_material_static.py
+@@ -0,0 +1,62 @@
++IDENTIFIER_TYPE = [
++    "ARK",
++    "arXiv",
++    "bibcode",
++    "DOI",
++    "EAN13",
++    "EISSN",
++    "Handle",
++    "IGSN",
++    "ISBN",
++    "ISSN",
++    "ISTC",
++    "LISSN",
++    "LSID",
++    "PMID",
++    "PURL",
++    "UPC",
++    "URL",
++    "URN",
++    "w3id",
++]
++
++DEFAULT_IDENTIFIER_TYPE = "URL"
++
++RELATION_TYPE = [
++    "IsCitedBy",
++    "Cites",
++    "IsSupplementTo",
++    "IsSupplementedBy",
++    "IsContinuedBy",
++    "Continues",
++    "Describes",
++    "IsDescribedBy",
++    "HasMetadata",
++    "IsMetadataFor",
++    "HasVersion",
++    "IsVersionOf",
++    "IsNewVersionOf",
++    "IsPreviousVersionOf",
++    "IsPartOf",
++    "HasPart",
++    "IsPublishedIn",
++    "IsReferencedBy",
++    "References",
++    "IsDocumentedBy",
++    "Documents",
++    "IsCompiledBy",
++    "Compiles",
++    "IsVariantFormOf",
++    "IsOriginalFormOf",
++    "IsIdenticalTo",
++    "IsReviewedBy",
++    "Reviews",
++    "IsDerivedFrom",
++    "IsSourceOf",
++    "IsRequiredBy",
++    "Requires",
++    "IsObsoletedBy",
++    "Obsoletes",
++]
++
++DEFAULT_RELATION_TYPE = "References"
+diff --git a/src/figcore/models/dao/__init__.py b/src/figcore/models/dao/__init__.py
+index 03d428603f..398106d17a 100644
+--- a/src/figcore/models/dao/__init__.py
++++ b/src/figcore/models/dao/__init__.py
+@@ -122,6 +122,7 @@
+ from .rating import Rating
+ from .rating_category import RatingCategory
+ from .recovery_token import RecoveryToken
++from .related_material import RelatedMaterial
+ from .request import Request
+ from .request_notification import RequestNotification
+ from .role import Role
+diff --git a/src/figcore/models/dao/related_material.py b/src/figcore/models/dao/related_material.py
+new file mode 100644
+index 0000000000..4496e68ec9
+--- /dev/null
++++ b/src/figcore/models/dao/related_material.py
+@@ -0,0 +1,26 @@
++from sqlalchemy.dialects.mysql import BIGINT, TINYINT, VARCHAR, ENUM
++from sqlalchemy import Column
++
++from figcore.lib.data.related_material_static import (
++    IDENTIFIER_TYPE,
++    RELATION_TYPE,
++    DEFAULT_IDENTIFIER_TYPE,
++    DEFAULT_RELATION_TYPE,
++)
++
++from .base import Base, ExtendedBase
++
++
++class RelatedMaterial(Base, ExtendedBase):
++    __tablename__ = "related_material"
++
++    id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
++    identifier = Column(VARCHAR(length=2000), nullable=False, server_default="", default="")
++    identifer_type = Column(
++        ENUM(*IDENTIFIER_TYPE), nullable=False, server_default=DEFAULT_IDENTIFIER_TYPE, default=DEFAULT_IDENTIFIER_TYPE
++    )
++    relation = Column(
++        ENUM(*RELATION_TYPE), nullable=False, server_default=DEFAULT_RELATION_TYPE, default=DEFAULT_RELATION_TYPE
++    )
++    title = Column(VARCHAR(length=2000), nullable=False, server_default="", default="")
++    is_linkout = Column(TINYINT(unsigned=True), nullable=False, server_default="0", default=0)
+diff --git a/tests/api/related_material/__init__.py b/tests/api/related_material/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/tests/api/related_material/test_api.py b/tests/api/related_material/test_api.py
+new file mode 100644
+index 0000000000..38e41a5f19
+--- /dev/null
++++ b/tests/api/related_material/test_api.py
+@@ -0,0 +1,18 @@
++from figcore.api import RelatedMaterial
++
++from ... import BaseTest
++
++
++class TestRelatedMaterialAPI(BaseTest):
++    def test_crud(self):
++        data = {
++            "identifier": "1234",
++            "identifer_type": "ark",
++            "relation": "Cites",
++            "title": "Some title",
++            "is_linkout": False,
++        }
++        material = RelatedMaterial.create(data)
++        material = RelatedMaterial.find(material.id)
++        material.update({"title": "Some other title"})
++        self.assertEqual(material.title, "Some other title")

@@ -1,0 +1,96 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTile.css b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTile.css
+index 65b2c1ee0..27382d2b5 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTile.css
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialsTile.css
+@@ -29,7 +29,11 @@
+ .papers {
+   display: flex;
+ 
++  min-width: calc(var(--gridSize) * 2);
++
+   height: calc(4 * var(--gridSize));
++  min-height: calc(var(--gridSize) * 4);
++
+   margin-left: 10px;
+ }
+ 
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+index 21e438f93..b45e03732 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/useRelatedMaterials.jsx
+@@ -18,6 +18,7 @@ export const GQL_LIMIT = 40;
+  */
+ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = true, remap = true }) {
+   const [materials, setMaterials] = useState([]);
++  const fetching = useRef(false);
+   const [slices, setSlices] = useState(() => {
+     const result = [];
+     const copy = value.slice();
+@@ -51,7 +52,7 @@ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = t
+     { variables }
+   );
+ 
+-  const fetchMore = useCallback(() => {
++  const fetchMore = useCallback(async() => {
+     const nextSet = getIn(slices, "0", []);
+ 
+     if (!nextSet?.length) {
+@@ -59,36 +60,29 @@ export function useRelatedMaterials({ value, id, version, isPublic }, { sort = t
+       return;
+     }
+ 
+-    query.fetchMore({
+-      variables: { relatedMaterialIds: nextSet },
+-      updateQuery: (prev, { fetchMoreResult }) => {
+-        const current = getIn(prev, "getRelatedMaterials", []);
+-        const next = getIn(fetchMoreResult, "getRelatedMaterials", []);
+-
+-        const result = { ...prev };
+-        result.getRelatedMaterials = [...current, ...next];
+-
+-        return result;
+-      },
+-    });
+-
+-    // remove the previous set of ids and reset the pages.
+-    setSlices((p) => p.slice().splice(1, p.length));
+-
+-  }, [query.fetchMore, setSlices, slices]);
+-
+-  /**
+-   * UPDATE: this will preload all related materials
+-   * Only if there are more than GQL_LIMIT
+-   * This is to prevent possible issues with:
+-   * - reordering and then fetching more (reorder is lost)
+-   * - removing and then fetching more (cannot reconcile)
+-   */
+-  useEffect(() => {
+-    if (slices.length) {
+-      fetchMore();
++    try {
++      fetching.current = true;
++
++      await query.fetchMore({
++        variables: { relatedMaterialIds: nextSet },
++        updateQuery: (prev, { fetchMoreResult }) => {
++          const current = getIn(prev, "getRelatedMaterials", []);
++          const next = getIn(fetchMoreResult, "getRelatedMaterials", []);
++
++          const result = { ...prev };
++          result.getRelatedMaterials = [...current, ...next];
++
++          return result;
++        },
++      });
++    } catch (e) {
++      // eslint-disable-next-line no-console
++      console.warn("Failed to fetch more materials");
++    } finally {
++      fetching.current = false;
++      setSlices((p) => p.slice().splice(1, p.length));
+     }
+-  }, [slices]);
++  }, [query.fetchMore, fetching, setSlices, slices]);
+ 
+   useEffect(() => {
+     Registry.set("related-materials/fetchMore", fetchMore);

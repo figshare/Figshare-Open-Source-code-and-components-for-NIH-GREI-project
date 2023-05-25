@@ -1,0 +1,19 @@
+diff --git a/figshare/lib/handlers/indexers/regular/collection_items.py b/figshare/lib/handlers/indexers/regular/collection_items.py
+index 40e35176..d7bce687 100644
+--- a/figshare/lib/handlers/indexers/regular/collection_items.py
++++ b/figshare/lib/handlers/indexers/regular/collection_items.py
+@@ -279,9 +279,11 @@ def manage_data(self, data):
+             references = []
+             for material in materials:
+                 references.append(material["identifier"])
+-                if material["is_linkout"] and not output["resource"]["doi"]:
+-                    output["resource"]["doi"] = material["identifier"]
+-                    output["resource"]["title"] = material["title"]
++                if material["is_linkout"] and not output.get("resource", {}).get("doi"):
++                    output["resource"] = {
++                        "doi": material["identifier"],
++                        "title": material["title"],
++                    }
+             output["references"] = references
+ 
+         if "license_id" in output:

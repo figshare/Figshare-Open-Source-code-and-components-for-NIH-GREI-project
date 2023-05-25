@@ -1,0 +1,64 @@
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+index 6be7582d0..510e4a582 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/manageRelatedMaterials/index.test.jsx
+@@ -638,19 +638,21 @@ describe("<ManageRelatedMaterials />", () => {
+     expect(NO_STARTS_WITH_RESOLVER.fn("isn:/identifier", { resolver: "https://" })).toEqual(true);
+ 
+     const material = {
++      id: "1",
+       identifier: "test",
+       identifierType: "DOI",
+       relationshipType: "References",
+     };
+ 
+     const material2 = {
++      id: "2",
+       identifier: "whatever",
+       identifierType: "URL",
+       relationshipType: "References",
+     };
+ 
+     function asForm(materialObject) {
+-      const formObj = { fields: {} };
++      const formObj = { fields: {}, id: materialObject.id };
+ 
+       Object.entries(materialObject).forEach(([k, v]) => {
+         formObj.fields[k] = { value: v };
+@@ -661,8 +663,17 @@ describe("<ManageRelatedMaterials />", () => {
+ 
+     expect(NO_MATERIAL_DUPLICATE.fn(asForm(material), { materials: [] })).toEqual(true);
+     expect(NO_MATERIAL_DUPLICATE.fn(asForm(material), { materials: [material2] })).toEqual(true);
+-    expect(NO_MATERIAL_DUPLICATE.fn(asForm(material), { materials: [material, material2] })).toEqual(false);
+-    expect(NO_MATERIAL_DUPLICATE.fn(asForm(material2), { materials: [material, material2] })).toEqual(false);
++    expect(NO_MATERIAL_DUPLICATE.fn(asForm(material), { materials: [material, material2] })).toEqual(true);
++    expect(NO_MATERIAL_DUPLICATE.fn(
++      asForm({ ...material, id: "5" }), { materials: [material, material2] })).
++      toEqual(false);
++    expect(NO_MATERIAL_DUPLICATE.fn(
++      asForm({ ...material2, id: "3" }), { materials: [material, material2] })).
++      toEqual(false);
++    expect(NO_MATERIAL_DUPLICATE.fn(
++      asForm({ ...material2, isLinkout: true, title: "some modified title" }),
++      { materials: [material, material2] })).
++      toEqual(true);
+ 
+     component.unmount();
+   });
+diff --git a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+index 6f07751fd..6b2effcc4 100644
+--- a/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
++++ b/src/pages/account/itemEdit/main/form/formField/figshareFields/relatedMaterials/components/relatedMaterialsForm/constants.jsx
+@@ -120,6 +120,12 @@ export const NO_MATERIAL_DUPLICATE = {
+     });
+ 
+     if (duplicate) {
++      if (duplicate.id === value.id) {
++        // the item we're editing is the duplicate itself
++        // we should allow this to pass as we might be editing other values for it.
++        return true;
++      }
++
+       return false;
+     }
+ 

@@ -1,0 +1,54 @@
+diff --git a/src/pages/item/page/components/linkback/index.jsx b/src/pages/item/page/components/linkback/index.jsx
+index 80defcfca..9065e3287 100644
+--- a/src/pages/item/page/components/linkback/index.jsx
++++ b/src/pages/item/page/components/linkback/index.jsx
+@@ -59,14 +59,12 @@ export function Linkback(props) {
+ 
+   /* filter materials without linkout. */
+   const materials = useMemo(() => unfiltered.filter((material) => material.isLinkout), [unfiltered]);
+-  const empty = !materials.length;
+-  const itemId = item?.id;
+   /** retrieve backwards compatibility resource information if it exists */
+   const linkback = useMemo(() => {
+     const collection = getIn(item, "linkbackCollection", {});
+     const linkBackTitle = getIn(domainData, "linkBackTitle");
+ 
+-    if (!empty || !collection || !linkBackTitle) {
++    if (!collection || !linkBackTitle) {
+       return undefined;
+     }
+ 
+@@ -87,7 +85,10 @@ export function Linkback(props) {
+         publication: resourcePublication,
+       },
+     };
+-  }, [item, empty, domainData]);
++  }, [item, domainData]);
++  const empty = !materials.length;
++  const withLinkback = empty && linkback;
++  const itemId = item?.id;
+ 
+   if (hideLinkbackSection) {
+     return null;
+@@ -96,7 +97,7 @@ export function Linkback(props) {
+   return (
+     <ul className={styles.linkback} {...props}>
+       {done && (<>
+-        {linkback && renderItem(linkback, identifiers.data, relationships.data, itemId)}
++        {withLinkback && renderItem(linkback, identifiers.data, relationships.data, itemId)}
+         {materials.map((material) => renderItem(material, identifiers.data, relationships.data, itemId))}
+       </>)}
+     </ul>
+diff --git a/src/pages/item/page/components/relatedMaterials/index.jsx b/src/pages/item/page/components/relatedMaterials/index.jsx
+index 3c0c183e1..41f1f270f 100644
+--- a/src/pages/item/page/components/relatedMaterials/index.jsx
++++ b/src/pages/item/page/components/relatedMaterials/index.jsx
+@@ -31,7 +31,7 @@ export function RelatedMaterials(props) {
+ 
+   return (
+     <div {...props}>
+-      <h2 className={style.sectionTitle}>Related Materials</h2>(
++      <h2 className={style.sectionTitle}>Related Materials</h2>
+       <RelatedMaterialsList
+         identifiers={resources.identifiers.data}
+         itemId={item?.id}

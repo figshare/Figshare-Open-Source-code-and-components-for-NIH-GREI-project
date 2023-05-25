@@ -1,0 +1,101 @@
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index dc66cec476..e421be7f6e 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -2885,9 +2885,13 @@ def get_published_date(self):
+         return None
+ 
+     def bcheck_references(self):
+-        references = self._metadata.references
++        references = self._metadata.references[:]
+         if self._metadata.references and isinstance(self._metadata.references[0], int):
+             references = [APIEntity.ENTITIES.RelatedMaterial.find(i).link for i in self._metadata.references]
++        if self.resource and self.resource.resource_doi:
++            resource = f"{IDENTIFIER_TYPE[RESOURCE_IDENTIFIER_TYPE].get('resolver')}{self.resource.resource_doi}"
++            if resource not in references:
++                references.append(resource)
+         return [Text(url).format_url(encode=True) for url in references]
+ 
+     def bcheck_related_material(self):
+diff --git a/src/figcore/api/batch_edit/article.py b/src/figcore/api/batch_edit/article.py
+index ccd5de48cf..80b4b3904e 100644
+--- a/src/figcore/api/batch_edit/article.py
++++ b/src/figcore/api/batch_edit/article.py
+@@ -267,7 +267,7 @@ def _prepare_data_for_references(self, payload, ensure_compatibility=False):
+             return False
+ 
+         references = [
+-            rm.identifier for rm in APIEntity.ENTITIES.RelatedMaterial.find_by_id_list(self.article.related_materials)
++            rm.link for rm in APIEntity.ENTITIES.RelatedMaterial.find_by_id_list(self.article.related_materials)
+         ]
+         reference_payload = payload.get("payload")
+ 
+diff --git a/src/figcore/api/related_material/validator.py b/src/figcore/api/related_material/validator.py
+index 3b778f28ae..dbe607dd17 100644
+--- a/src/figcore/api/related_material/validator.py
++++ b/src/figcore/api/related_material/validator.py
+@@ -48,7 +48,7 @@ def validate_for_create(self):
+ 
+         if not self.validate_string(self.data["identifier"], self.MIN_IDENTIFIER_LENGTH, self.MAX_IDENTIFIER_LENGTH):
+             raise fig_exc.InvalidLength(
+-                "Identifier can have between {cls.MIN_IDENTIFIER_LENGTH} and {cls.MAX_IDENTIFIER_LENGTH} characters",
++                f"Identifier should have between {self.MIN_IDENTIFIER_LENGTH} and {self.MAX_IDENTIFIER_LENGTH} characters",
+                 field="identifier",
+             )
+ 
+@@ -62,19 +62,19 @@ def validate_for_create(self):
+             self.data["title"], self.MIN_TITLE_LENGTH, self.MAX_TITLE_LENGTH
+         ):
+             raise fig_exc.InvalidLength(
+-                "Identifier can have between {cls.MIN_TITLE_LENGTH} and {cls.MAX_TITLE_LENGTH} characters",
++                f"Identifier should have between {self.MIN_TITLE_LENGTH} and {self.MAX_TITLE_LENGTH} characters",
+                 field="title",
+             )
+ 
+     def validate_for_update(self):
+-        if self.data.get("accont_id") and not self.validate_int(self.data["account_id"]):
++        if self.data.get("account_id") and not self.validate_int(self.data["account_id"]):
+             raise fig_exc.InvalidValue("Invalid account ID", field="account_id")
+ 
+         if self.data.get("identifier") and not self.validate_string(
+             self.data["identifier"], self.MIN_IDENTIFIER_LENGTH, self.MAX_IDENTIFIER_LENGTH
+         ):
+             raise fig_exc.InvalidLength(
+-                "Identifier can have between {cls.MIN_IDENTIFIER_LENGTH} and {cls.MAX_IDENTIFIER_LENGTH} characters",
++                f"Identifier should have between {self.MIN_IDENTIFIER_LENGTH} and {self.MAX_IDENTIFIER_LENGTH} characters",
+                 field="identifier",
+             )
+ 
+@@ -88,6 +88,6 @@ def validate_for_update(self):
+             self.data["title"], self.MIN_TITLE_LENGTH, self.MAX_TITLE_LENGTH
+         ):
+             raise fig_exc.InvalidLength(
+-                "Identifier can have between {cls.MIN_TITLE_LENGTH} and {cls.MAX_TITLE_LENGTH} characters",
++                f"Identifier should have between {self.MIN_TITLE_LENGTH} and {self.MAX_TITLE_LENGTH} characters",
+                 field="title",
+             )
+diff --git a/tests/api/article/test_references.py b/tests/api/article/test_references.py
+index 0febdd99f2..169fa0121c 100644
+--- a/tests/api/article/test_references.py
++++ b/tests/api/article/test_references.py
+@@ -54,6 +54,7 @@ def test_create_has_resource(self):
+             "resource_doi": "10.100/123",
+         }
+         article = Article.create_article(article_data)
++        self.assertEqual(len(article.references), 1)
+         self.assertEqual(len(article.related_materials), 1)
+         self.assertEqual(RelatedMaterial(article.related_materials[0]).identifier, "10.100/123")
+         self.assertTrue(RelatedMaterial(article.related_materials[0]).is_linkout)
+diff --git a/tests/api/batch_edit/test_article.py b/tests/api/batch_edit/test_article.py
+index e70a3d7979..9cc7b618f3 100644
+--- a/tests/api/batch_edit/test_article.py
++++ b/tests/api/batch_edit/test_article.py
+@@ -248,7 +248,7 @@ def test_references_add_action(self):
+         references_data = field_factory.prepare_field_data_from_payload(references_payload, "references")
+ 
+         self.assertEqual(
+-            references + [self.data["resource_doi"]] + [reference for reference in payload],
++            references + [reference for reference in payload],
+             references_data["references"],
+         )
+ 

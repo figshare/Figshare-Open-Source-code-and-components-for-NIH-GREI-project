@@ -1,0 +1,46 @@
+diff --git a/scripts/sql_migrations/2023-05.sql b/scripts/sql_migrations/2023-05.sql
+index d56e5e250f..fddaad6343 100644
+--- a/scripts/sql_migrations/2023-05.sql
++++ b/scripts/sql_migrations/2023-05.sql
+@@ -2,8 +2,8 @@ CREATE TABLE `related_material` (
+   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+   `account_id` bigint(20) unsigned NOT NULL DEFAULT 0,
+   `identifier` varchar(2000) NOT NULL DEFAULT '',
+-  `identifier_type` enum('ARK','arXiv','bibcode','DOI','EAN13','EISSN','Handle','IGSN','ISBN','ISSN','ISTC','LISSN','LSID','PMID','PURL','UPC','URL','URN','w3id') NOT NULL DEFAULT 'URL',
+-  `relation` enum('IsCitedBy','Cites','IsSupplementTo','IsSupplementedBy','IsContinuedBy','Continues','Describes','IsDescribedBy','HasMetadata','IsMetadataFor','HasVersion','IsVersionOf','IsNewVersionOf','IsPreviousVersionOf','IsPartOf','HasPart','IsPublishedIn','IsReferencedBy','References','IsDocumentedBy','Documents','IsCompiledBy','Compiles','IsVariantFormOf','IsOriginalFormOf','IsIdenticalTo','IsReviewedBy','Reviews','IsDerivedFrom','IsSourceOf','IsRequiredBy','Requires','IsObsoletedBy','Obsoletes') NOT NULL DEFAULT 'References',
++  `identifier_type` varchar(256) NOT NULL DEFAULT 'URL',
++  `relation` varchar(256) NOT NULL DEFAULT 'References',
+   `title` varchar(2000) NOT NULL DEFAULT '',
+   `is_linkout` tinyint(3) unsigned NOT NULL DEFAULT 0,
+   PRIMARY KEY (`id`),
+diff --git a/src/figcore/models/dao/related_material.py b/src/figcore/models/dao/related_material.py
+index ef8f75f9ad..73c2ffff02 100644
+--- a/src/figcore/models/dao/related_material.py
++++ b/src/figcore/models/dao/related_material.py
+@@ -1,9 +1,7 @@
+ from sqlalchemy import Column, Index
+-from sqlalchemy.dialects.mysql import BIGINT, TINYINT, VARCHAR, ENUM
++from sqlalchemy.dialects.mysql import BIGINT, TINYINT, VARCHAR
+ 
+ from figcore.lib.data.related_material_static import (
+-    IDENTIFIER_TYPE,
+-    RELATION_TYPE,
+     DEFAULT_IDENTIFIER_TYPE,
+     DEFAULT_RELATION_TYPE,
+ )
+@@ -22,13 +20,10 @@ class RelatedMaterial(Base, ExtendedBase):
+     account_id = Column(BIGINT(unsigned=True), nullable=False, server_default="0", default=0)
+     identifier = Column(VARCHAR(length=2000), nullable=False, server_default="", default="")
+     identifier_type = Column(
+-        ENUM(*IDENTIFIER_TYPE.keys()),
+-        nullable=False,
+-        server_default=DEFAULT_IDENTIFIER_TYPE,
+-        default=DEFAULT_IDENTIFIER_TYPE,
++        VARCHAR(length=256), nullable=False, server_default=DEFAULT_IDENTIFIER_TYPE, default=DEFAULT_IDENTIFIER_TYPE
+     )
+     relation = Column(
+-        ENUM(*RELATION_TYPE), nullable=False, server_default=DEFAULT_RELATION_TYPE, default=DEFAULT_RELATION_TYPE
++        VARCHAR(length=256), nullable=False, server_default=DEFAULT_RELATION_TYPE, default=DEFAULT_RELATION_TYPE
+     )
+     title = Column(VARCHAR(length=2000), nullable=False, server_default="", default="")
+     is_linkout = Column(TINYINT(unsigned=True), nullable=False, server_default="0", default=0)

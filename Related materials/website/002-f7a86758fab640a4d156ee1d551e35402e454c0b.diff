@@ -1,0 +1,63 @@
+diff --git a/figshare/app/shapes/article.py b/figshare/app/shapes/article.py
+index 9b305ce3b3..1f0ec66ea5 100644
+--- a/figshare/app/shapes/article.py
++++ b/figshare/app/shapes/article.py
+@@ -1,3 +1,5 @@
++from figcore.api import RelatedMaterial
++
+ from figshare.lib.helpers.custom_domains import get_url_details, get_download_url, process_ndownloader_url
+ from figshare.app.presenters.article.base import get_defined_type, get_article_timeline
+ from .base import Presenter, field, helpers, computed, presenter, get_categories
+@@ -194,6 +196,16 @@ def get_minting_info(self, minting_info):
+ 
+ class ArticleShapeCurationFull(ArticleShape):
+     definedType = computed("get_defined_type")
++    hasLinkoutMaterials = computed("has_linkout_materials")
++
++    def has_linkout_materials(self, presenter):
++        related_materials = self.raw_data.related_materials
++        if related_materials:
++            for i in related_materials:
++                material = RelatedMaterial.find(i)
++                if material and material.is_linkout:
++                    return True
++        return False
+ 
+     def get_defined_type(self, presenter):
+         definde_type_api = self.raw_data.defined_type_api
+diff --git a/frontend/shared/services/article_validator.js b/frontend/shared/services/article_validator.js
+index cb1a5cddb6..41f9982a26 100644
+--- a/frontend/shared/services/article_validator.js
++++ b/frontend/shared/services/article_validator.js
+@@ -151,9 +151,13 @@ export const initializeValidator = () => {
+       const minLength = 2;
+       const maxLength = 1000;
+ 
+-      const { resourceDOI, resourceTitle, group, publish } = model;
++      const { resourceDOI, resourceTitle, group, publish, hasLinkoutMaterials } = model;
+       const { requireArticleLinkback } = group || {};
+ 
++      if (hasLinkoutMaterials) {
++        return true;
++      }
++
+       const trimmedResourceTitle = trimHtmlSpaces(stripHtmlTags(resourceTitle || ""));
+       if (resourceTitle && trimmedResourceTitle.length > maxLength) {
+         results.addError(
+@@ -188,11 +192,15 @@ export const initializeValidator = () => {
+     },
+ 
+     (model, results) => {
+-      const { resourceDOI, resourceTitle, group, publish } = model;
++      const { resourceDOI, resourceTitle, group, publish, hasLinkoutMaterials } = model;
+       const { requireArticleLinkback } = group || {};
+ 
+       const isRequired = !!publish && !!requireArticleLinkback;
+ 
++      if (hasLinkoutMaterials) {
++        return true;
++      }
++
+       if ((isRequired || resourceDOI) && !isDOI(resourceDOI)) {
+         results.addError(
+           "resourceDOI",
