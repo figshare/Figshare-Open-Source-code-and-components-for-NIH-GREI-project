@@ -1,0 +1,2391 @@
+diff --git a/src/pages/account/itemEdit/app.jsx b/src/pages/account/itemEdit/app.jsx
+index ea2e8dcd77..421df01a5d 100644
+--- a/src/pages/account/itemEdit/app.jsx
++++ b/src/pages/account/itemEdit/app.jsx
+@@ -108,12 +108,14 @@ export default class ItemEditApp extends Component {
+     const publishDisabled = saveDisabled || hasPublishErrors || uploadingFiles;
+     const canPublish = !hasEmptyRequiredFields && !uploadingFiles;
+     const group = itemFields.find((field) => field.id === "group")?.value;
++    const folderStructure = itemFields.find((field) => field.id === "folder_structure")?.value;
+ 
+     return (
+       <Layout>
+         <ItemContextProvider
+           accountLimits={accountLimits}
+           domainData={domainData}
++          folderStructure={folderStructure}
+           getFilesManagementRef={this.getFilesRef}
+           group={group}
+           item={item}
+diff --git a/src/pages/account/itemEdit/context/itemContext.js b/src/pages/account/itemEdit/context/itemContext.js
+index 6a67927fa0..5ed1610368 100644
+--- a/src/pages/account/itemEdit/context/itemContext.js
++++ b/src/pages/account/itemEdit/context/itemContext.js
+@@ -5,12 +5,13 @@ import PropTypes from "prop-types";
+ const noop = () => undefined;
+ 
+ const DEFAULT_CONTEXT_VALUE = {
+-  item: {},
+-  domainData: {},
+-  itemActions: [],
+   accountLimits: {},
++  domainData: {},
++  folderStructure: {},
+   group: {},
+   isMetadataRecord: undefined,
++  item: {},
++  itemActions: [],
+   setItemActions: noop,
+   getFieldValue: noop,
+   getFormState: noop,
+@@ -24,7 +25,15 @@ const DEFAULT_CONTEXT_VALUE = {
+ 
+ const ItemContext = createContext(DEFAULT_CONTEXT_VALUE);
+ 
+-function ItemContextProvider({ accountLimits, children, item, domainData, group, getFilesManagementRef }) {
++function ItemContextProvider({
++  accountLimits,
++  children,
++  domainData,
++  folderStructure,
++  item,
++  group,
++  getFilesManagementRef,
++}) {
+   const [isMetadataRecord, setIsMetadataRecord] = useState(item.isMetadataRecord);
+   const [itemActions, setItemActions] = useState([]);
+   const [formCallbacks, setFormCallbacks] = useState({
+@@ -42,7 +51,7 @@ function ItemContextProvider({ accountLimits, children, item, domainData, group,
+ 
+   const contextValue = useMemo(() => {
+     return {
+-      accountLimits, item, domainData, group, isMetadataRecord, itemActions,
++      accountLimits, domainData, group, folderStructure, isMetadataRecord, item, itemActions,
+       setIsMetadataRecord, setItemActions, getFieldValue,
+       getFormState: formCallbacks.getState,
+       getFormUpdates: formCallbacks.getFormUpdates,
+@@ -51,7 +60,7 @@ function ItemContextProvider({ accountLimits, children, item, domainData, group,
+       getFilesManagementRef,
+       registerForm: setFormCallbacks,
+     };
+-  }, [accountLimits, item, domainData, group, isMetadataRecord, itemActions,
++  }, [accountLimits, domainData, group, folderStructure, isMetadataRecord, item, itemActions,
+     setIsMetadataRecord, setItemActions, getFilesManagementRef]);
+ 
+   return (
+@@ -65,6 +74,7 @@ ItemContextProvider.propTypes = {
+   children: PropTypes.node.isRequired,
+   accountLimits: PropTypes.object,
+   domainData: PropTypes.object,
++  folderStructure: PropTypes.object,
+   getFilesManagementRef: PropTypes.func,
+   group: PropTypes.object,
+   item: PropTypes.object,
+@@ -73,6 +83,7 @@ ItemContextProvider.propTypes = {
+ ItemContextProvider.defaultProps = {
+   accountLimits: {},
+   domainData: {},
++  folderStructure: {},
+   group: {},
+   item: {},
+   getFilesManagementRef: noop,
+diff --git a/src/pages/account/itemEdit/main/index.gql b/src/pages/account/itemEdit/main/index.gql
+index c0f0626b99..b050be077c 100644
+--- a/src/pages/account/itemEdit/main/index.gql
++++ b/src/pages/account/itemEdit/main/index.gql
+@@ -45,6 +45,7 @@ query getDeletedFiles(
+                 id,
+                 name,
+                 fileId,
++                filePath,
+                 recoveryTimeLeft,
+                 deletedDate,
+                 downloadUrl,
+diff --git a/src/pages/account/itemEdit/main/index.jsx b/src/pages/account/itemEdit/main/index.jsx
+index c29592dc47..d6cec09947 100644
+--- a/src/pages/account/itemEdit/main/index.jsx
++++ b/src/pages/account/itemEdit/main/index.jsx
+@@ -12,7 +12,6 @@ export default class Main extends Component {
+   static propTypes = {
+     formDisabled: PropTypes.bool.isRequired,
+     formRef: PropTypes.func.isRequired,
+-    item: PropTypes.object.isRequired,
+     itemFields: PropTypes.array.isRequired,
+     onUpdateAppState: PropTypes.func.isRequired,
+     className: PropTypes.string,
+@@ -25,14 +24,13 @@ export default class Main extends Component {
+       className,
+       formDisabled,
+       formRef,
+-      item,
+       itemFields,
+       onUpdateAppState,
+     } = this.props;
+ 
+     return (
+       <section className={classnames(styles.main, className)}>
+-        <Metadata item={item} onUpdateAppState={onUpdateAppState} />
++        <Metadata onUpdateAppState={onUpdateAppState} />
+         {this.renderMandatoryFieldsLabel()}
+         <Form
+           ref={formRef}
+diff --git a/src/pages/account/itemEdit/main/index.test.jsx b/src/pages/account/itemEdit/main/index.test.jsx
+index aae94ba50b..e19c88e089 100644
+--- a/src/pages/account/itemEdit/main/index.test.jsx
++++ b/src/pages/account/itemEdit/main/index.test.jsx
+@@ -2,7 +2,7 @@ import React from "react";
+ import { mount } from "enzyme";
+ import { MockedProvider } from "@apollo/react-testing";
+ 
+-import { mockedDomainData, mockedItem, mockedItemFields } from "../mocks";
++import { mockedItemFields } from "../mocks";
+ import { ItemContext } from "../context/itemContext";
+ 
+ import Main from "./index";
+@@ -27,11 +27,8 @@ function mountComponent(props = {}, mocks = []) {
+         mocks={mocks}
+       >
+         <Main
+-          domainData={mockedDomainData}
+-          filesRef={setRef}
+           formDisabled={false}
+           formRef={setRef}
+-          item={mockedItem}
+           itemFields={mockedItemFields}
+           validateRequiredFields={false}
+           onUpdateAppState={onUpdateAppState}
+diff --git a/src/pages/account/itemEdit/main/metadata/components/overlays/manageFiles/index.jsx b/src/pages/account/itemEdit/main/metadata/components/overlays/manageFiles/index.jsx
+index db1171050b..c2ae5f229b 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/overlays/manageFiles/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/overlays/manageFiles/index.jsx
+@@ -7,7 +7,6 @@ import UndoMedium from "@figshare/fcl/icons/undo/medium";
+ import parseGraphQLError from "utils/apollo/parseGraphQLError";
+ import { Table, TableContext, useTableState, ALL_SELECTOR } from "shared/table";
+ import Registry from "utils/registry";
+-import getIn from "utils/getIn";
+ import { pushAlert } from "@figshare/fcl/alerts";
+ 
+ import { ManageFilesTable } from "../../tables/ManageFilesTable";
+@@ -16,8 +15,7 @@ import { MetadataContext } from "../../..";
+ import { OverlayHeaderWithStickyAlerts } from "../header";
+ import FileStatus from "../../tables/components/Status";
+ import FileSize from "../../tables/components/Size";
+-import ComplexName from "../../tables/components/ComplexName";
+-import { isDownloadAllDisabledBasedOnFilesState, processFilesUpload } from "../../../utils";
++import { isDownloadAllDisabledBasedOnFilesState, processFilesUpload, renderComplexFileName } from "../../../utils";
+ import { DragAndDropContainer } from "../../sections/addFiles/DragAndDrop";
+ import { VulnerabilitiesText } from "../../sections/browseFiles/components/Vulnerabilities";
+ 
+@@ -45,7 +43,7 @@ export const MANAGE_FILES_TABLE = {
+       sortable: true,
+       accessor: "name",
+       heading: () => <span>Name</span>,
+-      cell: ({ value }) => <ComplexName name={value} />,
++      cell: ({ value, row }, { dependencies }) => renderComplexFileName(value, row?.id, dependencies?.folderStructure),
+     },
+     {
+       id: "type",
+@@ -196,8 +194,8 @@ export function ManageFiles({ setOverlay }) {
+     }
+   }, []);
+ 
+-  const onDropFiles = useCallback((event) => {
+-    startUploadProcess(getIn(event, "dataTransfer.files"));
++  const onDropFiles = useCallback((files) => {
++    startUploadProcess(files);
+   }, []);
+ 
+   return (<TableContext.Provider value={context}>
+@@ -205,11 +203,12 @@ export function ManageFiles({ setOverlay }) {
+     <OverlayContent className={styles.overlayContent} role="tabpanel">
+       <DragAndDropContainer
+         className={styles.dropContainer}
++        filesAndFolders={true}
+         showDescription={false}
+         showDraggingOverlay={true}
+         onDrop={onDropFiles}
+       >
+-        <ManageFilesTable downloadAllDisabled={disabled.downloadAll} />
++        <ManageFilesTable downloadAllDisabled={disabled.downloadAll} folderStructure={state.folderStructure} />
+       </DragAndDropContainer>
+     </OverlayContent>
+     <OverlayFooter className={styles.footer}>
+diff --git a/src/pages/account/itemEdit/main/metadata/components/overlays/reorderFiles/index.jsx b/src/pages/account/itemEdit/main/metadata/components/overlays/reorderFiles/index.jsx
+index 57aa7f6d80..eb00f6105d 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/overlays/reorderFiles/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/overlays/reorderFiles/index.jsx
+@@ -71,7 +71,12 @@ export function ReorderFiles({ setOverlay, reordered, setReordered, setShowUnsav
+     <>
+       <OverlayHeaderWithStickyAlerts title="Reorder files" onGoBack={onGoBack} />
+       <OverlayContent role="tabpanel">
+-        <ReorderFilesTable key={reset} files={state.files} total={state.total.files} />
++        <ReorderFilesTable
++          key={reset}
++          files={state.files}
++          folderStructure={state.folderStructure}
++          total={state.total.files}
++        />
+       </OverlayContent>
+       <OverlayFooter>
+         <FooterButtonGroup>
+diff --git a/src/pages/account/itemEdit/main/metadata/components/overlays/restoreFiles/index.jsx b/src/pages/account/itemEdit/main/metadata/components/overlays/restoreFiles/index.jsx
+index c1a6626e6f..2d89286497 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/overlays/restoreFiles/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/overlays/restoreFiles/index.jsx
+@@ -8,10 +8,10 @@ import { RestoreFilesTable } from "../../tables/RestoreFilesTable";
+ import { FooterButtonGroup } from "..";
+ import { MetadataContext } from "../../..";
+ import RestoreFilesBtn from "../../tables/components/RestoreFilesBtn";
+-import ComplexName from "../../tables/components/ComplexName";
+ import FileSize from "../../tables/components/Size";
+ import { OverlayHeaderWithStickyAlerts } from "../header";
+ import { useItemHasMetadataOrExternalLink } from "../../../useItemHasMetadataOrExternalLink";
++import { renderComplexFileName } from "../../../utils";
+ 
+ 
+ export const RESTORE_FILES_TABLE = {
+@@ -39,7 +39,7 @@ export const RESTORE_FILES_TABLE = {
+       sortable: true,
+       accessor: "name",
+       heading: () => <span>Name</span>,
+-      cell: ({ value }) => <ComplexName name={value} />,
++      cell: ({ value, row }, { dependencies }) => renderComplexFileName(value, row?.id, dependencies?.folderStructure),
+     },
+     {
+       id: "type",
+@@ -125,7 +125,7 @@ export function RestoreFiles({ setOverlay }) {
+         onGoBack={!state.standalone ? onGoBack : undefined}
+       />
+       <OverlayContent role="tabpanel">
+-        <RestoreFilesTable />
++        <RestoreFilesTable folderStructure={state.folderStructure} />
+       </OverlayContent>
+       <OverlayFooter>
+         <FooterButtonGroup>
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/index.css b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/AddFilesSection.css
+similarity index 68%
+rename from src/pages/account/itemEdit/main/metadata/components/sections/addFiles/index.css
+rename to src/pages/account/itemEdit/main/metadata/components/sections/addFiles/AddFilesSection.css
+index 64bcf26f61..a63751cf5a 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/index.css
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/AddFilesSection.css
+@@ -23,6 +23,18 @@
+   display: none;
+ }
+ 
++.folderInput {
++  display: none;
++}
++
++.uploadButtonsSection {
++  display: flex;
++  flex-direction: row;
++  align-items: center;
++}
++
+ .uploadButton {
++  margin: 0 calc(3 * var(--gridSize));
++
+   cursor: pointer;
+ }
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/AddFilesSection.test.jsx b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/AddFilesSection.test.jsx
+index 548fdadfd7..2c665b4338 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/AddFilesSection.test.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/AddFilesSection.test.jsx
+@@ -2,6 +2,7 @@ import React from "react";
+ import { mount } from "enzyme";
+ import { act } from "react-dom/test-utils";
+ import Registry from "utils/registry";
++import { Button } from "@figshare/fcl/button";
+ 
+ import * as utils from "../../../utils";
+ import { MetadataContext } from "../../..";
+@@ -29,19 +30,45 @@ describe("AddFilesSection component", () => {
+     expect(wrapper.exists()).toBe(true);
+   });
+ 
++  it("renders two buttons", () => {
++    const value = { state: { uploading: true } };
++    const wrapper = mount(
++      <MetadataContext.Provider value={value}>
++        <AddFilesSection />
++      </MetadataContext.Provider>
++    );
++
++    expect(wrapper.find(Button)).toHaveLength(2);
++    expect(wrapper.find("button[data-control-id=\"browse-for-files-button\"]")).toHaveLength(1);
++    expect(wrapper.find("button[data-control-id=\"browse-for-folder-button\"]")).toHaveLength(1);
++  });
++
+   it("simulates file upload click", () => {
+     const wrapper = mount(
+       <MetadataContext.Provider value={mockContextValue}>
+         <AddFilesSection />
+       </MetadataContext.Provider>
+     );
+-    const uploadButton = wrapper.find(".uploadButton").first();
++    const uploadButton = wrapper.find("button[data-control-id=\"browse-for-files-button\"]");
+ 
+     uploadButton.simulate("click");
+     const fileInput = wrapper.find(".fileInput");
+     expect(fileInput.exists()).toBe(true);
+   });
+ 
++  it("simulates folder upload click", () => {
++    const wrapper = mount(
++      <MetadataContext.Provider value={mockContextValue}>
++        <AddFilesSection />
++      </MetadataContext.Provider>
++    );
++    const uploadButton = wrapper.find("button[data-control-id=\"browse-for-folder-button\"]");
++
++    uploadButton.simulate("click");
++    const folderInput = wrapper.find(".folderInput");
++    expect(folderInput.exists()).toBe(true);
++  });
++
+   it("deletes registry entry on unmount", () => {
+     const deleteMock = jest.spyOn(Registry, "delete");
+     const wrapper = mount(
+@@ -76,4 +103,44 @@ describe("AddFilesSection component", () => {
+     expect(mockProcessFilesUpload).toHaveBeenCalledWith([file]);
+     mockProcessFilesUpload.mockRestore();
+   });
++
++  it("handles folder upload correctly", async() => {
++    const mockProcessFilesUpload = utils.processFilesUpload;
++
++    const wrapper = mount(
++      <MetadataContext.Provider value={mockContextValue}>
++        <AddFilesSection />
++      </MetadataContext.Provider>
++    );
++
++    const folderInput = wrapper.find(".folderInput");
++    const file = new File(["dummy file content"], "test/testFile.txt", { type: "text/plain" });
++
++    await act(async() => {
++      await folderInput.props().onChange({ target: { files: [file] } });
++    });
++
++    expect(mockProcessFilesUpload).toHaveBeenCalledWith([file]);
++    mockProcessFilesUpload.mockRestore();
++  });
++
++  it("handles files drop correctly", async() => {
++    const mockProcessFilesUpload = utils.processFilesUpload;
++
++    const wrapper = mount(
++      <MetadataContext.Provider value={mockContextValue}>
++        <AddFilesSection />
++      </MetadataContext.Provider>
++    );
++
++    const dragAndDropContainer = wrapper.find(".addFilesBox").at(0);
++    const file = new File(["dummy file content"], "test/testFile.txt", { type: "text/plain" });
++
++    await act(async() => {
++      await dragAndDropContainer.props().onDrop([file]);
++    });
++
++    expect(mockProcessFilesUpload).toHaveBeenCalledWith([file]);
++    mockProcessFilesUpload.mockRestore();
++  });
+ });
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/DragAndDrop.css b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/DragAndDrop.css
+index bebf703120..529ab638bb 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/DragAndDrop.css
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/DragAndDrop.css
+@@ -1,4 +1,8 @@
+ .dragNote {
++  display: flex;
++  flex-direction: row;
++  align-items: center;
++
+   margin-bottom: calc(4 * var(--gridSize));
+ 
+   text-align: center;
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/DragAndDrop.test.jsx b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/DragAndDrop.test.jsx
+new file mode 100644
+index 0000000000..80bbc65457
+--- /dev/null
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/DragAndDrop.test.jsx
+@@ -0,0 +1,240 @@
++import React from "react";
++import { mount } from "enzyme";
++
++import Info from "../../../../../form/formField/genericFields/textField/components/info";
++
++import { DragAndDropContainer } from "./index";
++
++
++describe("<DragAndDrop />", () => {
++  const fileName = "testFile";
++
++  const fileItem = {
++    name: fileName,
++    size: 100,
++    type: "file",
++  };
++
++  const fileEntry = {
++    name: fileName,
++    fullPath: fileName,
++    file: (resolve) => resolve(fileItem),
++    isFile: true,
++  };
++
++  const directoryName = "testDirectory";
++
++  const directory = {
++    name: directoryName,
++    isDirectory: true,
++  };
++
++  const renderComponent = (props) =>
++    (<DragAndDropContainer {...props}>
++      {props.children}
++    </DragAndDropContainer>);
++
++  it("renders the page", () => {
++    const component = mount(renderComponent({ className: "dndTest" }));
++    expect(component.find(".dndTest")).toHaveLength(2);
++  });
++
++  it("renders the drag note if drag prop is provided", () => {
++    const component = mount(renderComponent({ showDescription: true }));
++    expect(component.find(".dragNote")).toHaveLength(1);
++    expect(component.find(".dragNote").text()).toBe("Drag and drop files to upload or");
++  });
++
++  it("renders certain drag note if drag prop and description is provided", () => {
++    const component = mount(renderComponent({ showDescription: true, description: "Test description" }));
++    expect(component.find(".dragNote")).toHaveLength(1);
++    expect(component.find(".dragNote").text()).toBe("Test description");
++  });
++
++  it("renders info for the drag note", () => {
++    const component = mount(renderComponent({ showDescription: true, infoText: "Text info" }));
++    expect(component.find(".dragNote")).toHaveLength(1);
++    expect(component.find(Info)).toHaveLength(1);
++    expect(component.find(Info).props().children).toEqual("Text info");
++  });
++
++  it("handleDragIn calls upload correctly and increseas counter", () => {
++    const component = mount(renderComponent({ showDescription: true }));
++    const instance = component.instance();
++
++    instance.counter = 0;
++
++    const event = {
++      preventDefault: jest.fn(),
++      stopPropagation: jest.fn(),
++      dataTransfer: { items: ["test1"] },
++    };
++
++    instance.handleDragIn(event);
++
++    expect(instance.counter).toBe(1);
++    expect(event.preventDefault).toBeCalled();
++    expect(event.stopPropagation).toBeCalled();
++    expect(instance.state.dragging).toBe(true);
++  });
++
++  it("handleDragOut calls upload correctly and decreseas counter", () => {
++    const component = mount(renderComponent({ showDescription: true }));
++    const instance = component.instance();
++
++    instance.counter = 2;
++
++    const event = {
++      preventDefault: jest.fn(),
++      stopPropagation: jest.fn(),
++      dataTransfer: { items: ["test1"] },
++    };
++
++    instance.handleDragOut(event);
++
++    expect(instance.counter).toBe(1);
++    expect(event.preventDefault).toBeCalled();
++    expect(event.stopPropagation).toBeCalled();
++    expect(instance.state.dragging).toBe(false);
++  });
++
++  it("handleDragOut exists if counter is 0", () => {
++    const component = mount(renderComponent({ showDescription: true }));
++    const instance = component.instance();
++
++    instance.counter = 1;
++
++    const event = {
++      preventDefault: jest.fn(),
++      stopPropagation: jest.fn(),
++      dataTransfer: { items: ["test1"] },
++    };
++
++    const response = instance.handleDragOut(event);
++
++    expect(instance.counter).toBe(0);
++    expect(response).toBe(undefined);
++  });
++
++  it("handleDrop sets state correctly and calls the upload function", () => {
++    const onDrop = jest.fn();
++    const component = mount(renderComponent({ showDescription: true, onDrop }));
++    const instance = component.instance();
++
++    const event = {
++      preventDefault: jest.fn(),
++      stopPropagation: jest.fn(),
++      dataTransfer: {
++        files: ["test"],
++        clearData: jest.fn(),
++      },
++    };
++
++    instance.handleDrop(event);
++
++    expect(instance.state.dragging).toBe(false);
++    expect(event.preventDefault).toBeCalled();
++    expect(event.stopPropagation).toBeCalled();
++    expect(event.dataTransfer.clearData).toBeCalled();
++    expect(onDrop).toBeCalled();
++    expect(instance.dragCounter).toBe(0);
++  });
++
++  it("handleDrop works correctly for files", () => {
++    const onDrop = jest.fn();
++    const component = mount(renderComponent({ filesAndFolders: true, showDescription: true, onDrop }));
++    const instance = component.instance();
++
++    const event = {
++      preventDefault: jest.fn(),
++      stopPropagation: jest.fn(),
++      dataTransfer: {
++        items: [{
++          webkitGetAsEntry: () => fileEntry,
++          getAsFile: () => fileItem,
++        }],
++        clearData: jest.fn(),
++      },
++    };
++
++    instance.handleDrop(event);
++    component.unmount();
++
++    expect(instance.state.dragging).toBe(false);
++    expect(event.preventDefault).toBeCalled();
++    expect(event.stopPropagation).toBeCalled();
++    expect(event.dataTransfer.clearData).toBeCalled();
++    expect(onDrop).toBeCalled();
++    expect(instance.dragCounter).toBe(0);
++  });
++
++  it("handleDrop works correctly for folders", () => {
++    const onDrop = jest.fn();
++    const component = mount(renderComponent({ filesAndFolders: true, showDescription: true, onDrop }));
++    const instance = component.instance();
++    const handleDirectory = jest.spyOn(instance, "handleDirectory");
++
++    const directoryReader = { readEntries: (resolve) => resolve([fileEntry]) };
++    directory.createReader = () => directoryReader;
++
++    const event = {
++      preventDefault: jest.fn(),
++      stopPropagation: jest.fn(),
++      dataTransfer: {
++        items: [{
++          webkitGetAsEntry: () => directory,
++          getAsFile: () => fileItem,
++        }],
++        clearData: jest.fn(),
++      },
++    };
++
++    instance.handleDrop(event);
++    component.unmount();
++
++    expect(instance.state.dragging).toBe(false);
++    expect(event.preventDefault).toBeCalled();
++    expect(event.stopPropagation).toBeCalled();
++    expect(event.dataTransfer.clearData).toBeCalled();
++    expect(handleDirectory).toHaveBeenCalledTimes(1);
++    expect(onDrop).toBeCalled();
++    expect(instance.dragCounter).toBe(0);
++  });
++
++  it("handleDrop works correctly for folder with subfolder", () => {
++    const onDrop = jest.fn();
++    const component = mount(renderComponent({ filesAndFolders: true, showDescription: true, onDrop }));
++    const instance = component.instance();
++    const handleDirectory = jest.spyOn(instance, "handleDirectory");
++
++    const subDirectoryReader = { readEntries: (resolve) => resolve([fileEntry]) };
++
++    const subDirectory = {
++      name: "testSubDirectory",
++      isDirectory: true,
++      createReader: () => subDirectoryReader,
++    };
++
++    const directoryReader = { readEntries: (resolve) => resolve([subDirectory]) };
++
++    directory.createReader = () => directoryReader;
++
++    const event = {
++      preventDefault: jest.fn(),
++      stopPropagation: jest.fn(),
++      dataTransfer: {
++        items: [{
++          webkitGetAsEntry: () => directory,
++          getAsFile: () => fileItem,
++        }],
++        clearData: jest.fn(),
++      },
++    };
++
++    instance.handleDrop(event);
++    component.unmount();
++
++    expect(handleDirectory).toHaveBeenCalledTimes(2);
++    expect(onDrop).toBeCalled();
++  });
++});
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/index.jsx b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/index.jsx
+index bc7f61f3c6..4db9c7d3c5 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/index.jsx
+@@ -1,6 +1,8 @@
+ import React from "react";
+ import PropTypes from "prop-types";
+ 
++import Info from "../../../../../form/formField/genericFields/textField/components/info";
++
+ import styles from "./DragAndDrop.css";
+ 
+ 
+@@ -8,6 +10,9 @@ export class DragAndDropContainer extends React.Component {
+   static propTypes = {
+     children: PropTypes.node,
+     className: PropTypes.string,
++    description: PropTypes.string,
++    filesAndFolders: PropTypes.bool,
++    infoText: PropTypes.string,
+     showDescription: PropTypes.bool,
+     showDraggingOverlay: PropTypes.bool,
+     typeOfContent: PropTypes.string,
+@@ -18,6 +23,9 @@ export class DragAndDropContainer extends React.Component {
+   static defaultProps = {
+     children: null,
+     className: undefined,
++    description: undefined,
++    filesAndFolders: false,
++    infoText: undefined,
+     onDrop: () => undefined,
+     showDescription: true,
+     showDraggingOverlay: false,
+@@ -26,6 +34,7 @@ export class DragAndDropContainer extends React.Component {
+   };
+ 
+   dropRef = React.createRef();
++  files = [];
+ 
+   state = { dragging: false };
+ 
+@@ -51,17 +60,28 @@ export class DragAndDropContainer extends React.Component {
+ 
+   render() {
+     const { dragging } = this.state;
+-    const { children, className, showDescription, showDraggingOverlay, typeOfContent } = this.props;
+-
+-    const dragText = dragging ? "Drop here" : `Drag and drop ${typeOfContent} to upload or`;
++    const {
++      children,
++      className,
++      description,
++      infoText,
++      showDescription,
++      showDraggingOverlay,
++      typeOfContent,
++    } = this.props;
++
++    const text = description ? description : `Drag and drop ${typeOfContent} to upload or`;
++    const dragText = dragging ? "Drop here" : text;
+ 
+     return (
+       <>
+         <div ref={this.dropRef} className={className} data-dragging={dragging}>
+           <>
+-            {showDescription && <div className={styles.dragNote}>
+-              {dragText}
+-            </div>}
++            {showDescription &&
++              <div className={styles.dragNote}>
++                {dragText}
++                {infoText && <Info title="Drag and drop">{infoText}</Info>}
++              </div>}
+             {children}
+           </>
+         </div>
+@@ -76,14 +96,13 @@ export class DragAndDropContainer extends React.Component {
+   }
+ 
+   handleDrag = (event) => {
+-    /* istanbul ignore next */
+     event.preventDefault();
+     event.stopPropagation();
+   };
+ 
+   handleDragIn = (event) => {
+-    event.preventDefault();
+-    event.stopPropagation();
++    this.handleDrag(event);
++
+     this.counter += 1;
+ 
+     if (event.dataTransfer?.items?.length) {
+@@ -92,10 +111,10 @@ export class DragAndDropContainer extends React.Component {
+   };
+ 
+   handleDragOut = (event) => {
+-    event.preventDefault();
+-    event.stopPropagation();
++    this.handleDrag(event);
++
++    this.counter -= 1;
+ 
+-    this.counter -= 1; // eslint-disable-line no-plusplus
+     // Counter should always be 0; if not - exit drag;
+     if (this.counter > 0) {
+       return;
+@@ -108,17 +127,57 @@ export class DragAndDropContainer extends React.Component {
+     event.stopPropagation();
+     this.setState({ dragging: false }, () => this.props.onDragging(this.state.dragging));
+ 
+-    if (event.dataTransfer.files?.length) {
+-      // Call on add function after drop is done
++    const { filesAndFolders, onDrop } = this.props;
+ 
+-      const { onDrop } = this.props;
++    if (filesAndFolders) {
++      const { items } = event?.dataTransfer || {};
++
++      for (const item of items) {
++        const entry = item?.webkitGetAsEntry();
++        const file = item?.getAsFile();
++
++        if (entry.isFile) {
++          if (typeof onDrop === "function") {
++            onDrop([file]);
++          }
++        } else if (entry.isDirectory) {
++          this.handleDirectory(entry);
++        }
++      }
++    } else if (event.dataTransfer.files?.length) {
++      // Call on add function after drop is done
+       if (typeof onDrop === "function") {
+-        onDrop(event);
++        onDrop(event.dataTransfer.files);
+       }
+-
+-      // clear the drag data
+-      event.dataTransfer.clearData();
+-      this.dragCounter = 0;
+     }
++
++    // clear the drag data
++    event.dataTransfer.clearData();
++    this.dragCounter = 0;
+   };
++
++  handleDirectory = (director) => {
++    const { onDrop } = this.props;
++    const reader = director.createReader();
++
++    reader.readEntries((entries) => {
++      entries.forEach((entry) => {
++        if (entry.isFile) {
++          entry.file((file) => {
++            Object.defineProperty(file, "webkitRelativePath", { value: entry.fullPath?.slice(1) });
++            this.files.push(file);
++
++            if (this.files?.length) {
++              if (typeof onDrop === "function") {
++                onDrop(this.files);
++                this.files = [];
++              }
++            }
++          });
++        } else {
++          this.handleDirectory(entry);
++        }
++      });
++    });
++  }
+ }
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/index.test.jsx b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/index.test.jsx
+deleted file mode 100644
+index 96ff064232..0000000000
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/DragAndDrop/index.test.jsx
++++ /dev/null
+@@ -1,103 +0,0 @@
+-import React from "react";
+-import { mount } from "enzyme";
+-
+-import { DragAndDropContainer } from "./index";
+-
+-
+-describe("<DragAndDrop />", () => {
+-  const renderComponent = (props) =>
+-    (<DragAndDropContainer {...props}>
+-      {props.children}
+-    </DragAndDropContainer>);
+-
+-  it("renders the page", () => {
+-    const component = mount(renderComponent({ className: "dndTest" }));
+-    expect(component.find(".dndTest")).toHaveLength(2);
+-  });
+-
+-  it("renders the drag note if drag prop is provided", () => {
+-    const component = mount(renderComponent({ showDescription: true }));
+-    expect(component.find(".dragNote")).toHaveLength(1);
+-    expect(component.find(".dragNote").text()).toBe("Drag and drop files to upload or");
+-  });
+-
+-  it("handleDragIn calls upload correctly and increseas counter", () => {
+-    const component = mount(renderComponent({ showDescription: true }));
+-    const instance = component.instance();
+-
+-    instance.counter = 0;
+-
+-    const event = {
+-      preventDefault: jest.fn(),
+-      stopPropagation: jest.fn(),
+-      dataTransfer: { items: ["test1"] },
+-    };
+-
+-    instance.handleDragIn(event);
+-
+-    expect(instance.counter).toBe(1);
+-    expect(event.preventDefault).toBeCalled();
+-    expect(event.stopPropagation).toBeCalled();
+-    expect(instance.state.dragging).toBe(true);
+-  });
+-
+-  it("handleDragOut calls upload correctly and decreseas counter", () => {
+-    const component = mount(renderComponent({ showDescription: true }));
+-    const instance = component.instance();
+-
+-    instance.counter = 2;
+-
+-    const event = {
+-      preventDefault: jest.fn(),
+-      stopPropagation: jest.fn(),
+-      dataTransfer: { items: ["test1"] },
+-    };
+-
+-    instance.handleDragOut(event);
+-
+-    expect(instance.counter).toBe(1);
+-    expect(event.preventDefault).toBeCalled();
+-    expect(event.stopPropagation).toBeCalled();
+-    expect(instance.state.dragging).toBe(false);
+-  });
+-
+-  it("handleDragOut exists if counter is 0", () => {
+-    const component = mount(renderComponent({ showDescription: true }));
+-    const instance = component.instance();
+-
+-    instance.counter = 1;
+-
+-    const event = {
+-      preventDefault: jest.fn(),
+-      stopPropagation: jest.fn(),
+-      dataTransfer: { items: ["test1"] },
+-    };
+-
+-    const response = instance.handleDragOut(event);
+-
+-    expect(instance.counter).toBe(0);
+-    expect(response).toBe(undefined);
+-  });
+-
+-  it("handleDrop sets state correctly and calls the upload function", () => {
+-    const component = mount(renderComponent({ showDescription: true }));
+-    const instance = component.instance();
+-
+-    const event = {
+-      preventDefault: jest.fn(),
+-      stopPropagation: jest.fn(),
+-      dataTransfer: {
+-        files: ["test"],
+-        clearData: jest.fn(),
+-      },
+-    };
+-
+-    instance.handleDrop(event);
+-
+-    expect(instance.state.dragging).toBe(false);
+-    expect(event.preventDefault).toBeCalled();
+-    expect(event.stopPropagation).toBeCalled();
+-    expect(event.dataTransfer.clearData).toBeCalled();
+-    expect(instance.dragCounter).toBe(0);
+-  });
+-});
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/index.jsx b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/index.jsx
+index 3065151a08..07fddf66c6 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/index.jsx
+@@ -1,4 +1,5 @@
+ import React, { useEffect, useRef, useCallback } from "react";
++import { string } from "prop-types";
+ import getIn from "utils/getIn";
+ import { Button } from "@figshare/fcl/button";
+ import Registry from "utils/registry";
+@@ -7,13 +8,14 @@ import parseGraphQLError from "utils/apollo/parseGraphQLError";
+ 
+ import { processFilesUpload } from "../../../utils";
+ 
+-import styles from "./index.css";
++import styles from "./AddFilesSection.css";
+ import { DragAndDropContainer } from "./DragAndDrop";
+ import { RetryFiles } from "./retryFiles";
+ 
+ 
+-export function AddFilesSection() {
++export function AddFilesSection({ typeOfContent }) {
+   const fileInputRef = useRef(null);
++  const folderInputRef = useRef(null);
+ 
+   const startUploadProcess = useCallback((files) => {
+     try {
+@@ -42,21 +44,47 @@ export function AddFilesSection() {
+     };
+   }, [startUploadProcess]);
+ 
+-  const onDropFiles = useCallback((event) => {
+-    startUploadProcess(getIn(event, "dataTransfer.files"));
++  useEffect(() => {
++    folderInputRef.current.setAttribute("directory", "");
++    folderInputRef.current.setAttribute("webkitdirectory", "");
++  }, [folderInputRef]);
++
++  const onDropFiles = useCallback((files) => {
++    startUploadProcess(files);
+   }, [startUploadProcess]);
++
+   const onUploadFiles = useCallback((event) => {
+     startUploadProcess(getIn(event, "target.files"));
+     fileInputRef.current.value = "";
+   }, [startUploadProcess]);
+-  const onUploadClick = useCallback(() => {
++
++  const onUploadFolder = useCallback((event) => {
++    startUploadProcess(getIn(event, "target.files"));
++    folderInputRef.current.value = "";
++  }, [startUploadProcess]);
++
++  const onUploadFilesClick = useCallback(() => {
+     fileInputRef.current?.click?.();
+   }, [fileInputRef]);
+ 
++  const onUploadFolderClick = useCallback(() => {
++    folderInputRef.current?.click?.();
++  }, [folderInputRef]);
++
++  const dragText = `Drag and drop ${typeOfContent} or folders here to upload`;
++  const info = `Up to 500 ${typeOfContent} can be uploaded. Folders can be uploaded directly.
++    Folder structure will be maintained when published.`;
++
+   return (
+     <div className={styles.addFiles} data-section-id="add-files-section">
+-      <DragAndDropContainer className={styles.addFilesBox} onDrop={onDropFiles}>
+-        <>
++      <DragAndDropContainer
++        className={styles.addFilesBox}
++        description={dragText}
++        filesAndFolders={true}
++        infoText={info}
++        onDrop={onDropFiles}
++      >
++        <div className={styles.uploadButtonsSection}>
+           <input
+             ref={fileInputRef}
+             className={styles.fileInput}
+@@ -69,13 +97,32 @@ export function AddFilesSection() {
+             data-control-id="browse-for-files-button"
+             size="M"
+             theme="secondary"
+-            onClick={onUploadClick}
++            onClick={onUploadFilesClick}
+           >
+-            Browse for files
++            Browse files
++          </Button>or
++          <input
++            ref={folderInputRef}
++            className={styles.folderInput}
++            type="file"
++            onChange={onUploadFolder}
++          />
++          <Button
++            className={styles.uploadButton}
++            data-control-id="browse-for-folder-button"
++            size="M"
++            theme="secondary"
++            onClick={onUploadFolderClick}
++          >
++            Browse for folders
+           </Button>
+-        </>
++        </div>
+       </DragAndDropContainer>
+       <RetryFiles />
+     </div>
+   );
+ }
++
++AddFilesSection.propTypes = { typeOfContent: string };
++
++AddFilesSection.defaultProps = { typeOfContent: "files" };
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/retryFiles/index.jsx b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/retryFiles/index.jsx
+index 884dc4f859..a51a741394 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/retryFiles/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/addFiles/retryFiles/index.jsx
+@@ -12,7 +12,6 @@ export function RetryFiles() {
+   const retrying = useRef(null);
+ 
+   const onFileSelect = useCallback((event) => {
+-    // eslint-disable-next-line no-console
+     fireEvent("file:retry:submit", { file: getIn(event, "target.files[0]"), identifier: retrying.current });
+     ref.current.value = "";
+     retrying.current = null;
+@@ -31,7 +30,6 @@ export function RetryFiles() {
+     };
+   }, [onRetry]);
+ 
+-
+   return (
+     <input
+       ref={ref}
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/index.css b/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/BrowseFilesSection.css
+similarity index 100%
+rename from src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/index.css
+rename to src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/BrowseFilesSection.css
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/FileTile.css b/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/FileTile.css
+index 8aa4eb96c1..708e235327 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/FileTile.css
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/FileTile.css
+@@ -3,13 +3,24 @@
+   justify-content: space-between;
+   align-items: center;
+ 
+-  padding: var(--gridSize) calc(2 * var(--gridSize));
++  padding: var(--gridSize);
++  padding-right: calc(2 * var(--gridSize));
+ 
+   background: var(--color-layout-primary-background);
+ }
+ 
++.icon {
++  max-width: calc(6 * var(--gridSize));
++  height: calc(10 * var(--gridSize));
++
++  margin: 0 var(--gridSize);
++
++  fill: var(--color-icon-primary);
++}
++
+ .fileNameAndInfo {
+   width: 100%;
++  margin-left: var(--gridSize);
+ }
+ 
+ .fileInfo {
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/FileTile.test.jsx b/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/FileTile.test.jsx
+index 88b21c4d5f..538b142165 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/FileTile.test.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/FileTile.test.jsx
+@@ -1,5 +1,8 @@
+ import React from "react";
+ import { shallow } from "enzyme";
++import Directory from "@figshare/fcl/icons/directory";
++import Document from "@figshare/fcl/icons/fileWithText";
++import Picture from "@figshare/fcl/icons/picture";
+ 
+ import { STATUS_ICONS_CONFIG, ProgressOperations } from "../../../../../constants";
+ 
+@@ -32,12 +35,13 @@ describe("FileTile", () => {
+     const wrapper = shallow(<FileTile file={defaultFile} />);
+     expect(wrapper.find("FileType").prop("name")).toEqual("testFile.txt");
+   });
++
+   it("should display file size when the progress operation is none", () => {
+     const wrapper = shallow(<FileTile file={defaultFile} />);
+     expect(wrapper.find("FileSize").prop("bytes")).toBe(defaultFile.info.size);
+   });
+ 
+-  test("should display progress when the progress operation is not none", () => {
++  it("should display progress when the progress operation is not none", () => {
+     const fileWithProgress = {
+       ...defaultFile,
+       info: {
+@@ -50,6 +54,7 @@ describe("FileTile", () => {
+     const result = `${STATUS_ICONS_CONFIG[defaultFile.info.status]?.tooltip} (${fileWithProgress.info.progress}%)`;
+     expect(wrapper.find("span").text()).toBe(result);
+   });
++
+   it("renders file with status VIRUS_FOUND and appropriate styles", () => {
+     const fileWithVirusStatus = {
+       ...defaultFile,
+@@ -58,6 +63,7 @@ describe("FileTile", () => {
+     const wrapper = shallow(<FileTile file={fileWithVirusStatus} />);
+     expect(wrapper.find(".warning")).toHaveLength(1);
+   });
++
+   it("renders null when status is COMPLETE", () => {
+     const wrapper = shallow(<FileTile file={defaultFile} />);
+     expect(wrapper.find("[data-id=\"status-icon\"]")).toHaveLength(0);
+@@ -67,5 +73,44 @@ describe("FileTile", () => {
+     const wrapper = shallow(<FileTile file={defaultFile} />);
+     expect(wrapper.find("[data-id=\"status-icon\"]")).toHaveLength(0);
+   });
++
++  it("renders correct icon file", () => {
++    const wrapper1 = shallow(<FileTile file={defaultFile} />);
++    expect(wrapper1.find(Directory)).toHaveLength(0);
++    expect(wrapper1.find(Picture)).toHaveLength(0);
++    expect(wrapper1.find(Document)).toHaveLength(1);
++
++    const fileFromDirectory = {
++      ...defaultFile,
++      file: { webkitRelativePath: "test/" },
++      info: {
++        name: "testFile.png",
++        type: "png",
++      },
++    };
++
++    const wrapper2 = shallow(<FileTile file={fileFromDirectory} />);
++    expect(wrapper2.find(Directory)).toHaveLength(1);
++    expect(wrapper2.find(Picture)).toHaveLength(0);
++    expect(wrapper2.find(Document)).toHaveLength(0);
++
++    const wrapper3 = shallow(<FileTile file={defaultFile} path="test/" />);
++    expect(wrapper3.find(Directory)).toHaveLength(1);
++    expect(wrapper3.find(Picture)).toHaveLength(0);
++    expect(wrapper3.find(Document)).toHaveLength(0);
++
++    const picture = {
++      ...defaultFile,
++      info: {
++        name: "testFile.png",
++        type: "png",
++      },
++    };
++
++    const wrapper4 = shallow(<FileTile file={picture} />);
++    expect(wrapper4.find(Directory)).toHaveLength(0);
++    expect(wrapper4.find(Picture)).toHaveLength(1);
++    expect(wrapper4.find(Document)).toHaveLength(0);
++  });
+ });
+ 
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/index.jsx b/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/index.jsx
+index 72ea74f19b..eb8507ea9c 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/components/FileTile/index.jsx
+@@ -1,6 +1,9 @@
+ import React from "react";
+-import { arrayOf, number, object } from "prop-types";
++import { array, object, string } from "prop-types";
+ import classnames from "classnames";
++import Directory from "@figshare/fcl/icons/directory";
++import Document from "@figshare/fcl/icons/fileWithText";
++import Picture from "@figshare/fcl/icons/picture";
+ 
+ import FileSize from "../../../../tables/components/Size";
+ import FileType from "../../../../tables/components/Type";
+@@ -15,9 +18,11 @@ import styles from "./FileTile.css";
+ 
+ const errorStatuses = ["INCOMPLETE", "ABORTED", "WRONG_FILE"];
+ const cancelableStatuses = ["INCOMPLETE", "ABORTED", "UPLOADING", "O_BYTES", "WRONG_FILE"];
++const pictureExtensions = ["jpg", "jpeg", "png", "gif"];
+ 
+-export default function FileTile({ file, processing }) {
+-  const { name, status, progress, size, error, operation } = file.info;
++export default function FileTile({ file, path, processing }) {
++  const { name, status, progress, size, error, operation, type } = file.info;
++  const { webkitRelativePath } = file?.file || {};
+   let getStatus = status;
+ 
+   if (getStatus === "INCOMPLETE" && processing?.includes(file?.id)) {
+@@ -28,6 +33,19 @@ export default function FileTile({ file, processing }) {
+   const canCancel = cancelableStatuses.includes(getStatus);
+   const withCancelButton = canCancel || operation !== ProgressOperations.none;
+   const cancelButtonTheme = isError ? "primary" : "tertiary";
++  const complexName = path ? `${path}/${name}` : webkitRelativePath || name;
++
++  const renderIcon = () => {
++    if (path || (webkitRelativePath && webkitRelativePath !== name)) {
++      return <Directory className={styles.icon} />;
++    }
++
++    if (pictureExtensions.includes(type)) {
++      return <Picture className={styles.icon} />;
++    }
++
++    return <Document className={styles.icon} />;
++  };
+ 
+   return (
+     <div
+@@ -38,8 +56,9 @@ export default function FileTile({ file, processing }) {
+         { [styles.warning]: status === "VIRUS_FOUND" }
+       )}
+     >
++      {renderIcon()}
+       <div className={styles.fileNameAndInfo}>
+-        <ComplexName name={name} numberOfLines={1} />
++        <ComplexName name={complexName} numberOfLines={1} />
+         <div className={styles.fileInfo}>
+           <FileType name={name} />
+           {operation !== ProgressOperations.none ? <span>
+@@ -55,6 +74,6 @@ export default function FileTile({ file, processing }) {
+     </div>);
+ }
+ 
+-FileTile.propTypes = { file: object, processing: arrayOf(number) };
++FileTile.propTypes = { file: object, path: string, processing: array };
+ 
+-FileTile.defaultProps = { file: undefined, processing: [] };
++FileTile.defaultProps = { file: undefined, path: undefined, processing: [] };
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/index.jsx b/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/index.jsx
+index 3ad6a5f9d5..02b83079b0 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/browseFiles/index.jsx
+@@ -12,11 +12,12 @@ import { ISSUE_STATUSES, METADATA_OVERLAYS } from "../../../constants";
+ import ShowMoreBtn from "./components/ShowMoreBtn";
+ import FileTile from "./components/FileTile";
+ import { VulnerabilitiesBanner } from "./components/Vulnerabilities";
+-import styles from "./index.css";
++import styles from "./BrowseFilesSection.css";
+ 
+ 
+ export function BrowseFilesSection() {
+   const { state, actions } = useContext(MetadataContext);
++
+   const warning = useMemo(() => {
+     const files = getIn(state, "files", []);
+     const filesWithIssues = files.filter((entry) => ISSUE_STATUSES.includes(entry.status));
+@@ -83,8 +84,14 @@ export function BrowseFilesSection() {
+                 {
+                   Array.prototype.map.call(files,
+                     (file) => (
+-                      <FileTile key={file.id} file={file} processing={state?.processing} />
+-                    ))
++                      <FileTile
++                        key={file.id}
++                        file={file}
++                        path={getIn(state, `folderStructure.${file.id}`)}
++                        processing={state?.processing}
++                      />
++                    )
++                  )
+                 }
+               </div>
+               {(shown < total) && <ShowMoreBtn state={state} />}
+diff --git a/src/pages/account/itemEdit/main/metadata/components/sections/index.jsx b/src/pages/account/itemEdit/main/metadata/components/sections/index.jsx
+index 08edc1f688..1884c984ec 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/sections/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/sections/index.jsx
+@@ -20,7 +20,7 @@ import styles from "./index.css";
+ 
+ const name = "metadata-section-type-selector";
+ const options = [{
+-  label: "Add Files",
++  label: "Add files or folders",
+   value: METADATA_SECTIONS.files,
+   id: `${name}-${METADATA_SECTIONS.files}`,
+ }, {
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/ManageFilesTable.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/ManageFilesTable.jsx
+index c39274ffc8..64a28f4d0e 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/ManageFilesTable.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/ManageFilesTable.jsx
+@@ -1,5 +1,5 @@
+ import React, { useMemo, useCallback, useContext } from "react";
+-import { bool } from "prop-types";
++import { bool, object } from "prop-types";
+ import DeleteMedium from "@figshare/fcl/icons/delete/medium";
+ import Download from "@figshare/fcl/icons/download";
+ import Registry from "utils/registry";
+@@ -42,18 +42,18 @@ export function handleDeleteFile(fileId) {
+   fireEvent("files:delete", { identifiers: [fileId] });
+ }
+ 
+-export function ManageFilesTable({ downloadAllDisabled }) {
++export function ManageFilesTable({ downloadAllDisabled, folderStructure }) {
+   const state = useContext(TableContext);
+ 
+   const dependencies = useMemo(() => {
+-    return { showMore: onShowMore };
+-  }, []);
++    return { showMore: onShowMore, folderStructure };
++  }, [folderStructure]);
++
+   const actions = useMemo(() => ([
+     { name: "download", label: "Download", Icon: Download, disabled: false, getExtraProps },
+     { name: "delete", label: "Delete", Icon: DeleteMedium, disabled: false, fn: handleDeleteFile },
+   ]), [getExtraProps, handleDeleteFile]);
+ 
+-
+   const onUpload = useCallback((event) => {
+     const addFilesHandler = Registry.get("item/metadata/addFiles");
+ 
+@@ -80,6 +80,6 @@ export function ManageFilesTable({ downloadAllDisabled }) {
+   );
+ }
+ 
+-ManageFilesTable.propTypes = { downloadAllDisabled: bool };
++ManageFilesTable.propTypes = { downloadAllDisabled: bool, folderStructure: object };
+ 
+-ManageFilesTable.defaultProps = { downloadAllDisabled: false };
++ManageFilesTable.defaultProps = { downloadAllDisabled: false, folderStructure: {} };
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/ManageFilesTable.test.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/ManageFilesTable.test.jsx
+index 09e8aa8581..2730f51be5 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/ManageFilesTable.test.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/ManageFilesTable.test.jsx
+@@ -77,19 +77,25 @@ describe("ManageFilesTable", () => {
+     total: 5,
+     selection: { selections: { size: 2 } },
+   };
++
++  const props = {
++    downloadAllDisabled: false,
++    folderStructure: { 1: "test/path" },
++  };
++
+   it("should render without errors", () => {
+-    const wrapper = mount(<TableContext.Provider value={state}><ManageFilesTable /></TableContext.Provider>);
++    const wrapper = mount(<TableContext.Provider value={state}><ManageFilesTable {...props} /></TableContext.Provider>);
+     expect(wrapper).toBeTruthy();
+   });
+   it("should render table components", () => {
+-    const wrapper = mount(<TableContext.Provider value={state}><ManageFilesTable /></TableContext.Provider>);
++    const wrapper = mount(<TableContext.Provider value={state}><ManageFilesTable {...props} /></TableContext.Provider>);
+     expect(wrapper.find(Table.Container)).toHaveLength(1);
+     expect(wrapper.find(Table.Info)).toHaveLength(2);
+     expect(wrapper.find(Table)).toHaveLength(1);
+   });
+   it("render correctly props for SelectedFilesInfo", () => {
+     const selections = { size: 2 };
+-    const wrapper = mount(<TableContext.Provider value={state}><ManageFilesTable /></TableContext.Provider>);
++    const wrapper = mount(<TableContext.Provider value={state}><ManageFilesTable {...props} /></TableContext.Provider>);
+     const select = wrapper.find("SelectedFilesInfo");
+ 
+     expect(select.prop("hasDeleteBtn")).toBe(true);
+@@ -100,9 +106,9 @@ describe("ManageFilesTable", () => {
+     const addFilesHandlerMock = jest.fn();
+     jest.spyOn(Registry, "get").mockReturnValue(addFilesHandlerMock);
+ 
+-    const wrapper = mount(<TableContext.Provider value={state}><ManageFilesTable /></TableContext.Provider>);
++    const wrapper = mount(<TableContext.Provider value={state}><ManageFilesTable {...props} /></TableContext.Provider>);
+ 
+-    const input = wrapper.find("input[type=\"file\"]");
++    const input = wrapper.find("input[type=\"file\"]").at(0);
+     const files = [new File(["file contents"], "test.txt", { type: "text/plain" })];
+ 
+     input.simulate("change", { target: { files } });
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/ReorderFilesTable.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/ReorderFilesTable.jsx
+index 1ec2935a81..a50e958a59 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/ReorderFilesTable.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/ReorderFilesTable.jsx
+@@ -1,11 +1,11 @@
+-import { array, number } from "prop-types";
++import { array, number, object } from "prop-types";
+ import React, { useMemo, useCallback } from "react";
+ import getIn from "utils/getIn";
+ import Registry from "utils/registry";
+ import renderers from "shared/table/renderers";
+ import { Table, TableContext, useTableState } from "shared/table";
+ 
+-import ComplexName from "./components/ComplexName";
++import { renderComplexFileName } from "../../utils";
+ 
+ 
+ export const REORDER_FILE_TABLE = {
+@@ -28,7 +28,7 @@ export const REORDER_FILE_TABLE = {
+       width: "100%",
+       accessor: "name",
+       heading: () => <span>Name</span>,
+-      cell: ({ value }) => <ComplexName name={value} />,
++      cell: ({ value, row }, { dependencies }) => renderComplexFileName(value, row?.id, dependencies?.folderStructure),
+     },
+   ],
+ };
+@@ -39,7 +39,7 @@ export function onShowMore() {
+   showMoreFn?.();
+ }
+ 
+-export function ReorderFilesTable({ files, total }) {
++export function ReorderFilesTable({ files, folderStructure, total }) {
+   const tableState = useTableState({
+     config: REORDER_FILE_TABLE,
+     data: files,
+@@ -68,8 +68,9 @@ export function ReorderFilesTable({ files, total }) {
+   }, [tableState.id]);
+ 
+   const tableDependencies = useMemo(() => {
+-    return { onDrop, showMore: onShowMore };
+-  }, [onDrop, onShowMore]);
++    return { onDrop, showMore: onShowMore, folderStructure };
++  }, [onDrop, onShowMore, folderStructure]);
++
+   const tableActions = useMemo(() => ([]), []);
+   const tableContext = useMemo(() => tableState, [tableState]);
+ 
+@@ -86,6 +87,6 @@ export function ReorderFilesTable({ files, total }) {
+   );
+ }
+ 
+-ReorderFilesTable.propTypes = { files: array, total: number };
++ReorderFilesTable.propTypes = { files: array, folderStructure: object, total: number };
+ 
+-ReorderFilesTable.defaultProps = { files: [], total: 0 };
++ReorderFilesTable.defaultProps = { files: [], folderStructure: {}, total: 0 };
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/RestoreFilesTable.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/RestoreFilesTable.jsx
+index d76ae850ca..84d2bb1d84 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/RestoreFilesTable.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/RestoreFilesTable.jsx
+@@ -1,4 +1,5 @@
+ import React, { useMemo, useContext } from "react";
++import { object } from "prop-types";
+ import { pushAlert } from "@figshare/fcl/alerts";
+ import UndoSmall from "@figshare/fcl/icons/undo/small";
+ import { Table, TableContext, renderers } from "shared/table";
+@@ -53,13 +54,13 @@ export function handleRestoreFile(id, entry) {
+   }
+ }
+ 
+-export function RestoreFilesTable() {
++export function RestoreFilesTable({ folderStructure }) {
+   const state = useContext(TableContext);
+   const disabled = useItemHasMetadataOrExternalLink();
+ 
+   const dependencies = useMemo(() => {
+-    return { showMore: onShowMore, disabled };
+-  }, []);
++    return { showMore: onShowMore, disabled, folderStructure };
++  }, [folderStructure]);
+ 
+   const actions = useMemo(() => ([
+     { name: "restore", label: "Restore", Icon: UndoSmall, disabled, fn: handleRestoreFile },
+@@ -83,3 +84,7 @@ export function RestoreFilesTable() {
+     </>
+   );
+ }
++
++RestoreFilesTable.propTypes = { folderStructure: object };
++
++RestoreFilesTable.defaultProps = { folderStructure: {} };
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/ComplexName.css b/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/ComplexName.css
+index 5ffc8d2dc0..f3e8f3dcc7 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/ComplexName.css
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/ComplexName.css
+@@ -17,6 +17,8 @@
+   -webkit-line-clamp: 3;
+   -webkit-box-orient: vertical;
+ 
++  width: fit-content;
++
+   word-break: break-all;
+ }
+ 
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/ComplexName.test.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/ComplexName.test.jsx
+index 5a6407d4b1..a5153f606a 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/ComplexName.test.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/ComplexName.test.jsx
+@@ -10,11 +10,21 @@ describe("ComplexName", () => {
+     expect(wrapper.exists()).toBe(true);
+   });
+ 
+-  it("renders name without extension correctly", () => {
++  it("renders name without extension", () => {
+     const wrapper = mount(<ComplexName name="TestName.txt" />);
+     expect(wrapper.find(".name").text()).toEqual("TestName");
+   });
+ 
++  it("renders name with trimmed path", () => {
++    const wrapper = mount(<ComplexName name="directory1/directory2/TestName.txt" />);
++    expect(wrapper.find(".name").text()).toEqual("directory1/.../TestName");
++  });
++
++  it("renders tooltip when the name has a trimmed path", () => {
++    const wrapper = mount(<ComplexName name={"directory1/directory2/TestName.txt"} />);
++    expect(wrapper.find("Tooltip").exists()).toBe(true);
++  });
++
+   it("renders null when name prop is not provided", () => {
+     const wrapper = mount(<ComplexName />);
+     expect(wrapper.isEmptyRender()).toBe(true);
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/index.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/index.jsx
+index f059b07721..798e1be6ab 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/components/ComplexName/index.jsx
+@@ -1,4 +1,4 @@
+-import React, { useRef, useState, useLayoutEffect } from "react";
++import React, { useRef, useState, useLayoutEffect, useEffect } from "react";
+ import { number, string } from "prop-types";
+ import classnames from "classnames";
+ import getIn from "utils/getIn";
+@@ -11,6 +11,7 @@ import styles from "./ComplexName.css";
+ 
+ export default function ComplexName({ name, numberOfLines }) {
+   const elementRef = useRef(false);
++  let hasTrimmedPath = false;
+ 
+   const [hasTooltip, setHasTooltip] = useState(false);
+ 
+@@ -41,12 +42,40 @@ export default function ComplexName({ name, numberOfLines }) {
+     };
+   }, []);
+ 
++  useEffect(() => {
++    if (hasTrimmedPath) {
++      setHasTooltip(true);
++    }
++  }, [hasTrimmedPath]);
++
+   if (!name) {
+     return null;
+   }
+ 
+-  const nameWithoutExt = name.includes(".") ? name.replace(/\.[^\\.]+$/g, "") : name;
+-  const sanitizedFileName = encodeHTML.decode(encodeHTML(nameWithoutExt));
++  const clearExtension = (text) => {
++    if (text.includes(".")) {
++      return text.replace(/\.[^\\.]+$/g, "");
++    }
++
++    return text;
++  };
++
++  const trimFolderPath = (text) => {
++    if (text.includes("/")) {
++      return text.replace(/\/(.+)\//g, "/.../");
++    }
++
++    return text;
++  };
++
++  const sanitize = (text) => encodeHTML.decode(encodeHTML(text));
++
++  const nameWithoutExt = clearExtension(name);
++  const nameWithTrimmedPath = trimFolderPath(nameWithoutExt);
++  hasTrimmedPath = nameWithTrimmedPath !== nameWithoutExt;
++
++  const sanitizedFileName = sanitize(nameWithTrimmedPath);
++  const tooltipText = hasTrimmedPath ? sanitize(nameWithoutExt) : nameWithTrimmedPath;
+ 
+   return (<div ref={elementRef} className={styles.complexName}>
+     <span className={styles.hidden}>{name}</span>
+@@ -64,7 +93,7 @@ export default function ComplexName({ name, numberOfLines }) {
+             )}
+           </Trigger>
+           <Content className={styles.tooltip} placement="top">
+-            {({ ...props }) => <span {...props} className={styles.tooltipContent}>{sanitizedFileName}</span>}
++            {({ ...props }) => <span {...props} className={styles.tooltipContent}>{tooltipText}</span>}
+           </Content>
+         </>
+       )}
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ActionsMenu/ActionsMenu.css b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ActionsMenu/ActionsMenu.css
+new file mode 100644
+index 0000000000..d1463648f1
+--- /dev/null
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ActionsMenu/ActionsMenu.css
+@@ -0,0 +1,22 @@
++.tableInfoButtons {
++  position: fixed;
++
++  display: flex;
++  flex-direction: column;
++  align-items: flex-start;
++
++  padding: var(--gridSize) 0;
++
++  border: 1px solid var(--color-border-primary);
++  border-radius: calc(0.5 * var(--gridSize));
++  background: var(--color-layout-primary-background);
++  box-shadow: 0 1px var(--gridSize) rgba(0, 0, 0, 0.21);
++}
++
++.actionButton {
++  justify-content: start;
++
++  width: 100%;
++  max-height: calc(7 * var(--gridSize));
++  padding: var(--gridSize) calc(3 * var(--gridSize));
++}
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ActionsMenu/ActionsMenu.test.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ActionsMenu/ActionsMenu.test.jsx
+new file mode 100644
+index 0000000000..24d1fc26b4
+--- /dev/null
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ActionsMenu/ActionsMenu.test.jsx
+@@ -0,0 +1,71 @@
++import React from "react";
++import { mount } from "enzyme";
++import { Button } from "@figshare/fcl/button";
++
++import ActionsMenu from "./index";
++
++
++describe("ActionsMenu", () => {
++  it("should render null when menu is not visible", () => {
++    const wrapper = mount(<ActionsMenu isVisible={false} />);
++
++    expect(wrapper.isEmptyRender()).toBe(true);
++  });
++
++  it("should render 3 buttons when menu is visible", () => {
++    const wrapper = mount(<ActionsMenu isVisible={true} />);
++
++    expect(wrapper.find(Button)).toHaveLength(3);
++    expect(wrapper.find(Button).at(0).props()["data-id"]).toEqual("download-all-files");
++    expect(wrapper.find(Button).at(1).props()["data-id"]).toEqual("add-files");
++    expect(wrapper.find(Button).at(2).props()["data-id"]).toEqual("add-folders");
++  });
++
++  it("should make download button disabled when downloadDisabled is true", () => {
++    const wrapper = mount(<ActionsMenu downloadDisabled={true} isVisible={true} />);
++    const downloadButton = wrapper.find(Button).at(0);
++
++    expect(downloadButton.props()["data-id"]).toEqual("download-all-files");
++    expect(downloadButton.props().disabled).toBe(true);
++  });
++
++  it("should make download button enabled when downloadDisabled is false", () => {
++    const wrapper = mount(<ActionsMenu downloadDisabled={false} isVisible={true} />);
++    const downloadButton = wrapper.find(Button).at(0);
++
++    expect(downloadButton.props()["data-id"]).toEqual("download-all-files");
++    expect(downloadButton.props().disabled).toBe(false);
++  });
++
++
++  it("should set downloadUrl to download button", () => {
++    const downloadUrl = "testUrl";
++    const wrapper = mount(<ActionsMenu downloadUrl={downloadUrl} isVisible={true} />);
++    const downloadButton = wrapper.find(Button).at(0);
++
++    expect(downloadButton.props()["data-id"]).toEqual("download-all-files");
++    expect(downloadButton.props().href).toBe(downloadUrl);
++  });
++
++  it("should call onUploadFiles when files upload button is clicked", () => {
++    const onUploadFiles = jest.fn();
++    const wrapper = mount(<ActionsMenu isVisible={true} onUploadFiles={onUploadFiles} />);
++    const addFilesButton = wrapper.find(Button).at(1);
++
++    addFilesButton.simulate("click");
++
++    expect(addFilesButton.props()["data-id"]).toEqual("add-files");
++    expect(onUploadFiles).toHaveBeenCalled();
++  });
++
++  it("should call onUploadFolders when files upload button is clicked", () => {
++    const onUploadFolders = jest.fn();
++    const wrapper = mount(<ActionsMenu isVisible={true} onUploadFolders={onUploadFolders} />);
++    const addFoldersButton = wrapper.find(Button).at(2);
++
++    addFoldersButton.simulate("click");
++
++    expect(addFoldersButton.props()["data-id"]).toEqual("add-folders");
++    expect(onUploadFolders).toHaveBeenCalled();
++  });
++});
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ActionsMenu/index.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ActionsMenu/index.jsx
+new file mode 100644
+index 0000000000..cb8c7d1d51
+--- /dev/null
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ActionsMenu/index.jsx
+@@ -0,0 +1,67 @@
++import React from "react";
++import { func, bool, string } from "prop-types";
++import Download from "@figshare/fcl/icons/download";
++import PlusLarge from "@figshare/fcl/icons/plus/large";
++import { Button } from "@figshare/fcl/button";
++
++import styles from "./ActionsMenu.css";
++
++
++export default function ActionsMenu({ downloadDisabled, downloadUrl, isVisible, onUploadFiles, onUploadFolders }) {
++  if (!isVisible) {
++    return null;
++  }
++
++  return (
++    <div className={styles.tableInfoButtons}>
++      <Button
++        Icon={Download}
++        className={styles.actionButton}
++        data-id="download-all-files"
++        disabled={downloadDisabled}
++        href={downloadUrl}
++        size="M"
++        target="_blank"
++        theme="tertiaryAlt"
++      >
++        Download all
++      </Button>
++      <Button
++        Icon={PlusLarge}
++        className={styles.actionButton}
++        data-id="add-files"
++        size="M"
++        theme="tertiaryAlt"
++        onClick={onUploadFiles}
++      >
++        Add files
++      </Button>
++      <Button
++        Icon={PlusLarge}
++        className={styles.actionButton}
++        data-id="add-folders"
++        size="M"
++        theme="tertiaryAlt"
++        onClick={onUploadFolders}
++      >
++        Add folders
++      </Button>
++    </div>
++  );
++}
++
++ActionsMenu.propTypes = {
++  downloadDisabled: bool,
++  downloadUrl: string,
++  isVisible: bool,
++  onUploadFiles: func,
++  onUploadFolders: func,
++};
++
++ActionsMenu.defaultProps = {
++  downloadDisabled: false,
++  downloadUrl: undefined,
++  isVisible: false,
++  onUploadFiles: undefined,
++  onUploadFolders: undefined,
++};
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ManageTableHeaderInfo.css b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ManageTableHeaderInfo.css
+index 330007a711..fc5e6cf2fc 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ManageTableHeaderInfo.css
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ManageTableHeaderInfo.css
+@@ -6,43 +6,6 @@
+   width: 100%;
+ }
+ 
+-.tableInfoButtons {
+-  display: flex;
+-  align-items: center;
+-  gap: calc(4 * var(--gridSize));
+-}
+-
+-/* stylelint-disable-next-line a11y/no-display-none */
+-.mobileTableInfoButtons {
+-  display: none;
+-}
+-
+-/* stylelint-disable-next-line a11y/no-display-none */
+-.mobileTableInfoIcon {
+-  display: none;
+-}
+-
+-.tableInfoButtons > * {
+-  height: fit-content;
+-}
+-
+-/* stylelint-disable-next-line a11y/no-display-none */
+-.fileInput {
++.input {
+   display: none;
+ }
+-
+-@media (max-width: 599px) {
+-  /* stylelint-disable-next-line a11y/no-display-none */
+-  .tableInfoButtons {
+-    display: none;
+-  }
+-
+-  .mobileTableInfoButtons {
+-    display: flex;
+-    align-items: center;
+-  }
+-
+-  .mobileTableInfoIcon {
+-    display: flex;
+-  }
+-}
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ManageTableHeaderInfo.test.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ManageTableHeaderInfo.test.jsx
+index 728be9c718..ed0d185724 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ManageTableHeaderInfo.test.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/ManageTableHeaderInfo.test.jsx
+@@ -5,25 +5,10 @@ import ManageTableHeaderInfo from "./index";
+ 
+ 
+ describe("ManageTableHeaderInfo", () => {
+-  it("should render file input component when rendered", () => {
++  it("should render file input components when rendered", () => {
+     const wrapper = shallow(<ManageTableHeaderInfo />);
+ 
+-    expect(wrapper.find("input[type='file']").exists()).toBe(true);
+-  });
+-
+-  it("should pass the correct props to the Button components", () => {
+-    const wrapper = shallow(<ManageTableHeaderInfo state={ { total: 1 } } />);
+-    const buttons = wrapper.find("Button");
+-
+-    expect(buttons).toHaveLength(2);
+-    expect(buttons.at(0).props().disabled).toBe(false);
+-  });
+-
+-  it("should disable the 'Download all' button when downloadDisabled is true", () => {
+-    const wrapper = shallow(<ManageTableHeaderInfo downloadDisabled={true} />);
+-    const downloadButton = wrapper.find("[data-id=\"download-all-files\"]");
+-
+-    expect(downloadButton.prop("disabled")).toBe(true);
++    expect(wrapper.find(".input")).toHaveLength(2);
+   });
+ 
+   it("should render the title 'Files'", () => {
+@@ -32,15 +17,4 @@ describe("ManageTableHeaderInfo", () => {
+ 
+     expect(title.text()).toBe("Files");
+   });
+-
+-  it("should call onUpload with selected files when file input changes", () => {
+-    const onUploadMock = jest.fn();
+-    const wrapper = shallow(<ManageTableHeaderInfo onUpload={onUploadMock} />);
+-    const files = [new File(["file content"], "filename.txt")];
+-    const fileInput = wrapper.find("input[type='file']");
+-
+-    fileInput.simulate("change", { target: { files } });
+-
+-    expect(onUploadMock).toHaveBeenCalledWith(expect.objectContaining({ target: { files } }));
+-  });
+ });
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/index.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/index.jsx
+index c65ce719fb..ce80a41f8d 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/components/ManageTableHeaderInfo/index.jsx
+@@ -1,19 +1,29 @@
+-import Download from "@figshare/fcl/icons/download";
++import React, { useRef, useCallback, useContext, useEffect, useMemo, useState } from "react";
+ import { func, bool } from "prop-types";
+-import React, { useRef, useCallback, useContext, useMemo } from "react";
+-import { Button, IconButton } from "@figshare/fcl/button";
+-import PlusMedium from "@figshare/fcl/icons/plus/medium";
++import { IconButton } from "@figshare/fcl/button";
++import MoreOptions from "@figshare/fcl/icons/moreOptions";
++import Dropdown, { Toggle, Menu } from "@figshare/components/base/dropdown";
+ import { TableContext } from "shared/table";
+ import getIn from "utils/getIn";
+ 
+ import ItemContext from "../../../../../../context/itemContext";
+ 
++import ActionsMenu from "./ActionsMenu";
+ import styles from "./ManageTableHeaderInfo.css";
+ 
+ 
+ export default function ManageTableHeaderInfo({ downloadDisabled, onUpload }) {
+   const { item } = useContext(ItemContext);
+   const table = useContext(TableContext);
++  const [open, setOpen] = useState(false);
++
++  const hiddenFileInputRef = useRef(null);
++  const hiddenFolderInputRef = useRef(null);
++
++  useEffect(() => {
++    hiddenFolderInputRef.current.setAttribute("directory", "");
++    hiddenFolderInputRef.current.setAttribute("webkitdirectory", "");
++  }, [hiddenFolderInputRef]);
+ 
+   const downloadUrl = useMemo(() => {
+     if (table.total === 1) {
+@@ -23,62 +33,76 @@ export default function ManageTableHeaderInfo({ downloadDisabled, onUpload }) {
+     return item.downloadUrl;
+   }, [item, table.total]);
+ 
+-  const hiddenFileInputRef = useRef(null);
+-
+-  const onUploadClick = useCallback(() => {
++  const onUploadFiles = useCallback(() => {
+     hiddenFileInputRef.current?.click();
+   }, [hiddenFileInputRef]);
+ 
++  const onUploadFolders = useCallback(() => {
++    hiddenFolderInputRef.current?.click();
++  }, [hiddenFolderInputRef]);
++
++  const renderToggle = useCallback(({ onToggle, props: toggleProps }) => {
++    const { ref: innerRef, ...props } = toggleProps;
++
++    return (
++      <IconButton
++        {...props}
++        Icon={MoreOptions}
++        innerRef={innerRef}
++        theme="secondary"
++        onClick={onToggle}
++      >
++        More actions
++      </IconButton>
++    );
++  }, [open]);
++
++  const onDropdownToggle = () => setOpen(!open);
++
+   return (
+     <>
+       <input
+         ref={hiddenFileInputRef}
+-        className={styles.fileInput}
++        className={styles.input}
++        multiple={true}
++        type="file"
++        onChange={onUpload}
++      />
++      <input
++        ref={hiddenFolderInputRef}
++        className={styles.input}
+         multiple={true}
+         type="file"
+         onChange={onUpload}
+       />
+       <div className={styles.tableInfo}>
+         <h2 className="file-heading">Files</h2>
+-        <div className={styles.tableInfoButtons}>
+-          <Button
+-            Icon={Download}
+-            data-id="download-all-files"
+-            disabled={downloadDisabled}
+-            href={downloadUrl}
+-            size="M"
+-            target="_blank"
+-            theme="tertiary"
+-          >
+-            Download all
+-          </Button>
+-          <Button Icon={PlusMedium} data-id="add-files" size="M" theme="tertiary" onClick={onUploadClick}>
+-            Add files
+-          </Button>
+-        </div>
+-        <div className={styles.mobileTableInfoButtons}>
+-          <IconButton
+-            Icon={Download}
+-            className={styles.mobileTableInfoIcon}
+-            data-id="mobile-download-all-files"
+-            disabled={downloadDisabled}
+-            href={downloadUrl}
+-            size="M"
+-            target="_blank"
+-            theme="primary"
+-          >
+-            Download all
+-          </IconButton>
+-          <IconButton
+-            Icon={PlusMedium}
+-            className={styles.mobileTableInfoIcon}
+-            data-id="add-files"
+-            theme="primary"
+-            onClick={onUploadClick}
+-          >
+-            Add files
+-          </IconButton>
+-        </div>
++        <Dropdown
++          data-id="actions-dropdown"
++          isVisible={open}
++          itemSelector="* a, * button"
++          placement="bottom-start"
++          onToggle={onDropdownToggle}
++        >
++          {({ props }) => (
++            <div {...props}>
++              <Toggle data-id="toggle">
++                {renderToggle}
++              </Toggle>
++              <Menu placement="bottom-start" role="menu" strategy="fixed">
++                {() => (
++                  <ActionsMenu
++                    downloadDisabled={downloadDisabled}
++                    downloadUrl={downloadUrl}
++                    isVisible={open}
++                    onUploadFiles={onUploadFiles}
++                    onUploadFolders={onUploadFolders}
++                  />
++                )}
++              </Menu>
++            </div>
++          )}
++        </Dropdown>
+       </div>
+     </>
+   );
+diff --git a/src/pages/account/itemEdit/main/metadata/components/tables/components/Type/index.test.jsx b/src/pages/account/itemEdit/main/metadata/components/tables/components/Type/index.test.jsx
+index 617160a901..324df42c39 100644
+--- a/src/pages/account/itemEdit/main/metadata/components/tables/components/Type/index.test.jsx
++++ b/src/pages/account/itemEdit/main/metadata/components/tables/components/Type/index.test.jsx
+@@ -10,7 +10,7 @@ describe("FileType", () => {
+     expect(wrapper.find("[data-id=\"type\"]")).toHaveLength(0);
+   });
+ 
+-  it("renders an type when name is 'test.png'", () => {
++  it("renders a type when name is 'test.png'", () => {
+     const wrapper = shallow(<FileType name="test.png" />);
+     expect(wrapper.find("[data-id=\"type\"]")).toHaveLength(1);
+     expect((wrapper.find("[data-id=\"type\"]")).text()).toEqual(".png");
+diff --git a/src/pages/account/itemEdit/main/metadata/index.jsx b/src/pages/account/itemEdit/main/metadata/index.jsx
+index df4f070105..b85345f74d 100644
+--- a/src/pages/account/itemEdit/main/metadata/index.jsx
++++ b/src/pages/account/itemEdit/main/metadata/index.jsx
+@@ -16,7 +16,8 @@ import { setMetadataFieldError } from "./externalUtils";
+ 
+ 
+ export function Metadata({ onUpdateAppState }) {
+-  const { item, itemActions, accountLimits, setFieldState, setIsMetadataRecord } = useContext(ItemContext);
++  const { item, itemActions, accountLimits, folderStructure, setFieldState, setIsMetadataRecord } =
++    useContext(ItemContext);
+   const itemId = item?.id;
+   const filesQuery = useFilesQuery({ itemId });
+   const deletedFilesQuery = useDeletedFilesQuery({ itemId });
+@@ -24,6 +25,7 @@ export function Metadata({ onUpdateAppState }) {
+     useItemMetadataState({
+       item,
+       files: filesQuery.data,
++      folderStructure,
+       deletedFiles: deletedFilesQuery.data,
+       itemActions,
+       accountLimits,
+diff --git a/src/pages/account/itemEdit/main/metadata/useItemMetadataState/hook.jsx b/src/pages/account/itemEdit/main/metadata/useItemMetadataState/hook.jsx
+index 9269243a0f..bf283d03bb 100644
+--- a/src/pages/account/itemEdit/main/metadata/useItemMetadataState/hook.jsx
++++ b/src/pages/account/itemEdit/main/metadata/useItemMetadataState/hook.jsx
+@@ -8,7 +8,7 @@ import initializer from "./initializer";
+ import reducer from "./reducer";
+ 
+ 
+-export function useItemMetadataState({ item, files, deletedFiles, itemActions }) {
++export function useItemMetadataState({ item, files, deletedFiles, itemActions, folderStructure }) {
+   const [state, dispatch] = useReducer(reducer, { item, files, deletedFiles }, initializer);
+   const stateRef = useRef(state);
+ 
+@@ -35,6 +35,15 @@ export function useItemMetadataState({ item, files, deletedFiles, itemActions })
+     fireEvent("metadata:update:files", files);
+   }, [files]);
+ 
++  useEffect(() => {
++    dispatch({
++      type: "update:files:folder-structure",
++      data: folderStructure,
++    });
++
++    fireEvent("metadata:update:files:folder-structure", folderStructure);
++  }, [folderStructure]);
++
+   useEffect(() => {
+     dispatch({
+       type: "update:deleted",
+@@ -44,6 +53,15 @@ export function useItemMetadataState({ item, files, deletedFiles, itemActions })
+     fireEvent("metadata:update:deleted-files", deletedFiles);
+   }, [deletedFiles]);
+ 
++  useEffect(() => {
++    dispatch({
++      type: "update:deleted:folder-structure",
++      data: deletedFiles,
++    });
++
++    fireEvent("metadata:update:deleted:folder-structure", deletedFiles);
++  }, [deletedFiles]);
++
+   useEffect(() => {
+     dispatch({
+       type: "update:flags",
+diff --git a/src/pages/account/itemEdit/main/metadata/useItemMetadataState/index.test.jsx b/src/pages/account/itemEdit/main/metadata/useItemMetadataState/index.test.jsx
+index 65b8d74936..9dc76cde73 100644
+--- a/src/pages/account/itemEdit/main/metadata/useItemMetadataState/index.test.jsx
++++ b/src/pages/account/itemEdit/main/metadata/useItemMetadataState/index.test.jsx
+@@ -86,8 +86,14 @@ describe("useItemMetadataState() hook", () => {
+ });
+ 
+ describe("metadataStateReducer()", () => {
++  let initialFolderStructure = { "0": "/testPath" };
++
++  afterEach(() => {
++    initialFolderStructure = { "0": "/testPath" };
++  });
++
+   function initial() {
+-    return metadataStateInitializer({ item: { id: "item_id" } });
++    return metadataStateInitializer({ item: { id: "item_id" }, folderStructure: initialFolderStructure });
+   }
+ 
+   it("handles unknown actions", () => {
+@@ -233,6 +239,26 @@ describe("metadataStateReducer()", () => {
+     expect(state.total.deleted).toEqual(1);
+   });
+ 
++  it("handles 'update:files:folder-structure' actions", () => {
++    const fileId = "1";
++    const filePath = "folder/subfolder";
++
++    const state = metadataStateReducer(initial(),
++      { type: "update:files:folder-structure", data: { [fileId]: filePath } });
++
++    expect(state.folderStructure).toEqual({ [fileId]: filePath });
++  });
++
++  it("handles 'update:deleted:folder-structure' actions", () => {
++    const fileId = "1";
++    const filePath = "folder/subfolder";
++
++    const state = metadataStateReducer(initial(),
++      { type: "update:deleted:folder-structure", data: { total: 1, files: [{ fileId, filePath }] } });
++
++    expect(state.folderStructure).toEqual({ ...initialFolderStructure, [fileId]: filePath });
++  });
++
+   it("handles 'upload:start / delete:start' actions", () => {
+     const state = metadataStateReducer(initial(),
+       { type: "upload:start" });
+@@ -253,11 +279,17 @@ describe("metadataStateReducer()", () => {
+ 
+   it("handles 'upload:add' actions", () => {
+     let state = metadataStateReducer(initial(),
+-      { type: "upload:add", identifier: "1", file: { id: "1", name: "some-file", size: 10 } });
++      {
++        type: "upload:add",
++        identifier: "1",
++        file: { id: "1", name: "some-file", size: 10, webkitRelativePath: "path/some-file" },
++      }
++    );
+ 
+     expect(state.processing).toEqual(["1"]);
+     expect(state.uploading).toEqual(true);
+     expect(state.total.files).toEqual(1);
++    expect(state.folderStructure).toEqual({ ...initialFolderStructure, "1": "path" });
+ 
+     state = metadataStateReducer(state,
+       { type: "upload:add", identifier: "2", file: { id: "2", name: "some-file", size: 0, status: "O_BYTES" } });
+@@ -393,7 +425,7 @@ describe("metadataStateReducer()", () => {
+       {
+         type: "upload:add",
+         identifier: "1",
+-        file: { id: "1", name: "some-file", size: 10, status: "PROCESSING" },
++        file: { id: "1", name: "some-file", size: 10, status: "PROCESSING", webkitRelativePath: "path/some-file" },
+       });
+ 
+     state = metadataStateReducer(state, {
+@@ -403,10 +435,13 @@ describe("metadataStateReducer()", () => {
+         id: "1",
+         suppliedMd5: "test",
+       },
++      file: { id: "1", name: "some-file", webkitRelativePath: "path/some-file" },
+     });
++
+     expect(state.files[0].status).toEqual("UPLOADING");
+     expect(state.processing).toHaveLength(1);
+     expect(state.filesModified).toEqual(true);
++    expect(state.folderStructure).toEqual({ ...initialFolderStructure, "1": "path" });
+   });
+ 
+   it("handles 'file:upload' actions", () => {
+diff --git a/src/pages/account/itemEdit/main/metadata/useItemMetadataState/initializer.jsx b/src/pages/account/itemEdit/main/metadata/useItemMetadataState/initializer.jsx
+index 1b6811db70..4b9d13138c 100644
+--- a/src/pages/account/itemEdit/main/metadata/useItemMetadataState/initializer.jsx
++++ b/src/pages/account/itemEdit/main/metadata/useItemMetadataState/initializer.jsx
+@@ -6,7 +6,7 @@ import {
+ } from "../constants.jsx";
+ 
+ 
+-export function metadataStateInitializer({ item }) {
++export function metadataStateInitializer({ item, folderStructure }) {
+   const state = {
+     section: METADATA_SECTIONS.files,
+     overlay: METADATA_OVERLAYS.none,
+@@ -16,6 +16,7 @@ export function metadataStateInitializer({ item }) {
+     privateChange: false,
+     versionableChange: false,
+     files: [],
++    folderStructure,
+     deleted: [],
+     total: {
+       files: 0,
+diff --git a/src/pages/account/itemEdit/main/metadata/useItemMetadataState/reducer.jsx b/src/pages/account/itemEdit/main/metadata/useItemMetadataState/reducer.jsx
+index 3b2d8b103a..1018e03716 100644
+--- a/src/pages/account/itemEdit/main/metadata/useItemMetadataState/reducer.jsx
++++ b/src/pages/account/itemEdit/main/metadata/useItemMetadataState/reducer.jsx
+@@ -147,6 +147,25 @@ export function metadataStateReducer(state, action) {
+ 
+       return newState;
+     }
++    case "update:deleted:folder-structure": {
++      const deletedFiles = action.data;
++      const oldFolderStructure = state.folderStructure;
++
++      const deletedFolderStructure = deletedFiles.files.reduce(
++        (a, v) => Object.assign(a, { [v.fileId]: v.filePath }),
++        {}
++      );
++
++      const newFolderStructure = {
++        ...oldFolderStructure,
++        ...deletedFolderStructure,
++      };
++
++      return { ...state, folderStructure: newFolderStructure };
++    }
++    case "update:files:folder-structure": {
++      return { ...state, folderStructure: action.data };
++    }
+     case "upload:start":
+     case "delete:start":
+       return { ...state, modified: true, versionableChange: true, privateChange: true, uploading: true };
+@@ -154,7 +173,12 @@ export function metadataStateReducer(state, action) {
+       return { ...state, uploading: !!state.processing.length, filesModified: true };
+     case "upload:add": {
+       const { file, identifier } = action;
+-      const newState = { ...state };
++
++      const newFolderStructure = state.folderStructure;
++      const { webkitRelativePath: path, name } = file || {};
++      newFolderStructure[file.id] = path?.substr(0, path?.length - name?.length - 1);
++
++      const newState = { ...state, folderStructure: newFolderStructure };
+ 
+       const isEmptyFile = file.status === FILE_STATUSES.O_BYTES;
+       const { found, index, entry } = findAFile(newState, identifier, "files");
+@@ -273,7 +297,7 @@ export function metadataStateReducer(state, action) {
+       return newState;
+     }
+     case "file:create": {
+-      const { identifier, createData } = action;
++      const { identifier, createData, file } = action;
+       const { found, index, entry } = findAFile(state, identifier, "files");
+ 
+       if (!found) {
+@@ -281,7 +305,12 @@ export function metadataStateReducer(state, action) {
+       }
+ 
+       const newIdentifier = createData.id;
+-      const newState = { ...state, filesModified: true };
++      const newFolderStructure = state.folderStructure;
++      const { webkitRelativePath: path, name } = file || {};
++      newFolderStructure[newIdentifier] = path?.substr(0, path?.length - name?.length - 1);
++
++      const newState = { ...state, filesModified: true, folderStructure: newFolderStructure };
++
+       const changes = {
+         id: newIdentifier,
+         identifier: newIdentifier,
+diff --git a/src/pages/account/itemEdit/main/metadata/utils/events.jsx b/src/pages/account/itemEdit/main/metadata/utils/events.jsx
+index 3ef7b7d06b..d1062fdda3 100644
+--- a/src/pages/account/itemEdit/main/metadata/utils/events.jsx
++++ b/src/pages/account/itemEdit/main/metadata/utils/events.jsx
+@@ -81,14 +81,16 @@ export async function handleFileCreateEvent(event) {
+     return;
+   }
+ 
++  const { name, size, webkitRelativePath } = event?.detail?.file || {};
+ 
+   try {
+-    const sanitizedName = encodeHTML.decode(encodeHTML(event.detail.file.name));
++    const sanitizedName = encodeHTML.decode(encodeHTML(name));
+     const data = await getFileData({
+       md5: event.detail.md5,
+       info: {
++        webkitRelativePath,
+         name: sanitizedName,
+-        size: event.detail.file.size,
++        size,
+       },
+     }, itemId);
+ 
+diff --git a/src/pages/account/itemEdit/main/metadata/utils/mapping.jsx b/src/pages/account/itemEdit/main/metadata/utils/mapping.jsx
+index 4e94f4f129..8d67b9c998 100644
+--- a/src/pages/account/itemEdit/main/metadata/utils/mapping.jsx
++++ b/src/pages/account/itemEdit/main/metadata/utils/mapping.jsx
+@@ -1,12 +1,21 @@
++import React from "react";
+ import getIn from "utils/getIn";
+ 
+ import { FILE_STATUSES, MAX_FILE_SIZE, ProgressOperations } from "../constants";
++import ComplexName from "../components/tables/components/ComplexName";
+ 
+ 
+ export function getTypeFromFileName(name) {
+   return name.split(".").pop().toLowerCase();
+ }
+ 
++export function renderComplexFileName(value, fileId, folderStructure) {
++  const path = fileId ? folderStructure?.[fileId] : null;
++  const name = path ? `${path}/${value}` : value;
++
++  return <ComplexName name={name} />;
++}
++
+ export function updateFileSet(files) {
+   const updated = Array.prototype.map.call(files, (file) => {
+     const info = {
+diff --git a/src/pages/account/itemEdit/main/metadata/utils/processors.jsx b/src/pages/account/itemEdit/main/metadata/utils/processors.jsx
+index 692e2be179..a3b9d23725 100644
+--- a/src/pages/account/itemEdit/main/metadata/utils/processors.jsx
++++ b/src/pages/account/itemEdit/main/metadata/utils/processors.jsx
+@@ -82,6 +82,7 @@ export function processFilesUpload(files) {
+       progress: 0,
+       operation,
+       error: undefined,
++      webkitRelativePath: file?.webkitRelativePath,
+     };
+ 
+     const entry = {
+diff --git a/src/services/fileUpload/index.js b/src/services/fileUpload/index.js
+index 1bc066a63a..6670f4b15f 100644
+--- a/src/services/fileUpload/index.js
++++ b/src/services/fileUpload/index.js
+@@ -13,14 +13,17 @@ import {
+ 
+ 
+ export const getFileData = async(file, itemId) => {
++  const { webkitRelativePath: path, name, size } = file?.info || {};
++
+   const response = await manager.current.mutate({
+     mutation: uploadFileMutation,
+     variables: {
+       itemId,
+       data: {
++        folder_path: path?.substr(0, path?.length - name?.length), // eslint-disable-line camelcase
+         supplied_md5: file.md5, // eslint-disable-line camelcase
+-        name: file.info?.name,
+-        size: file.info?.size,
++        name,
++        size,
+       },
+ 
+     },
+diff --git a/src/services/fileUpload/index.test.js b/src/services/fileUpload/index.test.js
+index 281978eb28..c8c7b6d9a3 100644
+--- a/src/services/fileUpload/index.test.js
++++ b/src/services/fileUpload/index.test.js
+@@ -12,8 +12,9 @@ describe("File Upload Service", () => {
+   const file = {
+     md5: "xs3432ds345543dfds2343245dsd",
+     info: {
+-      name: "testerino.txt",
++      name: "testFile.txt",
+       size: 20043,
++      webkitRelativePath: "testFolder/testFile.txt",
+     },
+     id: 1,
+   };
