@@ -1,0 +1,80 @@
+From 683fa75b542476be09a30bfc9af5dad886d3f572 Mon Sep 17 00:00:00 2001
+From: Corneliu <corneliu.biro@gmail.com>
+Date: Wed, 29 Nov 2023 13:36:32 +0200
+Subject: [PATCH] FIG-33890: Return article.folder_structure in item_fields
+
+---
+ figshare/graphql/v2_resolvers/item.py        | 15 +++++++++++++++
+ tests/functional/graphql/test_item_fields.py | 19 ++++++++++++++++++-
+ 2 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/figshare/graphql/v2_resolvers/item.py b/figshare/graphql/v2_resolvers/item.py
+index 2a7fb9644..20e3cc7c8 100644
+--- a/figshare/graphql/v2_resolvers/item.py
++++ b/figshare/graphql/v2_resolvers/item.py
+@@ -530,6 +530,21 @@ def _get_internal_fields(item_api, item_group):
+             "value": item_api.license_id,
+             "order": 11,
+         },
++        "folder_structure": {
++            "is_required": True,
++            "type": "folder_structure",
++            "settings": {
++                "default_value": None,
++                "info": None,
++                "label": None,
++                "placeholder": None,
++                "is_multiple": False,
++                "options": None,
++            },
++            "validation": {},
++            "value": item_api.folder_structure,
++            "order": 12,
++        },
+     }
+ 
+     include_linkback = not hide_linkback or (hide_linkback and require_article_linkback)
+diff --git a/tests/functional/graphql/test_item_fields.py b/tests/functional/graphql/test_item_fields.py
+index faa54bca3..c7ec7b96c 100644
+--- a/tests/functional/graphql/test_item_fields.py
++++ b/tests/functional/graphql/test_item_fields.py
+@@ -157,6 +157,7 @@ def item(author, group, institution, category, funding, custom_field):
+     obj.custom_fields = [Mock(id=custom_field.id, value="Custom Field Value")]
+     obj.institution = None
+     obj.download_disabled = False
++    obj.folder_structure = [{"level1": [44423]}, 65464]
+ 
+     return obj
+ 
+@@ -421,6 +422,23 @@ def _get_item_fields(options):
+             "validation": {},
+             "order": 11,
+         },
++        {
++            "id": "folder_structure",
++            "value": [{"level1": [44423]}, 65464],
++            "isRequired": True,
++            "namespace": "internal",
++            "settings": {
++                "label": None,
++                "defaultValue": None,
++                "isMultiple": False,
++                "placeholder": None,
++                "info": None,
++                "options": None,
++            },
++            "type": "folderStructure",
++            "validation": {},
++            "order": 12,
++        },
+     ]
+ 
+     hide_linkback = options.get("hide_linkback", False) if options.get("institution_id", 0) else True
+@@ -653,7 +671,6 @@ def test_item_fields_query_with_group(
+ 
+     assert response.json["data"] != {}
+     assert response.json["data"]["itemFields"] == expected_response
+-
+     assert mock_find_new_group.called
+ 
+ 
