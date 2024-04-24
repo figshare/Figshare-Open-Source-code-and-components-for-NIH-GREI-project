@@ -1,0 +1,82 @@
+From 1b2a5d232d706f243b56966c691ac77c1b9a3fd6 Mon Sep 17 00:00:00 2001
+From: Corneliu <corneliu.biro@gmail.com>
+Date: Thu, 9 Nov 2023 15:54:34 +0200
+Subject: [PATCH] FIG-33892: Add folder_structure support
+
+---
+ figshare_api2/api_docs/swagger.json                |  5 +++++
+ figshare_api2/app/parsers/file.py                  |  1 +
+ figshare_api2/tests/app/parsers/file_test.py       | 14 ++++++++++++--
+ .../views/article/files/initiate_upload_test.py    |  2 +-
+ 4 files changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/figshare_api2/api_docs/swagger.json b/figshare_api2/api_docs/swagger.json
+index 57dfe994a..7ef528003 100755
+--- a/figshare_api2/api_docs/swagger.json
++++ b/figshare_api2/api_docs/swagger.json
+@@ -11526,6 +11526,11 @@
+                     "format": "int64",
+                     "description": "File size in bytes; can be omitted only for linked files.",
+                     "example": 70
++                },
++                "folder_path": {
++                    "type": "string",
++                    "description": "Unix-style directory path of the file; only available if the file was uploaded within a folder structure",
++                    "example": "/level1/level2/level3"
+                 }
+             }
+         },
+diff --git a/figshare_api2/app/parsers/file.py b/figshare_api2/app/parsers/file.py
+index a6a1129d3..63a0c7761 100644
+--- a/figshare_api2/app/parsers/file.py
++++ b/figshare_api2/app/parsers/file.py
+@@ -8,6 +8,7 @@ class FileParser(Presenter):
+     name = field("name")
+     size = computed("parse_size")
+     supplied_md5 = field("md5")
++    folder_path = field("folder_path")
+ 
+     def parse_name(self, presenter):
+         name = self.raw_field("name")
+diff --git a/figshare_api2/tests/app/parsers/file_test.py b/figshare_api2/tests/app/parsers/file_test.py
+index 5f0ecb686..2ba672cf8 100644
+--- a/figshare_api2/tests/app/parsers/file_test.py
++++ b/figshare_api2/tests/app/parsers/file_test.py
+@@ -5,12 +5,22 @@
+ 
+ @pytest.fixture
+ def input_dict():
+-    return {"name": "test.xls", "size": 43242, "md5": "4fdf79912709c4bc1b522728f28ef354"}
++    return {
++        "name": "test.xls",
++        "size": 43242,
++        "md5": "4fdf79912709c4bc1b522728f28ef354",
++        "folder_path": "/level1/level2",
++    }
+ 
+ 
+ @pytest.fixture
+ def expected_response():
+-    return {"name": "test.xls", "size": 43242, "supplied_md5": "4fdf79912709c4bc1b522728f28ef354"}
++    return {
++        "name": "test.xls",
++        "size": 43242,
++        "supplied_md5": "4fdf79912709c4bc1b522728f28ef354",
++        "folder_path": "/level1/level2",
++    }
+ 
+ 
+ def test_file_parser(input_dict, expected_response):
+diff --git a/figshare_api2/tests/app/views/article/files/initiate_upload_test.py b/figshare_api2/tests/app/views/article/files/initiate_upload_test.py
+index 67489c492..88986e9ce 100644
+--- a/figshare_api2/tests/app/views/article/files/initiate_upload_test.py
++++ b/figshare_api2/tests/app/views/article/files/initiate_upload_test.py
+@@ -21,7 +21,7 @@ def http_request(pyramid_request):
+ 
+ @pytest.fixture
+ def file_data():
+-    return {"name": "test.xls", "size": 43242, "supplied_md5": "4fdf79912709c4bc1b522728f28ef354"}
++    return {"name": "test.xls", "size": 43242, "supplied_md5": "4fdf79912709c4bc1b522728f28ef354", "folder_path": None}
+ 
+ 
+ def test_returns_correct_data(api_handler, article, file_mock, mocked_oauth):

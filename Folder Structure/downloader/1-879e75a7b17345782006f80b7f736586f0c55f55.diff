@@ -1,0 +1,213 @@
+From 879e75a7b17345782006f80b7f736586f0c55f55 Mon Sep 17 00:00:00 2001
+From: Corneliu <corneliu.biro@gmail.com>
+Date: Fri, 8 Dec 2023 11:22:17 +0200
+Subject: [PATCH] FIG-34007: Download folder_structure
+
+---
+ figshare/app/presenters/nginx.py            | 20 +++++++++++------
+ figshare/app/views/article.py               | 16 +++++++++++--
+ figshare/app/views/helpers.py               | 19 +++++++++-------
+ figshare/tests/app/presenters/nginx_test.py | 25 +++++++++++++++++++++
+ figshare/tests/functional/conftest.py       |  1 +
+ figshare/tests/helpers/factory.py           |  2 ++
+ 6 files changed, 66 insertions(+), 17 deletions(-)
+
+diff --git a/figshare/app/presenters/nginx.py b/figshare/app/presenters/nginx.py
+index 28c33e2..71d2388 100644
+--- a/figshare/app/presenters/nginx.py
++++ b/figshare/app/presenters/nginx.py
+@@ -9,7 +9,7 @@ def sanitize_file(file_name):
+     return file_name
+ 
+ 
+-def NginxPresenter(files, request, version=None):
++def NginxPresenter(files, request, version=None, folder_structure=None):
+     lines = []
+     dupes = []
+     cache = {}
+@@ -22,23 +22,29 @@ def NginxPresenter(files, request, version=None):
+ 
+     for f in files:
+         file_size = f.size
++        file_args = None
+         if hasattr(f, "id"):
+             # we have a figshare file
+             name = sanitize_file(f.name)
+             url = _get_file_internal_url(f, request, version)
++            file_id = f.id
+             if f.virus_scan_info["virus_found"]:
+                 file_size = len(VIRUS_FOUND_MESSAGE)
+-                url = request.route_path("internal_file_is_virus", file_id=f.id)
+-                name = "{}_virus_detected.txt".format(f.id)
++                url = request.route_path("internal_file_is_virus", file_id=file_id)
++                name = "{}_virus_detected.txt".format(file_id)
+             if name in dupes:
+-                name = "{0}_{1}".format(f.id, name)
++                name = "{0}_{1}".format(file_id, name)
+             if version:
+                 file_size = _get_file_size_with_coversheet(f, version)
+-            args = [file_size, url, name]
++            if not folder_structure or folder_structure.get(file_id) == "":
++                file_args = [file_size, url, name]
++            elif folder_structure.get(file_id):
++                file_args = [file_size, url, f"{folder_structure[file_id]}/{name}"]
+         else:
+-            args = [file_size, f.url, f.name]
++            file_args = [file_size, f.url, f.name]
+ 
+-        lines.append("- {} {} {}".format(*args))
++        if file_args:
++            lines.append("- {} {} {}".format(*file_args))
+ 
+     return "\n".join(lines)
+ 
+diff --git a/figshare/app/views/article.py b/figshare/app/views/article.py
+index 963cabe..f959d5f 100644
+--- a/figshare/app/views/article.py
++++ b/figshare/app/views/article.py
+@@ -50,7 +50,7 @@ def get_filelist(self, article):
+         else:
+             files = []  # an empty array will generate a 204 No Content response
+ 
+-        return filename, files
++        return filename, files, None, self._get_folder_structure(article)
+ 
+     @view(route_name="article_version_download", request_method="GET", renderer="string")
+     @require_article_version
+@@ -70,7 +70,7 @@ def get_version_filelist(self, article_version):
+         else:
+             files = []  # an empty array will generate a 204 No Content response
+ 
+-        return filename, files, article_version.version
++        return filename, files, article_version.version, self._get_folder_structure(article_version)
+ 
+     @view(route_name="article_export_pdf_download", request_method="GET")
+     @require_article_version
+@@ -139,3 +139,15 @@ def _build_manifest_response(self, article, files):
+         response.content_type = "text/plain"
+ 
+         return manifest_file.content
++
++    def _get_folder_structure(self, article):
++        if not article.folder_structure:
++            return None
++
++        folder_path = self.query_param("folder_path")
++        folder_path = folder_path.strip("/") if folder_path else None
++
++        if not folder_path:
++            return article.folder_structure
++
++        return {fid: path for fid, path in article.folder_structure.items() if path.strip().startswith(folder_path)}
+diff --git a/figshare/app/views/helpers.py b/figshare/app/views/helpers.py
+index f60e287..d272c9a 100644
+--- a/figshare/app/views/helpers.py
++++ b/figshare/app/views/helpers.py
+@@ -59,7 +59,7 @@ def nginx_response(fn):
+     @functools.wraps(fn)
+     def replace(self, *args, **kwargs):
+         fn_response = fn(self, *args, **kwargs)
+-        archive_name, files, version = _unpack_fn_response(fn_response)
++        archive_name, files, version, folder_structure = _unpack_fn_response(fn_response)
+         request = self.request
+         response = self.request.response
+ 
+@@ -70,16 +70,19 @@ def replace(self, *args, **kwargs):
+         response.headers["content-type"] = "application/zip"
+         response.headers["x-archive-files"] = "zip"
+ 
+-        return presenters.NginxPresenter(files, request=request, version=version)
++        return presenters.NginxPresenter(files, request=request, version=version, folder_structure=folder_structure)
+ 
+     def _unpack_fn_response(response):
+-        if len(response) == 3:
+-            return response
+-
+         version = None
+-        archive_name, files = response
+-
+-        return archive_name, files, version
++        folder_structure = None
++        if len(response) == 4:
++            archive_name, files, version, folder_structure = response
++        elif len(response) == 3:
++            archive_name, files, version = response
++        else:
++            archive_name, files = response
++
++        return archive_name, files, version, folder_structure
+ 
+     return replace
+ 
+diff --git a/figshare/tests/app/presenters/nginx_test.py b/figshare/tests/app/presenters/nginx_test.py
+index a462d0a..618a86c 100644
+--- a/figshare/tests/app/presenters/nginx_test.py
++++ b/figshare/tests/app/presenters/nginx_test.py
+@@ -2,6 +2,7 @@
+ 
+ from figshare.tests import helpers
+ from figshare.app.presenters import NginxPresenter
++from figshare.app.views.article import ArticleView
+ 
+ 
+ @pytest.fixture
+@@ -77,3 +78,27 @@ def test_returns_nginx_format_filelist_with_coversheet_size(http_request_version
+     assert presenter == expected_output
+     http_request_version.route_path.assert_any_call("internal_file_version", article_id=124, file_id=2, version=1)
+     http_request_version.route_path.assert_any_call("internal_file_version", article_id=123, file_id=1, version=1)
++
++
++def test_returns_nginx_format_with_folder_structure(http_request_version):
++    file1 = helpers.factory.file(id=1, article_id=123, name="foo.txt", size=123, internal_metadata={})
++    file2 = helpers.factory.file(id=2, article_id=124, name="bar.dat", size=456, internal_metadata={})
++    fs = {1: "folder1/folder2", 2: "folder_n"}
++    presenter = NginxPresenter([file1, file2], request=http_request_version, version=1, folder_structure=fs)
++    expected_output = "- 123 /123/1/1 folder1/folder2/foo.txt\n- 456 /124/2/1 folder_n/bar.dat"
++
++    assert str(presenter) == expected_output
++    assert presenter == expected_output
++
++
++def test_get_folder_structure(mocker):
++    self = mocker.Mock()
++    article = helpers.factory.article(id=123, folder_structure={4093165: "level1/level2", 4093166: ""})
++
++    self.query_param.side_effect = {"folder_path": "level1"}.get
++    result = ArticleView._get_folder_structure(self, article)
++    assert result == {4093165: "level1/level2"}
++
++    self.query_param.side_effect = {"folder_path": "/"}.get
++    result = ArticleView._get_folder_structure(self, article)
++    assert result == {4093165: "level1/level2", 4093166: ""}
+diff --git a/figshare/tests/functional/conftest.py b/figshare/tests/functional/conftest.py
+index 2ed5a9a..f3ed762 100644
+--- a/figshare/tests/functional/conftest.py
++++ b/figshare/tests/functional/conftest.py
+@@ -114,6 +114,7 @@ def article_version(article_files):
+         id=123, version=4, is_last_version=False, is_embargoed=False, is_confidential=False, files=article_files
+     )
+     article_version.restore_evicted_files.return_value = False
++    article_version.folder_structure = []
+     return article_version
+ 
+ 
+diff --git a/figshare/tests/helpers/factory.py b/figshare/tests/helpers/factory.py
+index 911deaf..c22fbc7 100644
+--- a/figshare/tests/helpers/factory.py
++++ b/figshare/tests/helpers/factory.py
+@@ -15,6 +15,7 @@ def account(**kwargs):
+ 
+ def article(**kwargs):
+     defaults = dict(id=10, title="Foobar", tags=[], categories=[], authors=[])
++    defaults["folder_structure"] = []
+     defaults.update(kwargs)
+ 
+     return mock.Mock(spec=Article, **defaults)
+@@ -22,6 +23,7 @@ def article(**kwargs):
+ 
+ def article_version(**kwargs):
+     defaults = dict(id=10, title="Foobar", tags=[], categories=[], authors=[], is_last_version=False)
++    defaults["folder_structure"] = []
+     defaults.update(kwargs)
+ 
+     return mock.Mock(spec=ArticleVersion, **defaults)
