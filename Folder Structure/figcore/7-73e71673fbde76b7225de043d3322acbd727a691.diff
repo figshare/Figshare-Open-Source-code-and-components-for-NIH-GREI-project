@@ -1,0 +1,49 @@
+From 73e71673fbde76b7225de043d3322acbd727a691 Mon Sep 17 00:00:00 2001
+From: Corneliu <corneliu.biro@gmail.com>
+Date: Thu, 4 Jan 2024 11:24:55 +0200
+Subject: [PATCH] FIG-34548: Add folder_path property in get_deleted_files
+ query
+
+---
+ src/figcore/graphql/resolvers_v2/deleted_file.py |  4 ++++
+ src/figcore/graphql/schema/types/deleted_file.py | 13 ++++++++++++-
+ 2 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/figcore/graphql/resolvers_v2/deleted_file.py b/src/figcore/graphql/resolvers_v2/deleted_file.py
+index 0739c3d76d..11477ee66e 100644
+--- a/src/figcore/graphql/resolvers_v2/deleted_file.py
++++ b/src/figcore/graphql/resolvers_v2/deleted_file.py
+@@ -8,3 +8,7 @@ def get_recovery_time_left(obj, info, article_id, deleted_date):
+     diff_since_deleted = date.today() - deleted_date.date()
+ 
+     return item.deleted_files_retention_period - diff_since_deleted.days
++
++
++def get_file_path(obj, info, file_meta):
++    return file_meta.get("file_path", "") if file_meta else ""
+diff --git a/src/figcore/graphql/schema/types/deleted_file.py b/src/figcore/graphql/schema/types/deleted_file.py
+index 15cc7565c2..3993625d0b 100644
+--- a/src/figcore/graphql/schema/types/deleted_file.py
++++ b/src/figcore/graphql/schema/types/deleted_file.py
+@@ -1,5 +1,5 @@
+ from figcore.graphql.internals import GqlType
+-from figcore.graphql.resolvers_v2.deleted_file import get_recovery_time_left
++from figcore.graphql.resolvers_v2.deleted_file import get_file_path, get_recovery_time_left
+ from figcore.graphql.modifiers.item import get_virus_scan_info
+ from figcore.graphql.schema.types.virus_scan_info import VirusScanInfo
+ 
+@@ -74,3 +74,14 @@ def storage_state(cls):
+     @classmethod
+     def size(cls):
+         return {"meta": {"db_model": "deleted_file", "db_column": "size"}, "type": "Int"}
++
++    @classmethod
++    def file_path(cls):
++        return {
++            "meta": {"depends_on": [{"db_model": "deleted_file", "db_column": "file_meta"}]},
++            "resolver": {
++                "function": get_file_path,
++                "params": {"file_meta": {"db_field": "deleted_file.file_meta"}},
++            },
++            "type": "String",
++        }

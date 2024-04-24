@@ -1,0 +1,262 @@
+From 4204d003f586235dad4a82af63ee33e24d623084 Mon Sep 17 00:00:00 2001
+From: Corneliu <corneliu.biro@gmail.com>
+Date: Mon, 27 Nov 2023 08:42:50 +0200
+Subject: [PATCH] FIG-33888: Handle delete file in folder_structure
+
+---
+ src/figcore/api/account/actions/article.py | 46 ++++++++++++++++++++--
+ src/figcore/api/article/api.py             |  9 +++--
+ src/figcore/internals/account/account.py   | 10 ++++-
+ src/figcore/internals/article/article.py   | 12 ++++++
+ src/figcore/internals/db_calls/article.py  |  8 ++++
+ src/figcore/internals/db_calls/file.py     |  9 +++++
+ tests/api/account/test_api.py              | 27 ++++++++++++-
+ 7 files changed, 111 insertions(+), 10 deletions(-)
+
+diff --git a/src/figcore/api/account/actions/article.py b/src/figcore/api/account/actions/article.py
+index 4fa48b25b2..1f52cf71eb 100644
+--- a/src/figcore/api/account/actions/article.py
++++ b/src/figcore/api/account/actions/article.py
+@@ -458,11 +458,14 @@ def create_file(self, file_data, **options):
+         self._check_maximum_file_size_limit(file_data)
+ 
+         folder_path = file_data.pop("folder_path", None)
+-        file_api = self.ENTITIES.File.create(file_data, self.item.version)
+         if self.item.folder_structure and not folder_path:
+             folder_path = ""
++        if folder_path is not None and not self.item.folder_structure:
++            ArticleInternals.set_up_folder_structure(self.item.id)
++            self.item._folder_structure = None
++        file_api = self.ENTITIES.File.create(file_data, self.item.version)
+         if folder_path is not None:
+-            self.item.add_file_to_folder_structure(file_api, folder_path)
++            self.item.add_file_to_folder_structure(file_api.id, folder_path)
+ 
+         # clear sqlalchemy cache
+         self.item._instantiate_defaults()
+@@ -562,9 +565,13 @@ def delete_files(self, file_id_list):
+             message = "Files with ids [{}] not found".format(",".join([str(d) for d in diff_files]))
+             raise fig_exc.EntityNotFound(message)
+ 
++        new_folder_structure, file_paths = [], {}
++        if self.item.folder_structure:
++            new_folder_structure, file_paths = self._delete_files_and_get_paths(self.item.folder_structure, file_id_list)
++
+         are_all_files = self.item.files_count == len(file_id_list)
+         is_status_private = self.item.status == self.item.STATUS_PRIVATE
+-        AccountInternals.delete_files(self.item.id, file_id_list)
++        AccountInternals.delete_files(self.item.id, file_id_list, new_folder_structure, file_paths)
+ 
+         if are_all_files and is_status_private:
+             self.item._instantiate_defaults()
+@@ -892,3 +899,36 @@ def disable_download(self):
+ 
+     def enable_download(self):
+         self.item.enable_download()
++
++    @staticmethod
++    def _delete_files_and_get_paths(folder_structure, file_ids):
++        def recursive_delete(data, path, deleted_files):
++            if isinstance(data, list):
++                new_data = []
++                for item in data:
++                    result, deleted_files = recursive_delete(item, path, deleted_files)
++                    if result is not None:
++                        new_data.append(result)
++                if not new_data:
++                    return None, deleted_files
++                return new_data, deleted_files
++            elif isinstance(data, dict):
++                folder_name = next(iter(data))
++                new_path = path + [folder_name]
++                result, deleted_files = recursive_delete(data[folder_name], new_path, deleted_files)
++                if result is not None:
++                    return {folder_name: result}, deleted_files
++                return None, deleted_files
++            elif isinstance(data, int):
++                file_id = data
++                if file_id in file_ids:
++                    deleted_files[file_id] = path
++                    return None, deleted_files
++                return data, deleted_files
++            else:
++                return data, deleted_files
++
++        deleted_files = {}
++        new_structure, deleted_files = recursive_delete(folder_structure, [], deleted_files)
++
++        return new_structure, {key: f"/{'/'.join(value)}" for key, value in deleted_files.items()}
+\ No newline at end of file
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index 45dfa931d5..725d984bba 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -3063,12 +3063,16 @@ def file_has_public_preview(self, file_id):
+ 
+         return response
+ 
+-    def add_file_to_folder_structure(self, file_api, folder_path):
++    def add_file_to_folder_structure(self, file_id, folder_path):
+         folder_path = folder_path.strip("/")
+         folder_path = folder_path.split("/") if folder_path else []
+         folder_structure = list(self.folder_structure)
+         current = folder_structure
+         if folder_path:
++            if folder_structure and isinstance(folder_structure[0], dict) and folder_path[0] not in folder_structure[0]:
++                message = f"Cannot create folder '{folder_path[0]}'. Only one folder supported in an item."
++                raise exc.InvalidValue(field="folder_path", message=message)
++
+             for part in folder_path:
+                 found = False
+                 for item in current:
+@@ -3080,10 +3084,9 @@ def add_file_to_folder_structure(self, file_api, folder_path):
+                     new_dict = {part: []}
+                     current.insert(0, new_dict)  # Insert at the beginning of the list
+                     current = new_dict[part]
+-        current.append(file_api.id)
++        current.append(file_id)
+ 
+         ArticleInternals.create_update_folder_structure(self.id, folder_structure)
+         self._folder_structure = None
+ 
+-
+ APIEntity.ENTITIES.Article = Article
+diff --git a/src/figcore/internals/account/account.py b/src/figcore/internals/account/account.py
+index 2406ded83b..d390eef3b8 100644
+--- a/src/figcore/internals/account/account.py
++++ b/src/figcore/internals/account/account.py
+@@ -6,7 +6,7 @@
+ from figcore.models.dao import AccountConfig as AccountConfig_model
+ 
+ from ...internals.shared import SharedInternals
+-from ..db_calls import AccountDBCalls, ArticleDBCalls
++from ..db_calls import AccountDBCalls, ArticleDBCalls, FileDBCalls
+ 
+ 
+ class AccountInternals(object):
+@@ -109,8 +109,14 @@ def get_articles(cls, filters):
+         return projects
+ 
+     @classmethod
+-    def delete_files(cls, article_id, file_id_list):
++    def delete_files(cls, article_id, file_id_list, new_folder_structure, file_paths):
+         with cls.DB.get_session() as db_session:
++            if new_folder_structure:
++                model = ArticleDBCalls.get_folder_structure(db_session, article_id)
++                model.folder_structure = new_folder_structure
++                ArticleDBCalls.persist(db_session, model)
++            if file_paths:
++                FileDBCalls.add_file_path_to_file_ids(db_session, file_id_list, file_paths)
+             AccountDBCalls.delete_files(db_session, article_id, file_id_list)
+             ArticleDBCalls.update_article_model(
+                 db_session, article_id, {"private_changes": 1, "versionable_changes": "y"}
+diff --git a/src/figcore/internals/article/article.py b/src/figcore/internals/article/article.py
+index 316bbe92d2..31e9dc5bf7 100644
+--- a/src/figcore/internals/article/article.py
++++ b/src/figcore/internals/article/article.py
+@@ -884,3 +884,15 @@ def create_update_folder_structure(cls, article_id, folder_structure):
+                 model = ArticleFolderStructure_model(article_id=article_id)
+             model.folder_structure = folder_structure
+             ArticleDBCalls.persist(db_session, model)
++
++    @classmethod
++    def set_up_folder_structure(cls, article_id):
++        with cls.DB.get_session(readonly=True) as db_session:
++            file_ids = ArticleDBCalls.get_file_ids(db_session, article_id)
++            if not file_ids:
++                return
++
++            folder_structure = [fid for fid, in file_ids]
++            model = ArticleFolderStructure_model(article_id=article_id)
++            model.folder_structure = folder_structure
++            ArticleDBCalls.persist(db_session, model, flush=True)
+diff --git a/src/figcore/internals/db_calls/article.py b/src/figcore/internals/db_calls/article.py
+index ff3e0c92d1..5ee58e6e35 100644
+--- a/src/figcore/internals/db_calls/article.py
++++ b/src/figcore/internals/db_calls/article.py
+@@ -607,6 +607,14 @@ def get_files(cls, db_session, article_id, filters, offset, limit, order_by):
+             query = query.limit(limit)
+         return query.all()
+ 
++    @classmethod
++    def get_file_ids(cls, db_session, article_id):
++        query = db_session.query(File_model.id)
++        query = query.join(FileArticle_model, FileArticle_model.file_id == File_model.id)
++        query = query.filter(FileArticle_model.article_id == article_id)
++
++        return query.all()
++
+     @classmethod
+     def get_files_count(cls, db_session, article_id, filters):
+         query = db_session.query(func.count(File_model.id))
+diff --git a/src/figcore/internals/db_calls/file.py b/src/figcore/internals/db_calls/file.py
+index ed008969fc..a95987ff71 100644
+--- a/src/figcore/internals/db_calls/file.py
++++ b/src/figcore/internals/db_calls/file.py
+@@ -652,3 +652,12 @@ def file_has_public_preview(cls, db_session, article_id, file_id, ignore_file_st
+         if not ignore_file_status:
+             query = query.filter(File_model.is_private == 0)
+         return bool(query.first())
++
++
++    @classmethod
++    def add_file_path_to_file_ids(cls, db_session, file_ids, file_paths):
++        for file_id in file_ids:
++            query = db_session.query(File_model)
++            query = query.filter(File_model.id == file_id)
++            query.update({"file_meta": func.json_set(File_model.file_meta, "$.file_path", file_paths.get(file_id, "/"))},
++                synchronize_session=False)
+diff --git a/tests/api/account/test_api.py b/tests/api/account/test_api.py
+index 5148e059b5..f8d11be9e0 100644
+--- a/tests/api/account/test_api.py
++++ b/tests/api/account/test_api.py
+@@ -1513,17 +1513,20 @@ def test_create_publish_article_with_folder_path(self):
+         UploadSubsystem.create_token = MagicMock(return_value=token)
+         file_data = dict(self.file_data)
+ 
+-        paths = ["/", "", "/level1/level2/level3", "level1/level2/", "path1/path2"]
++        paths = ["/", "", "/level1/level2/level3", "level1/level2/"]
+         files = []
+         for path in paths:
+             file_data["folder_path"] = path
+             files.append(self.account.create_file(self.article, file_data))
+ 
++        with self.assertRaises(fig_exc.InvalidValue):
++            file_data["folder_path"] = "path1/path2"
++            files.append(self.account.create_file(self.article, file_data))
++
+         file_data.pop("folder_path", None)
+         files.append(self.account.create_file(self.article, file_data))
+ 
+         expected_structure = [
+-            {"path1": [{"path2": [files[4].id]}]},
+             {"level1": [{"level2": [{"level3": [files[2].id]}, files[3].id]}]},
+             files[0].id,
+             files[1].id,
+@@ -1538,6 +1541,26 @@ def test_create_publish_article_with_folder_path(self):
+         self.account.actions_for(self.article).publish()
+         self.assertEqual(self.article.last_version.folder_structure, expected_structure)
+ 
++    def test_delete_recover_file_with_folder_path(self):
++        token = "ELTOKEN"
++        UploadSubsystem.create_token = MagicMock(return_value=token)
++        file_data = dict(self.file_data)
++        file_1 = self.account.create_file(self.article, file_data)
++        file_data["folder_path"] = "/level1/level2/level3"
++        file_2 = self.account.create_file(self.article, file_data)
++        file_data["folder_path"] = "/level1/level4"
++        file_3 = self.account.create_file(self.article, file_data)
++
++        query = "UPDATE `file` SET `storage_state` = 'available' WHERE `article_id` = :article_id;"
++        with DBConnection.get_session() as db_session:
++            db_session.execute(query, params={"article_id": self.article.id})
++
++        self.account.actions_for(self.article).delete_file(file_2.id)
++
++        self.assertEqual(self.article.folder_structure, [{"level1": [{"level4": [3]}]}, 1])
++        deleted_file = self.article.get_deleted_files()[0]
++        self.assertEqual(deleted_file.file_meta, {"file_path": "/level1/level2/level3"})
++
+     def test_create_raise_permission_exception(self):
+         account = Account.find(2)
+         UploadSubsystem.create_token = MagicMock(return_value="FADSFAS")

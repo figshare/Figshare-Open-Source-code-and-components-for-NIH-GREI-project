@@ -1,0 +1,447 @@
+From 7b533f004d0b071e92f66bc620182f9e41ab85ca Mon Sep 17 00:00:00 2001
+From: Corneliu <corneliu.biro@gmail.com>
+Date: Tue, 28 Nov 2023 11:25:20 +0200
+Subject: [PATCH] FIG-34008: Handle deleted article_folder_structure_version
+
+---
+ scripts/sql_migrations/2023-11.sql            |  77 +++++-
+ src/figcore/api/article/api.py                |   6 +-
+ src/figcore/models/dao/__init__.py            |   1 +
+ src/figcore/models/dao/article_version.py     |   8 +
+ ...eleted_article_folder_structure_version.py |  15 ++
+ tests/api/account/test_api.py                 | 233 ++++++++++++------
+ 6 files changed, 252 insertions(+), 88 deletions(-)
+ create mode 100644 src/figcore/models/dao/deleted_article_folder_structure_version.py
+
+diff --git a/scripts/sql_migrations/2023-11.sql b/scripts/sql_migrations/2023-11.sql
+index 4a88e39ef6..a457e442b6 100644
+--- a/scripts/sql_migrations/2023-11.sql
++++ b/scripts/sql_migrations/2023-11.sql
+@@ -9,7 +9,14 @@ CREATE TABLE `article_folder_structure_version` (
+   `version` int(10) unsigned NOT NULL,
+   `folder_structure` blob NOT NULL,
+   PRIMARY KEY (`article_id`,`version`)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
++) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
++
++CREATE TABLE `deleted_article_folder_structure_version` (
++  `article_id` bigint(20) unsigned NOT NULL,
++  `version` int(10) unsigned NOT NULL,
++  `folder_structure` blob NOT NULL,
++  PRIMARY KEY (`article_id`,`version`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+ 
+ DROP PROCEDURE IF EXISTS `make_article_version`;
+ DELIMITER $$
+@@ -82,4 +89,72 @@ CREATE PROCEDURE make_article_version (_article_id INT)
+         select `article_id`, _version_id, `folder_structure` from `article_folder_structure` where `article_id`=_article_id;
+     END$$
+ 
++DELIMITER ;
++
++
++DROP TRIGGER IF EXISTS `article_version_before_delete`;
++DELIMITER $$
++
++CREATE TRIGGER article_version_before_delete BEFORE DELETE on `article_version`
++FOR EACH ROW
++BEGIN
++    INSERT INTO `deleted_article_version` (
++       `article_id`, `version`, `is_last_version`, `title`, `doi`, `handle`, `url`, `size`, `public_size`, `private_size`,
++       `files_count`, `thumb`, `status`, `defined_type`, `account_id`, `institution_id`, `group_id`, `project_id`,
++       `project_is_individual`, `license_id`, `is_embargoed`, `embargo_type`, `embargo_date`, `created_date`,
++       `published_date`, `modified_date`, `virus_scan`, `minting_info_id`, `online_publish_date`, `pub_accept_date`, `pub_publish_date`,
++       `revision_date`, `submission_date`, `is_metadata_record`
++       )
++       (
++       SELECT `article_id`, `version`, `is_last_version`, `title`, `doi`, `handle`, `url`, `size`, `public_size`, `private_size`,
++              `files_count`, `thumb`, `status`, `defined_type`, `account_id`, `institution_id`, `group_id`, `project_id`,
++              `project_is_individual`, `license_id`, `is_embargoed`, `embargo_type`, `embargo_date`, `created_date`,
++              `published_date`, `modified_date`, `virus_scan`, `minting_info_id`, `online_publish_date`, `pub_accept_date`, `pub_publish_date`,
++              `revision_date`, `submission_date`, `is_metadata_record`
++       FROM `article_version`
++       WHERE `article_id` = OLD.`article_id` and `version` = OLD.`version`
++       )
++    ;
++
++    INSERT INTO `deleted_article_metadata_version` (
++        `article_id`, `version`, `description`, `custom_fields`, `tags`, `categories`, `authors`, `references`,
++        `associated_institutions`, `files_order`, `embargo_reason`, `metadata_reason`, `funding`, `supplementary_fields`
++        )
++        (
++        SELECT `article_id`, `version`, `description`, `custom_fields`, `tags`, `categories`, `authors`, `references`,
++               `associated_institutions`, `files_order`, `embargo_reason`, `metadata_reason`, `funding`, `supplementary_fields`
++        FROM `article_metadata_version`
++        WHERE `article_id` = OLD.`article_id` and `version` = OLD.`version`
++        )
++    ;
++
++    INSERT INTO `deleted_file_article_version` (
++        `article_id`, `file_id`, `version`, `order`, `created_date`
++        )
++        (
++        SELECT `article_id`, `file_id`, `version`, `order`, `created_date`
++        FROM file_article_version
++        WHERE `article_id` = OLD.`article_id` and `version` = OLD.`version`
++        )
++    ;
++
++    INSERT INTO `deleted_article_resource_version` (
++        `article_id`, `version`, `resource_id`, `resource_doi`, `resource_link`, `resource_title`, `resource_version`, `resource_status`, `resource_type`
++        )
++        (
++        SELECT `article_id`, `version`, `resource_id`, `resource_doi`, `resource_link`, `resource_title`, `resource_version`, `resource_status`, `resource_type`
++        FROM article_resource_version
++        WHERE `article_id` = OLD.`article_id` and `version` = OLD.`version`
++        )
++    ;
++
++    INSERT INTO `deleted_article_folder_structure_version` (`article_id`, `version`, `folder_structure`)
++        (
++        SELECT `article_id`, `version`, `folder_structure`
++        FROM `article_folder_structure_version`
++        WHERE `article_id` = OLD.`article_id` and `version` = OLD.`version`
++        )
++    ;
++END;$$
++
+ DELIMITER ;
+\ No newline at end of file
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index 05539324df..87dff4b987 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -2861,7 +2861,7 @@ def undo_file_delete(self, file_id):
+         :returns: None
+         """
+         deleted_file = self.ENTITIES.DeletedFile.find(file_id)
+-        if deleted_file.file_meta.get("file_path") is not None:
++        if deleted_file and deleted_file.file_meta and deleted_file.file_meta.get("file_path") is not None:
+             self.add_file_to_folder_structure(file_id, deleted_file.file_meta["file_path"])
+         FileInternals.undo_file_delete(file_id, self.id)
+ 
+@@ -3071,10 +3071,6 @@ def add_file_to_folder_structure(self, file_id, folder_path):
+         folder_structure = list(self.folder_structure)
+         current = folder_structure
+         if folder_path:
+-            if folder_structure and isinstance(folder_structure[0], dict) and folder_path[0] not in folder_structure[0]:
+-                message = f"Cannot create folder '{folder_path[0]}'. Only one folder supported in an item."
+-                raise exc.InvalidValue(field="folder_path", message=message)
+-
+             for part in folder_path:
+                 found = False
+                 for item in current:
+diff --git a/src/figcore/models/dao/__init__.py b/src/figcore/models/dao/__init__.py
+index 77cbb0a7b2..c83df6e9ac 100644
+--- a/src/figcore/models/dao/__init__.py
++++ b/src/figcore/models/dao/__init__.py
+@@ -50,6 +50,7 @@
+ from .custom_category_tree import CustomCategoryTree
+ from .custom_field import CustomField
+ from .custom_field_value import CustomFieldValue
++from .deleted_article_folder_structure_version import DeletedArticleFolderStructureVersion
+ from .deleted_article_metadata_version import DeletedArticleMetadataVersion
+ from .deleted_article_resource_version import DeletedArticleResourceVersion
+ from .deleted_article_version import DeletedArticleVersion
+diff --git a/src/figcore/models/dao/article_version.py b/src/figcore/models/dao/article_version.py
+index 3fdeb56f6a..1ed92b542c 100644
+--- a/src/figcore/models/dao/article_version.py
++++ b/src/figcore/models/dao/article_version.py
+@@ -118,6 +118,14 @@ class ArticleVersion(Base, ExtendedBase):
+         WHERE `article_id` = OLD.`article_id` and `version` = OLD.`version`
+         )
+     ;
++    
++    INSERT INTO `deleted_article_folder_structure_version` (`article_id`, `version`, `folder_structure`)
++        (
++        SELECT `article_id`, `version`, `folder_structure`
++        FROM `article_folder_structure_version`
++        WHERE `article_id` = OLD.`article_id` and `version` = OLD.`version`
++        )
++    ;
+ END;
+ """
+ )
+diff --git a/src/figcore/models/dao/deleted_article_folder_structure_version.py b/src/figcore/models/dao/deleted_article_folder_structure_version.py
+new file mode 100644
+index 0000000000..282912a251
+--- /dev/null
++++ b/src/figcore/models/dao/deleted_article_folder_structure_version.py
+@@ -0,0 +1,15 @@
++from sqlalchemy import Column
++from sqlalchemy.dialects.mysql import BIGINT, INTEGER
++
++from ..custom_data_types import JsonMediumListBlob
++from .base import Base, ExtendedBase
++
++
++class DeletedArticleFolderStructureVersion(Base, ExtendedBase):
++
++    __tablename__ = "deleted_article_folder_structure_version"
++    __table_args__ = {"mysql_engine": "InnoDB"}
++
++    article_id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=False)
++    version = Column(INTEGER(unsigned=True), primary_key=True, autoincrement=False)
++    folder_structure = Column(JsonMediumListBlob(), nullable=False, default=[])
+diff --git a/tests/api/account/test_api.py b/tests/api/account/test_api.py
+index ac53fc44d3..a2aeaec91e 100644
+--- a/tests/api/account/test_api.py
++++ b/tests/api/account/test_api.py
+@@ -36,6 +36,7 @@
+ from figcore.models.dao import Account as Account_model
+ from figcore.models.dao import Group as Group_model
+ from figcore.models.dao import User as User_model
++from figcore.models.dao import DeletedArticleFolderStructureVersion as DeletedArticleFolderStructureVersion_model
+ from figcore.models.dao import Institution as Institution_model
+ from figcore.models.dao import UserAccount as UserAccount_model
+ 
+@@ -1439,6 +1440,9 @@ def setUpClass(cls):
+         cls.account = Account(cls.account1.id).load_from_model(cls.account1)
+         cls.article = cls.account.create_article(article_data)
+ 
++        admininstrator_role = Role.get_by_name_and_category("Administrator", "institution")
++        cls.inst.group.add_role(admininstrator_role.id, cls.account.id)
++
+     def test_create_linked_file(self):
+         download_link = "https://fig.com/down/xas.csv"
+         self.assertEqual(len(self.article.files), 0)
+@@ -1508,88 +1512,6 @@ def test_create(self):
+         self.article = Article.find(self.article.id)
+         self.assertEqual(len(self.article.files), 1)
+ 
+-    def test_create_publish_article_with_folder_path(self):
+-        token = "ELTOKEN"
+-        UploadSubsystem.create_token = MagicMock(return_value=token)
+-        file_data = dict(self.file_data)
+-
+-        paths = ["/", "", "/level1/level2/level3", "level1/level2/"]
+-        files = []
+-        for path in paths:
+-            file_data["folder_path"] = path
+-            files.append(self.account.create_file(self.article, file_data))
+-
+-        with self.assertRaises(fig_exc.InvalidValue):
+-            file_data["folder_path"] = "path1/path2"
+-            files.append(self.account.create_file(self.article, file_data))
+-
+-        file_data.pop("folder_path", None)
+-        files.append(self.account.create_file(self.article, file_data))
+-
+-        expected_structure = [
+-            {"level1": [{"level2": [{"level3": [files[2].id]}, files[3].id]}]},
+-            files[0].id,
+-            files[1].id,
+-            files[-1].id,
+-        ]
+-        self.assertEqual(self.article.folder_structure, expected_structure)
+-
+-        query = "UPDATE `file` SET `storage_state` = 'available' WHERE `article_id` = :article_id;"
+-        with DBConnection.get_session() as db_session:
+-            db_session.execute(query, params={"article_id": self.article.id})
+-
+-        self.account.actions_for(self.article).publish()
+-        self.assertEqual(self.article.last_version.folder_structure, expected_structure)
+-
+-    def test_delete_file_with_folder_path(self):
+-        token = "ELTOKEN"
+-        UploadSubsystem.create_token = MagicMock(return_value=token)
+-        file_data = dict(self.file_data)
+-        file_1 = self.account.create_file(self.article, file_data)
+-        file_data["folder_path"] = "/level1/level2/level3"
+-        file_2 = self.account.create_file(self.article, file_data)
+-        file_data["folder_path"] = "/level1/level4"
+-        file_3 = self.account.create_file(self.article, file_data)
+-
+-        query = "UPDATE `file` SET `storage_state` = 'available' WHERE `article_id` = :article_id;"
+-        with DBConnection.get_session() as db_session:
+-            db_session.execute(query, params={"article_id": self.article.id})
+-
+-        self.account.actions_for(self.article).delete_file(file_2.id)
+-
+-        self.assertEqual(self.article.folder_structure, [{"level1": [{"level4": [3]}]}, 1])
+-        deleted_file = self.article.get_deleted_files()[0]
+-        self.assertEqual(deleted_file.file_meta, {"file_path": "/level1/level2/level3"})
+-
+-    def test_recover_deleted_file_with_folder_path(self):
+-        token = "ELTOKEN"
+-        UploadSubsystem.create_token = MagicMock(return_value=token)
+-        file_data = dict(self.file_data)
+-        file_data["folder_path"] = "/level1"
+-        file_1 = self.account.create_file(self.article, file_data)
+-
+-        query = "UPDATE `file` SET `storage_state` = 'available' WHERE `article_id` = :article_id;"
+-        with DBConnection.get_session() as db_session:
+-            db_session.execute(query, params={"article_id": self.article.id})
+-
+-        self.account.actions_for(self.article).delete_file(file_1.id)
+-        self.assertEqual(self.article.folder_structure, [])
+-
+-        file_data["folder_path"] = "/level2"
+-        file_2 = self.account.create_file(self.article, file_data)
+-
+-        deleted_file = self.article.get_deleted_files()[0]
+-        self.assertEqual(deleted_file.file_meta, {"file_path": "/level1"})
+-
+-        # Cannot have 2 folders in /
+-        with self.assertRaises(fig_exc.InvalidValue):
+-            self.account.actions_for(self.article).undo_file_delete(deleted_file.file_id)
+-
+-        self.account.actions_for(self.article).delete_file(file_2.id)
+-        self.account.actions_for(self.article).undo_file_delete(deleted_file.file_id)
+-        self.article._instantiate_defaults()
+-        self.assertEqual(self.article.folder_structure, [{"level1": [1]}])
+-
+     def test_create_raise_permission_exception(self):
+         account = Account.find(2)
+         UploadSubsystem.create_token = MagicMock(return_value="FADSFAS")
+@@ -2559,3 +2481,150 @@ def test_account_get_accounts_by_id_list(self):
+ 
+         self.assertEqual(acc[0].loaded_user(), False)
+         self.assertEqual(acc[1].loaded_user(), False)
++
++
++class TestArticleFolderStructure(BaseTestTransactioned):
++    @classmethod
++    def setUpClass(cls):
++        super(TestArticleFolderStructure, cls).setUpClass()
++        cls.setup_environment()
++        cls.create_complete_environment()
++
++        cls.file_data = {"name": "sample_file.txt", "size": 300, "supplied_md5": "MD5"}
++
++        cls.config_data = {
++            "storage_info": {
++                "storage_type": "s3",
++                "s3_key": "KEY",
++                "s3_secret": "SECRET",
++                "files_bucket": "testinstitutionfiles.figshare.com",
++                "base_domain": "s3-eu-west-1.amazonaws.com",
++                "protocol": "http",
++                "max_object_size": 1073741824,
++                "has_multipart": True,
++            }
++        }
++        cls.config_data["temp_storage_info"] = cls.config_data["storage_info"]
++
++        cls.inst.update_config(cls.config_data)
++        cls.article_data = {
++            "title": "Sample article",
++            "url": "file1",
++            "description": "bcsafda",
++            "defined_type": 1,
++            "authors": [{"name": "Cas Dbc"}],
++            "categories": [2, 4],
++            "tags": ["ab", "bc", "da"],
++        }
++        cls.account = Account(cls.account1.id).load_from_model(cls.account1)
++
++        admininstrator_role = Role.get_by_name_and_category("Administrator", "institution")
++        cls.inst.group.add_role(admininstrator_role.id, cls.account.id)
++
++    def test_create_publish_article_with_folder_path(self):
++        article = self.account.create_article(dict(self.article_data))
++        token = "ELTOKEN"
++        UploadSubsystem.create_token = MagicMock(return_value=token)
++        file_data = dict(self.file_data)
++
++        paths = ["/", "", "/level1/level2/level3", "level1/level2/"]
++        files = []
++        for path in paths:
++            file_data["folder_path"] = path
++            files.append(self.account.create_file(article, file_data))
++
++        file_data["folder_path"] = "path1/path2"
++        files.append(self.account.create_file(article, file_data))
++
++        file_data.pop("folder_path", None)
++        files.append(self.account.create_file(article, file_data))
++
++        expected_structure = [
++            {"path1": [{"path2": [files[-2].id]}]},
++            {"level1": [{"level2": [{"level3": [files[2].id]}, files[3].id]}]},
++            files[0].id,
++            files[1].id,
++            files[-1].id,
++        ]
++        self.assertEqual(article.folder_structure, expected_structure)
++
++        query = "UPDATE `file` SET `storage_state` = 'available' WHERE `article_id` = :article_id;"
++        with DBConnection.get_session() as db_session:
++            db_session.execute(query, params={"article_id": article.id})
++
++        self.account.actions_for(article).publish()
++        self.assertEqual(article.last_version.folder_structure, expected_structure)
++
++    def test_unpublish_article_with_folder_path(self):
++        article = self.account.create_article(dict(self.article_data))
++        token = "ELTOKEN"
++        UploadSubsystem.create_token = MagicMock(return_value=token)
++        file_data = dict(self.file_data)
++
++        paths = ["/", "", "/level1/level2/level3", "level1/level2/"]
++        files = []
++        for path in paths:
++            file_data["folder_path"] = path
++            files.append(self.account.create_file(article, file_data))
++
++        query = "UPDATE `file` SET `storage_state` = 'available' WHERE `article_id` = :article_id;"
++        with DBConnection.get_session() as db_session:
++            db_session.execute(query, params={"article_id": article.id})
++
++        self.account.actions_for(article).publish()
++        expected_structure = [{"level1": [{"level2": [{"level3": [files[2].id]}, files[3].id]}]}, files[0].id, files[1].id]
++        self.assertEqual(article.last_version.folder_structure, expected_structure)
++
++        self.account.actions_for(article).unpublish("Unpublish test")
++        with DBConnection.get_session() as db_session:
++            query = db_session.query(DeletedArticleFolderStructureVersion_model)
++            deleted_article_versions = query.all()
++
++        self.assertEqual(deleted_article_versions[0].article_id, article.id)
++        self.assertEqual(deleted_article_versions[0].folder_structure, expected_structure)
++
++    def test_delete_file_with_folder_path(self):
++        article = self.account.create_article(dict(self.article_data))
++        token = "ELTOKEN"
++        UploadSubsystem.create_token = MagicMock(return_value=token)
++        file_data = dict(self.file_data)
++        file_1 = self.account.create_file(article, file_data)
++        file_data["folder_path"] = "/level1/level2/level3"
++        file_2 = self.account.create_file(article, file_data)
++        file_data["folder_path"] = "/level1/level4"
++        file_3 = self.account.create_file(article, file_data)
++
++        query = "UPDATE `file` SET `storage_state` = 'available' WHERE `article_id` = :article_id;"
++        with DBConnection.get_session() as db_session:
++            db_session.execute(query, params={"article_id": article.id})
++
++        self.account.actions_for(article).delete_file(file_2.id)
++
++        self.assertEqual(article.folder_structure, [{"level1": [{"level4": [file_3.id]}]}, file_1.id])
++        deleted_file = article.get_deleted_files()[0]
++        self.assertEqual(deleted_file.file_meta, {"file_path": "/level1/level2/level3"})
++
++    def test_recover_deleted_file_with_folder_path(self):
++        article = self.account.create_article(dict(self.article_data))
++        token = "ELTOKEN"
++        UploadSubsystem.create_token = MagicMock(return_value=token)
++        file_data = dict(self.file_data)
++        file_data["folder_path"] = "/level1"
++        file_1 = self.account.create_file(article, file_data)
++
++        query = "UPDATE `file` SET `storage_state` = 'available' WHERE `article_id` = :article_id;"
++        with DBConnection.get_session() as db_session:
++            db_session.execute(query, params={"article_id": article.id})
++
++        self.account.actions_for(article).delete_file(file_1.id)
++        self.assertEqual(article.folder_structure, [])
++
++        file_data["folder_path"] = "/level2"
++        file_2 = self.account.create_file(article, file_data)
++
++        deleted_file = article.get_deleted_files()[0]
++        self.assertEqual(deleted_file.file_meta, {"file_path": "/level1"})
++
++        self.account.actions_for(article).undo_file_delete(deleted_file.file_id)
++        article._instantiate_defaults()
++        self.assertEqual(article.folder_structure, [{"level1": [file_1.id]}, {"level2": [file_2.id]}])

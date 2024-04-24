@@ -1,0 +1,395 @@
+From 0ac11595826376b112eade7a7f48faf90d091d36 Mon Sep 17 00:00:00 2001
+From: Corneliu <corneliu.biro@gmail.com>
+Date: Sun, 17 Dec 2023 15:23:37 +0200
+Subject: [PATCH] Change article.folder_structure model from list to dict for
+ big file inserts
+
+---
+ .../{2023-11.sql => 2024-01.sql}              |  2 +-
+ src/figcore/api/account/actions/article.py    | 41 ++-----------------
+ src/figcore/api/article/api.py                | 22 ++--------
+ src/figcore/api/article/version_api.py        |  3 +-
+ src/figcore/internals/account/account.py      |  8 +---
+ src/figcore/internals/article/article.py      | 10 ++---
+ src/figcore/internals/db_calls/article.py     | 18 ++++++++
+ src/figcore/internals/db_calls/file.py        |  9 +++-
+ .../models/dao/article_folder_structure.py    |  4 +-
+ .../dao/article_folder_structure_version.py   |  4 +-
+ ...eleted_article_folder_structure_version.py |  4 +-
+ tests/api/account/test_api.py                 | 36 +++++++++-------
+ 12 files changed, 68 insertions(+), 93 deletions(-)
+ rename scripts/sql_migrations/{2023-11.sql => 2024-01.sql} (99%)
+
+diff --git a/scripts/sql_migrations/2023-11.sql b/scripts/sql_migrations/2024-01.sql
+similarity index 99%
+rename from scripts/sql_migrations/2023-11.sql
+rename to scripts/sql_migrations/2024-01.sql
+index a457e442b6..868fda95df 100644
+--- a/scripts/sql_migrations/2023-11.sql
++++ b/scripts/sql_migrations/2024-01.sql
+@@ -157,4 +157,4 @@ BEGIN
+     ;
+ END;$$
+ 
+-DELIMITER ;
+\ No newline at end of file
++DELIMITER ;
+diff --git a/src/figcore/api/account/actions/article.py b/src/figcore/api/account/actions/article.py
+index 93272f7a56..43a00c7630 100644
+--- a/src/figcore/api/account/actions/article.py
++++ b/src/figcore/api/account/actions/article.py
+@@ -565,15 +565,13 @@ def delete_files(self, file_id_list):
+             message = "Files with ids [{}] not found".format(",".join([str(d) for d in diff_files]))
+             raise fig_exc.EntityNotFound(message)
+ 
+-        new_folder_structure, file_paths = None, {}
++        file_paths = {}
+         if self.item.folder_structure:
+-            new_folder_structure, file_paths = self._delete_files_and_get_paths(
+-                self.item.folder_structure, file_id_list
+-            )
++            file_paths = {file_id: self.item.folder_structure.get(file_id, "") for file_id in file_id_list}
+ 
+         are_all_files = self.item.files_count == len(file_id_list)
+         is_status_private = self.item.status == self.item.STATUS_PRIVATE
+-        AccountInternals.delete_files(self.item.id, file_id_list, new_folder_structure, file_paths)
++        AccountInternals.delete_files(self.item.id, file_id_list, file_paths)
+ 
+         if are_all_files and is_status_private:
+             self.item._instantiate_defaults()
+@@ -901,36 +899,3 @@ def disable_download(self):
+ 
+     def enable_download(self):
+         self.item.enable_download()
+-
+-    @staticmethod
+-    def _delete_files_and_get_paths(folder_structure, file_ids):
+-        def recursive_delete(data, path, deleted_files):
+-            if isinstance(data, list):
+-                new_data = []
+-                for item in data:
+-                    result, deleted_files = recursive_delete(item, path, deleted_files)
+-                    if result is not None:
+-                        new_data.append(result)
+-                if not new_data:
+-                    return None, deleted_files
+-                return new_data, deleted_files
+-            elif isinstance(data, dict):
+-                folder_name = next(iter(data))
+-                new_path = path + [folder_name]
+-                result, deleted_files = recursive_delete(data[folder_name], new_path, deleted_files)
+-                if result is not None:
+-                    return {folder_name: result}, deleted_files
+-                return None, deleted_files
+-            elif isinstance(data, int):
+-                file_id = data
+-                if file_id in file_ids:
+-                    deleted_files[file_id] = path
+-                    return None, deleted_files
+-                return data, deleted_files
+-            else:
+-                return data, deleted_files
+-
+-        deleted_files = {}
+-        new_structure, deleted_files = recursive_delete(folder_structure, [], deleted_files)
+-
+-        return new_structure or [], {key: f"/{'/'.join(value)}" for key, value in deleted_files.items()}
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index 87dff4b987..a7d4c84459 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -334,7 +334,8 @@ def load_embargo_options(self):
+ 
+     def load_folder_structure(self):
+         model = ArticleInternals.get_folder_structure(self.id)
+-        self._folder_structure = model.folder_structure if model else []
++        data = model.folder_structure if model else {}
++        self._folder_structure = {int(file_id): folder_path for file_id, folder_path in data.items()}
+ 
+     def loaded_embargo_options(self):
+         return self._is_loaded(self._embargo_options)
+@@ -3067,24 +3068,7 @@ def file_has_public_preview(self, file_id):
+ 
+     def add_file_to_folder_structure(self, file_id, folder_path):
+         folder_path = folder_path.strip("/")
+-        folder_path = folder_path.split("/") if folder_path else []
+-        folder_structure = list(self.folder_structure)
+-        current = folder_structure
+-        if folder_path:
+-            for part in folder_path:
+-                found = False
+-                for item in current:
+-                    if isinstance(item, dict) and part in item:
+-                        current = item[part]
+-                        found = True
+-                        break
+-                if not found:
+-                    new_dict = {part: []}
+-                    current.insert(0, new_dict)  # Insert at the beginning of the list
+-                    current = new_dict[part]
+-        current.append(file_id)
+-
+-        ArticleInternals.create_update_folder_structure(self.id, folder_structure)
++        ArticleInternals.create_update_folder_structure(self.id, file_id, folder_path)
+         self._folder_structure = None
+ 
+ 
+diff --git a/src/figcore/api/article/version_api.py b/src/figcore/api/article/version_api.py
+index 074c4db387..5082bd7c43 100644
+--- a/src/figcore/api/article/version_api.py
++++ b/src/figcore/api/article/version_api.py
+@@ -454,7 +454,8 @@ def load_embargo_options(self):
+ 
+     def load_folder_structure(self):
+         model = ArticleVersionInternals.get_folder_structure(self.id, self.version)
+-        self._folder_structure = model.folder_structure if model else []
++        data = model.folder_structure if model else {}
++        self._folder_structure = {int(file_id): folder_path for file_id, folder_path in data.items()}
+ 
+     def load_options(self):
+         options = ArticleInternals.get_article_options(self.id)
+diff --git a/src/figcore/internals/account/account.py b/src/figcore/internals/account/account.py
+index 2451bd02c9..adb8001652 100644
+--- a/src/figcore/internals/account/account.py
++++ b/src/figcore/internals/account/account.py
+@@ -109,14 +109,10 @@ def get_articles(cls, filters):
+         return projects
+ 
+     @classmethod
+-    def delete_files(cls, article_id, file_id_list, new_folder_structure, file_paths):
++    def delete_files(cls, article_id, file_id_list, file_paths):
+         with cls.DB.get_session() as db_session:
+-            if new_folder_structure is not None:
+-                model = ArticleDBCalls.get_folder_structure(db_session, article_id)
+-                model.folder_structure = new_folder_structure
+-                ArticleDBCalls.persist(db_session, model)
+             if file_paths:
+-                FileDBCalls.add_file_path_to_file_ids(db_session, file_id_list, file_paths)
++                FileDBCalls.delete_files_from_article_folder_structure(db_session, article_id, file_id_list, file_paths)
+             AccountDBCalls.delete_files(db_session, article_id, file_id_list)
+             ArticleDBCalls.update_article_model(
+                 db_session, article_id, {"private_changes": 1, "versionable_changes": "y"}
+diff --git a/src/figcore/internals/article/article.py b/src/figcore/internals/article/article.py
+index 31e9dc5bf7..b4c01846eb 100644
+--- a/src/figcore/internals/article/article.py
++++ b/src/figcore/internals/article/article.py
+@@ -877,13 +877,9 @@ def get_folder_structure(cls, article_id):
+             return ArticleDBCalls.get_folder_structure(db_session, article_id)
+ 
+     @classmethod
+-    def create_update_folder_structure(cls, article_id, folder_structure):
++    def create_update_folder_structure(cls, article_id, file_id, folder_path):
+         with cls.DB.get_session(readonly=True) as db_session:
+-            model = ArticleDBCalls.get_folder_structure(db_session, article_id)
+-            if not model:
+-                model = ArticleFolderStructure_model(article_id=article_id)
+-            model.folder_structure = folder_structure
+-            ArticleDBCalls.persist(db_session, model)
++            ArticleDBCalls.create_update_folder_structure(db_session, article_id, file_id, folder_path)
+ 
+     @classmethod
+     def set_up_folder_structure(cls, article_id):
+@@ -892,7 +888,7 @@ def set_up_folder_structure(cls, article_id):
+             if not file_ids:
+                 return
+ 
+-            folder_structure = [fid for fid, in file_ids]
++            folder_structure = {fid: "" for fid, in file_ids}
+             model = ArticleFolderStructure_model(article_id=article_id)
+             model.folder_structure = folder_structure
+             ArticleDBCalls.persist(db_session, model, flush=True)
+diff --git a/src/figcore/internals/db_calls/article.py b/src/figcore/internals/db_calls/article.py
+index 5ee58e6e35..37a49fa335 100644
+--- a/src/figcore/internals/db_calls/article.py
++++ b/src/figcore/internals/db_calls/article.py
+@@ -852,3 +852,21 @@ def get_folder_structure(cls, db_session, article_id):
+         query = db_session.query(ArticleFolderStructure_model)
+         query = query.filter(ArticleFolderStructure_model.article_id == article_id)
+         return query.first()
++
++    @classmethod
++    def create_update_folder_structure(cls, db_session, article_id, file_id, folder_path):
++        query = db_session.query(ArticleFolderStructure_model)
++        query = query.filter(ArticleFolderStructure_model.article_id == article_id)
++        if query.first():
++            query.update(
++                {
++                    "folder_structure": func.json_set(
++                        ArticleFolderStructure_model.folder_structure, f"$.{file_id}", folder_path
++                    )
++                },
++                synchronize_session=False,
++            )
++        else:
++            model = ArticleFolderStructure_model(article_id=article_id)
++            model.folder_structure = {file_id: folder_path}
++            cls.persist(db_session, model, flush=True)
+diff --git a/src/figcore/internals/db_calls/file.py b/src/figcore/internals/db_calls/file.py
+index 49e3ad8879..1a84d41196 100644
+--- a/src/figcore/internals/db_calls/file.py
++++ b/src/figcore/internals/db_calls/file.py
+@@ -2,6 +2,7 @@
+ from sqlalchemy.sql.expression import literal, alias, cast
+ 
+ from figcore.models.dao import Article as Article_model
++from figcore.models.dao import ArticleFolderStructure as ArticleFolderStructure_model
+ from figcore.models.dao import ArticleVersion as ArticleVersion_model
+ from figcore.models.dao import ArticleResourceVersion as ArticleResourceVersion_model
+ from figcore.models.dao import CollectionResourceVersion as CollectionResourceVersion_model
+@@ -654,7 +655,7 @@ def file_has_public_preview(cls, db_session, article_id, file_id, ignore_file_st
+         return bool(query.first())
+ 
+     @classmethod
+-    def add_file_path_to_file_ids(cls, db_session, file_ids, file_paths):
++    def delete_files_from_article_folder_structure(cls, db_session, article_id, file_ids, file_paths):
+         for file_id in file_ids:
+             query = db_session.query(File_model)
+             query = query.filter(File_model.id == file_id)
+@@ -662,3 +663,9 @@ def add_file_path_to_file_ids(cls, db_session, file_ids, file_paths):
+                 {"file_meta": func.json_set(File_model.file_meta, "$.file_path", file_paths.get(file_id, "/"))},
+                 synchronize_session=False,
+             )
++            query = db_session.query(ArticleFolderStructure_model)
++            query = query.filter(ArticleFolderStructure_model.article_id == article_id)
++            query.update(
++                {"folder_structure": func.json_remove(ArticleFolderStructure_model.folder_structure, f"$.{file_id}")},
++                synchronize_session=False,
++            )
+diff --git a/src/figcore/models/dao/article_folder_structure.py b/src/figcore/models/dao/article_folder_structure.py
+index dbee09bc1a..8ee1340cd5 100644
+--- a/src/figcore/models/dao/article_folder_structure.py
++++ b/src/figcore/models/dao/article_folder_structure.py
+@@ -1,7 +1,7 @@
+ from sqlalchemy import Column
+ from sqlalchemy.dialects.mysql import BIGINT
+ 
+-from ..custom_data_types import JsonMediumListBlob
++from ..custom_data_types import JsonMediumDictBlob
+ from .base import Base, ExtendedBase
+ 
+ 
+@@ -11,4 +11,4 @@ class ArticleFolderStructure(Base, ExtendedBase):
+     __table_args__ = {"mysql_engine": "InnoDB"}
+ 
+     article_id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=False)
+-    folder_structure = Column(JsonMediumListBlob(), nullable=False, default=[])
++    folder_structure = Column(JsonMediumDictBlob(), nullable=False, default={})
+diff --git a/src/figcore/models/dao/article_folder_structure_version.py b/src/figcore/models/dao/article_folder_structure_version.py
+index 5e5a68f583..846015ff3f 100644
+--- a/src/figcore/models/dao/article_folder_structure_version.py
++++ b/src/figcore/models/dao/article_folder_structure_version.py
+@@ -1,7 +1,7 @@
+ from sqlalchemy import Column
+ from sqlalchemy.dialects.mysql import BIGINT, INTEGER
+ 
+-from ..custom_data_types import JsonMediumListBlob
++from ..custom_data_types import JsonMediumDictBlob
+ from .base import Base, ExtendedBase
+ 
+ 
+@@ -12,4 +12,4 @@ class ArticleFolderStructureVersion(Base, ExtendedBase):
+ 
+     article_id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=False)
+     version = Column(INTEGER(unsigned=True), primary_key=True, autoincrement=False)
+-    folder_structure = Column(JsonMediumListBlob(), nullable=False, default=[])
++    folder_structure = Column(JsonMediumDictBlob(), nullable=False, default={})
+diff --git a/src/figcore/models/dao/deleted_article_folder_structure_version.py b/src/figcore/models/dao/deleted_article_folder_structure_version.py
+index 282912a251..63900007be 100644
+--- a/src/figcore/models/dao/deleted_article_folder_structure_version.py
++++ b/src/figcore/models/dao/deleted_article_folder_structure_version.py
+@@ -1,7 +1,7 @@
+ from sqlalchemy import Column
+ from sqlalchemy.dialects.mysql import BIGINT, INTEGER
+ 
+-from ..custom_data_types import JsonMediumListBlob
++from ..custom_data_types import JsonMediumDictBlob
+ from .base import Base, ExtendedBase
+ 
+ 
+@@ -12,4 +12,4 @@ class DeletedArticleFolderStructureVersion(Base, ExtendedBase):
+ 
+     article_id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=False)
+     version = Column(INTEGER(unsigned=True), primary_key=True, autoincrement=False)
+-    folder_structure = Column(JsonMediumListBlob(), nullable=False, default=[])
++    folder_structure = Column(JsonMediumDictBlob(), nullable=False, default={})
+diff --git a/tests/api/account/test_api.py b/tests/api/account/test_api.py
+index 5af330aa8b..9f3691af82 100644
+--- a/tests/api/account/test_api.py
++++ b/tests/api/account/test_api.py
+@@ -2539,13 +2539,14 @@ def test_create_publish_article_with_folder_path(self):
+         file_data.pop("folder_path", None)
+         files.append(self.account.create_file(article, file_data))
+ 
+-        expected_structure = [
+-            {"path1": [{"path2": [files[-2].id]}]},
+-            {"level1": [{"level2": [{"level3": [files[2].id]}, files[3].id]}]},
+-            files[0].id,
+-            files[1].id,
+-            files[-1].id,
+-        ]
++        expected_structure = {
++            files[0].id: "",
++            files[1].id: "",
++            files[2].id: "level1/level2/level3",
++            files[3].id: "level1/level2",
++            files[4].id: "path1/path2",
++            files[5].id: "",
++        }
+         self.assertEqual(article.folder_structure, expected_structure)
+ 
+         query = "UPDATE `file` SET `storage_state` = 'available' WHERE `article_id` = :article_id;"
+@@ -2577,6 +2578,12 @@ def test_unpublish_article_with_folder_path(self):
+             files[0].id,
+             files[1].id,
+         ]
++        expected_structure = {
++            files[0].id: "",
++            files[1].id: "",
++            files[2].id: "level1/level2/level3",
++            files[3].id: "level1/level2",
++        }
+         self.assertEqual(article.last_version.folder_structure, expected_structure)
+ 
+         self.account.actions_for(article).unpublish("Unpublish test")
+@@ -2585,7 +2592,9 @@ def test_unpublish_article_with_folder_path(self):
+             deleted_article_versions = query.all()
+ 
+         self.assertEqual(deleted_article_versions[0].article_id, article.id)
+-        self.assertEqual(deleted_article_versions[0].folder_structure, expected_structure)
++        self.assertEqual(
++            deleted_article_versions[0].folder_structure, {str(k): v for k, v in expected_structure.items()}
++        )
+ 
+     def test_delete_file_with_folder_path(self):
+         article = self.account.create_article(dict(self.article_data))
+@@ -2603,10 +2612,9 @@ def test_delete_file_with_folder_path(self):
+             db_session.execute(query, params={"article_id": article.id})
+ 
+         self.account.actions_for(article).delete_file(file_2.id)
+-
+-        self.assertEqual(article.folder_structure, [{"level1": [{"level4": [file_3.id]}]}, file_1.id])
+         deleted_file = article.get_deleted_files()[0]
+-        self.assertEqual(deleted_file.file_meta, {"file_path": "/level1/level2/level3"})
++        self.assertEqual(deleted_file.file_meta, {"file_path": "level1/level2/level3"})
++        self.assertEqual(article.folder_structure, {file_1.id: "", file_3.id: "level1/level4"})
+ 
+     def test_recover_deleted_file_with_folder_path(self):
+         article = self.account.create_article(dict(self.article_data))
+@@ -2621,14 +2629,14 @@ def test_recover_deleted_file_with_folder_path(self):
+             db_session.execute(query, params={"article_id": article.id})
+ 
+         self.account.actions_for(article).delete_file(file_1.id)
+-        self.assertEqual(article.folder_structure, [])
++        self.assertEqual(article.folder_structure, {})
+ 
+         file_data["folder_path"] = "/level2"
+         file_2 = self.account.create_file(article, file_data)
+ 
+         deleted_file = article.get_deleted_files()[0]
+-        self.assertEqual(deleted_file.file_meta, {"file_path": "/level1"})
++        self.assertEqual(deleted_file.file_meta, {"file_path": "level1"})
+ 
+         self.account.actions_for(article).undo_file_delete(deleted_file.file_id)
+         article._instantiate_defaults()
+-        self.assertEqual(article.folder_structure, [{"level1": [file_1.id]}, {"level2": [file_2.id]}])
++        self.assertEqual(article.folder_structure, {file_1.id: "level1", file_2.id: "level2"})

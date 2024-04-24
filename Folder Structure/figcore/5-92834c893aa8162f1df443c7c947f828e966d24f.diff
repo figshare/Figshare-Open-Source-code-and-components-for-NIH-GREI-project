@@ -1,0 +1,104 @@
+From 92834c893aa8162f1df443c7c947f828e966d24f Mon Sep 17 00:00:00 2001
+From: Corneliu <corneliu.biro@gmail.com>
+Date: Wed, 6 Dec 2023 13:12:14 +0200
+Subject: [PATCH] FIG-33891: Return multiple files based on ids (graphql)
+
+---
+ src/figcore/graphql/resolvers/item_version.py    | 9 ++++++++-
+ src/figcore/graphql/resolvers_v2/item.py         | 9 ++++++++-
+ src/figcore/graphql/schema/types/item.py         | 1 +
+ src/figcore/graphql/schema/types/item_version.py | 1 +
+ tests/api/account/test_api.py                    | 6 +++++-
+ 5 files changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/src/figcore/graphql/resolvers/item_version.py b/src/figcore/graphql/resolvers/item_version.py
+index f63182716a..4e487e39f7 100644
+--- a/src/figcore/graphql/resolvers/item_version.py
++++ b/src/figcore/graphql/resolvers/item_version.py
+@@ -211,7 +211,7 @@ def get_formats(obj, info):
+     ]
+ 
+ 
+-def get_files(obj, info, page_size, cursor, **params):
++def get_files(obj, info, page_size, cursor, file_ids=[], **params):
+     is_embargoed = obj["_raw_db"]["article_version.is_embargoed"]
+     article_id = obj["_raw_db"]["article_version.article_id"]
+     article_version = obj["_raw_db"]["article_version.version"]
+@@ -226,6 +226,13 @@ def get_files(obj, info, page_size, cursor, **params):
+     db_data = get_to_many_ast_from_obj_and_info_and_query_data(obj, info, params=params)
+     db_data["page_size"] = page_size
+     db_data["cursor"] = cursor
++    if file_ids:
++        db_data["filters"]["file_id"] = {
++            "db_column": "file_id",
++            "db_model": "file_article_version",
++            "value": file_ids,
++            "operator": "in",
++        }
+ 
+     result, new_cursor = info.context.db_get_multiple_with_cursor(db_data)
+     for v in result:
+diff --git a/src/figcore/graphql/resolvers_v2/item.py b/src/figcore/graphql/resolvers_v2/item.py
+index 4e210fc33f..698d1c34a9 100644
+--- a/src/figcore/graphql/resolvers_v2/item.py
++++ b/src/figcore/graphql/resolvers_v2/item.py
+@@ -183,10 +183,17 @@ def get_versionable_changes(obj, info, item_id):
+     return item.versionable_changes
+ 
+ 
+-def get_files(obj, info, page_size, cursor, **params):
++def get_files(obj, info, page_size, cursor, file_ids=[], **params):
+     db_data = get_to_many_ast_from_obj_and_info_and_query_data(obj, info, params=params)
+     db_data["page_size"] = page_size
+     db_data["cursor"] = cursor
++    if file_ids:
++        db_data["filters"]["file_id"] = {
++            "db_column": "file_id",
++            "db_model": "file_article",
++            "value": file_ids,
++            "operator": "in",
++        }
+ 
+     result, new_cursor = info.context.db_get_multiple_with_cursor(db_data)
+     return {"elements": result, "cursor": new_cursor}
+diff --git a/src/figcore/graphql/schema/types/item.py b/src/figcore/graphql/schema/types/item.py
+index a6fc6ae476..b4c069492d 100644
+--- a/src/figcore/graphql/schema/types/item.py
++++ b/src/figcore/graphql/schema/types/item.py
+@@ -267,6 +267,7 @@ def files(cls):
+             "params": [
+                 {"name": "page_size", "type": "Int", "mandatory": True},
+                 {"name": "cursor", "type": "String", "mandatory": True},
++                {"name": "file_ids", "type": ["Int"], "mandatory": False},
+             ],
+             "meta": {
+                 "depends_on": [
+diff --git a/src/figcore/graphql/schema/types/item_version.py b/src/figcore/graphql/schema/types/item_version.py
+index 332c07ec55..edbcee7863 100644
+--- a/src/figcore/graphql/schema/types/item_version.py
++++ b/src/figcore/graphql/schema/types/item_version.py
+@@ -316,6 +316,7 @@ def files(cls):
+             "params": [
+                 {"mandatory": True, "type": "Int", "name": "page_size"},
+                 {"mandatory": True, "type": "String", "name": "cursor"},
++                {"mandatory": False, "type": ["Int"], "name": "file_ids"},
+             ],
+             "meta": {
+                 "depends_on": [
+diff --git a/tests/api/account/test_api.py b/tests/api/account/test_api.py
+index a2aeaec91e..5af330aa8b 100644
+--- a/tests/api/account/test_api.py
++++ b/tests/api/account/test_api.py
+@@ -2572,7 +2572,11 @@ def test_unpublish_article_with_folder_path(self):
+             db_session.execute(query, params={"article_id": article.id})
+ 
+         self.account.actions_for(article).publish()
+-        expected_structure = [{"level1": [{"level2": [{"level3": [files[2].id]}, files[3].id]}]}, files[0].id, files[1].id]
++        expected_structure = [
++            {"level1": [{"level2": [{"level3": [files[2].id]}, files[3].id]}]},
++            files[0].id,
++            files[1].id,
++        ]
+         self.assertEqual(article.last_version.folder_structure, expected_structure)
+ 
+         self.account.actions_for(article).unpublish("Unpublish test")

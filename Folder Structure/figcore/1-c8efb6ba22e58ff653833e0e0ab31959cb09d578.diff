@@ -1,0 +1,474 @@
+From c8efb6ba22e58ff653833e0e0ab31959cb09d578 Mon Sep 17 00:00:00 2001
+From: Corneliu <corneliu.biro@gmail.com>
+Date: Thu, 2 Nov 2023 14:14:43 +0200
+Subject: [PATCH] FIG-33886,FIG-33899: Handle Article/ArticleVersion
+ folder_structure
+
+---
+ scripts/sql_migrations/2023-11.sql            | 85 +++++++++++++++++++
+ src/figcore/api/account/actions/article.py    |  5 ++
+ src/figcore/api/article/api.py                | 36 ++++++++
+ src/figcore/api/article/version_api.py        | 14 +++
+ src/figcore/internals/article/article.py      | 15 ++++
+ .../internals/article/article_version.py      |  6 ++
+ src/figcore/internals/db_calls/article.py     |  7 ++
+ .../internals/db_calls/article_version.py     |  9 ++
+ src/figcore/models/dao/__init__.py            |  2 +
+ src/figcore/models/dao/article.py             |  4 +
+ .../models/dao/article_folder_structure.py    | 14 +++
+ .../dao/article_folder_structure_version.py   | 15 ++++
+ tests/api/account/test_api.py                 | 40 ++++++++-
+ 13 files changed, 251 insertions(+), 1 deletion(-)
+ create mode 100644 scripts/sql_migrations/2023-11.sql
+ create mode 100644 src/figcore/models/dao/article_folder_structure.py
+ create mode 100644 src/figcore/models/dao/article_folder_structure_version.py
+
+diff --git a/scripts/sql_migrations/2023-11.sql b/scripts/sql_migrations/2023-11.sql
+new file mode 100644
+index 0000000000..4a88e39ef6
+--- /dev/null
++++ b/scripts/sql_migrations/2023-11.sql
+@@ -0,0 +1,85 @@
++CREATE TABLE `article_folder_structure` (
++  `article_id` bigint(20) unsigned NOT NULL,
++  `folder_structure` blob NOT NULL,
++  PRIMARY KEY (`article_id`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
++
++CREATE TABLE `article_folder_structure_version` (
++  `article_id` bigint(20) unsigned NOT NULL,
++  `version` int(10) unsigned NOT NULL,
++  `folder_structure` blob NOT NULL,
++  PRIMARY KEY (`article_id`,`version`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
++
++DROP PROCEDURE IF EXISTS `make_article_version`;
++DELIMITER $$
++CREATE PROCEDURE make_article_version (_article_id INT)
++    BEGIN
++        DECLARE _version_id INT DEFAULT 0;
++        DECLARE _minting_type INT DEFAULT 0;
++
++        SET _version_id = (SELECT `version` + 1 from `article` where `id`= _article_id);
++        SET _minting_type = (SELECT `minting_type` FROM `minting_info` JOIN `article` ON `article`.`minting_info_id`=`minting_info`.`id` WHERE `article`.`id`= _article_id);
++
++        update `article` set `article`.`version` = `article`.`version` + 1 where `article`.`id` = _article_id;
++        update `article_metadata` set `article_metadata`.`version` = `article_metadata`.`version` + 1 where `article_metadata`.`article_id` = _article_id;
++        update `file_article` set `file_article`.`version` = `file_article`.`version` + 1 where `file_article`.`article_id` = _article_id;
++        update `article_version` set `article_version`.`is_last_version` = 0 where `article_version`.`article_id` = _article_id;
++        update `article_resource` set `article_resource`.`version` = `article_resource`.`version` + 1  where `article_resource`.`article_id` = _article_id;
++
++        /******* MAKE ARTICLE VERSION */
++        /* Copy doi/handle only if they are not minted by figshare  */
++        IF _minting_type = 2 or _minting_type = 4 THEN
++            insert into `article_version`
++                (`article_id`, `version`, `title`, `url`, `size`, `public_size`, `private_size`, `files_count`, `status`, `defined_type`, `account_id`, `institution_id`,
++                 `group_id`, `project_id`, `project_is_individual`, `license_id`, `is_embargoed`, `embargo_type`, `embargo_date`,
++                  `doi`, `handle`, `thumb`,  `is_last_version`, `published_date`, `virus_scan`, `minting_info_id`, `is_metadata_record`,
++                  `online_publish_date`, `pub_accept_date`, `pub_publish_date`, `submission_date`, `revision_date`)
++
++                select
++                    `id`, `version`, `title`, `url`, `size`, `public_size`, `private_size`, `files_count`, `status`, `defined_type`, `account_id`, `institution_id`,
++                    `group_id`, `project_id`, `project_is_individual`, `license_id`, `is_embargoed`, `embargo_type`, `embargo_date`,
++                    `doi`, `handle`, `thumb`, 1, `published_date`, `virus_scan`, `minting_info_id`, `is_metadata_record`,
++                    `online_publish_date`, `pub_accept_date`, `pub_publish_date`, `submission_date`, `revision_date`
++                from `article` where `article`.`id` = _article_id;
++        ELSE
++            insert into `article_version`
++                (`article_id`, `version`, `title`, `url`, `size`, `public_size`, `private_size`, `files_count`, `status`, `defined_type`, `account_id`, `institution_id`,
++                 `group_id`, `project_id`, `project_is_individual`, `license_id`, `is_embargoed`, `embargo_type`, `embargo_date`,
++                  `doi`, `handle`, `thumb`, `is_last_version`, `published_date`, `virus_scan`, `minting_info_id`, `is_metadata_record`,
++                  `online_publish_date`, `pub_accept_date`, `pub_publish_date`, `submission_date`, `revision_date`)
++
++                select
++                    `id`, `version`, `title`, `url`, `size`, `public_size`, `private_size`, `files_count`, `status`, `defined_type`, `account_id`, `institution_id`,
++                    `group_id`, `project_id`, `project_is_individual`, `license_id`, `is_embargoed`, `embargo_type`, `embargo_date`,
++                    '', '', `thumb`, 1, `published_date`, `virus_scan`, `minting_info_id`, `is_metadata_record`,
++                    `online_publish_date`, `pub_accept_date`, `pub_publish_date`, `submission_date`, `revision_date`
++                from `article` where `article`.`id` = _article_id;
++        END IF;
++
++        /******* MAKE ARTICLE METADATA */
++        insert into `article_metadata_version`
++            (`article_id`, `version`, `description`, `custom_fields`, `tags`, `categories`, `authors`, `references`,
++            `associated_institutions`, `files_order`, `embargo_reason`, `metadata_reason`, `funding`, `internal_metadata`)
++        select
++            `article_id`, `version`, `description`, `custom_fields`, `tags`, `categories`, `authors`, `references`,
++            `associated_institutions`, `files_order`, `embargo_reason`, `metadata_reason`, `funding`, `internal_metadata`
++        from `article_metadata` where `article_metadata`.`article_id` = _article_id;
++
++        /******* MAKE ARTICLE RESOURCE */
++        insert into `article_resource_version` (select * from `article_resource` where `article_resource`.`article_id` = _article_id);
++
++        /******* MAKE FILE VERSION */
++        insert into `file_article_version`
++            (`file_id`, `article_id`, `version`, `order`)
++            (select `file_id`, `article_id`, `version`, `order` from file_article where `file_article`.`article_id` = _article_id);
++
++        /******* MAKE ARTICLE EMBARGO */
++        insert into `article_embargo_version` (select `article_id`, _version_id, `embargo_config_id`, `group_id` from `article_embargo` where `article_id`=_article_id);
++
++        /******* MAKE ARTICLE FOLDER STRUCTURE */
++        insert into `article_folder_structure_version` (`article_id`, `version`, `folder_structure`)
++        select `article_id`, _version_id, `folder_structure` from `article_folder_structure` where `article_id`=_article_id;
++    END$$
++
++DELIMITER ;
+\ No newline at end of file
+diff --git a/src/figcore/api/account/actions/article.py b/src/figcore/api/account/actions/article.py
+index 2418fdb576..4fa48b25b2 100644
+--- a/src/figcore/api/account/actions/article.py
++++ b/src/figcore/api/account/actions/article.py
+@@ -457,7 +457,12 @@ def create_file(self, file_data, **options):
+ 
+         self._check_maximum_file_size_limit(file_data)
+ 
++        folder_path = file_data.pop("folder_path", None)
+         file_api = self.ENTITIES.File.create(file_data, self.item.version)
++        if self.item.folder_structure and not folder_path:
++            folder_path = ""
++        if folder_path is not None:
++            self.item.add_file_to_folder_structure(file_api, folder_path)
+ 
+         # clear sqlalchemy cache
+         self.item._instantiate_defaults()
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index 4f431d279e..45dfa931d5 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -332,6 +332,10 @@ def load_minting_info(self):
+     def load_embargo_options(self):
+         self._embargo_options = self.ENTITIES.EmbargoConfig.get_article_embargo_config(self.id)
+ 
++    def load_folder_structure(self):
++        model = ArticleInternals.get_folder_structure(self.id)
++        self._folder_structure = model.folder_structure if model else []
++
+     def loaded_embargo_options(self):
+         return self._is_loaded(self._embargo_options)
+ 
+@@ -404,6 +408,9 @@ def loaded_private_link(self):
+     def loaded_doi_helper(self):
+         return self._is_loaded(self._doi_helper)
+ 
++    def loaded_folder_structure(self):
++        return self._is_loaded(self._folder_structure)
++
+     @property
+     @ArticleChecker.ensure("model")
+     def model(self):
+@@ -511,6 +518,7 @@ def _instantiate_defaults(self):
+         self._funding = None
+         self._minting_info = None
+         self._embargo_options = None
++        self._folder_structure = None
+ 
+     @classmethod
+     def find_by_resource_id(cls, resource_id, institution_id=None, account_id=None):
+@@ -1511,6 +1519,12 @@ def embargo_options(self):
+         """Get embargo options"""
+         return self._embargo_options
+ 
++    @property
++    @ArticleChecker.ensure("folder_structure")
++    def folder_structure(self):
++        """Get embargo options"""
++        return self._folder_structure
++
+     def get_timeline(self, *_):
+         """Return timeline dict - filtered by value.
+ 
+@@ -3049,5 +3063,27 @@ def file_has_public_preview(self, file_id):
+ 
+         return response
+ 
++    def add_file_to_folder_structure(self, file_api, folder_path):
++        folder_path = folder_path.strip("/")
++        folder_path = folder_path.split("/") if folder_path else []
++        folder_structure = list(self.folder_structure)
++        current = folder_structure
++        if folder_path:
++            for part in folder_path:
++                found = False
++                for item in current:
++                    if isinstance(item, dict) and part in item:
++                        current = item[part]
++                        found = True
++                        break
++                if not found:
++                    new_dict = {part: []}
++                    current.insert(0, new_dict)  # Insert at the beginning of the list
++                    current = new_dict[part]
++        current.append(file_api.id)
++
++        ArticleInternals.create_update_folder_structure(self.id, folder_structure)
++        self._folder_structure = None
++
+ 
+ APIEntity.ENTITIES.Article = Article
+diff --git a/src/figcore/api/article/version_api.py b/src/figcore/api/article/version_api.py
+index 9b010a0231..074c4db387 100644
+--- a/src/figcore/api/article/version_api.py
++++ b/src/figcore/api/article/version_api.py
+@@ -79,6 +79,7 @@ def _instantiate_defaults(self):
+         self._embargo_options = None
+         self._defined_type_api = None
+         self._options = None
++        self._folder_structure = None
+ 
+     @classmethod
+     def find_by_resource_id(cls, resource_id, only_latest_version=False, institution_id=None):
+@@ -451,6 +452,10 @@ def load_base_handle(self):
+     def load_embargo_options(self):
+         self._embargo_options = self.ENTITIES.EmbargoConfig.get_article_embargo_config(self.id, self.version)
+ 
++    def load_folder_structure(self):
++        model = ArticleVersionInternals.get_folder_structure(self.id, self.version)
++        self._folder_structure = model.folder_structure if model else []
++
+     def load_options(self):
+         options = ArticleInternals.get_article_options(self.id)
+         self._options = options
+@@ -518,6 +523,9 @@ def loaded_base_handle(self):
+     def loaded_options(self):
+         return self._is_loaded(self._options)
+ 
++    def loaded_folder_structure(self):
++        return self._is_loaded(self._folder_structure)
++
+     @property
+     @ArticleChecker.ensure("model")
+     def model(self):
+@@ -1424,6 +1432,12 @@ def embargo_options(self):
+         """Get embargo options"""
+         return self._embargo_options
+ 
++    @property
++    @ArticleChecker.ensure("folder_structure")
++    def folder_structure(self):
++        """Get embargo options"""
++        return self._folder_structure
++
+     @property
+     @ArticleChecker.ensure("model")
+     def timeline(self):
+diff --git a/src/figcore/internals/article/article.py b/src/figcore/internals/article/article.py
+index 66b77ec5c5..316bbe92d2 100644
+--- a/src/figcore/internals/article/article.py
++++ b/src/figcore/internals/article/article.py
+@@ -6,6 +6,7 @@
+ from figcore.lib.data.article_fields_mapping import ArticleFieldsMapping
+ from figcore.lib.db import DBConnection, retry_on_deadlock
+ from figcore.models.dao import Article as Article_model
++from figcore.models.dao import ArticleFolderStructure as ArticleFolderStructure_model
+ from figcore.models.dao import ArticleMetadata as ArticleMetadata_model
+ from figcore.models.dao import ArticleResource as ArticleResource_model
+ from figcore.models.dao import ArticleResourceVersion as ArticleResourceVersion_model
+@@ -869,3 +870,17 @@ def make_article_version_files_private(cls, article_id):
+     def make_article_version_files_public(cls, article_id):
+         with cls.DB.get_session() as db_session:
+             ArticleDBCalls.make_article_version_files_public(db_session, article_id)
++
++    @classmethod
++    def get_folder_structure(cls, article_id):
++        with cls.DB.get_session(readonly=True) as db_session:
++            return ArticleDBCalls.get_folder_structure(db_session, article_id)
++
++    @classmethod
++    def create_update_folder_structure(cls, article_id, folder_structure):
++        with cls.DB.get_session(readonly=True) as db_session:
++            model = ArticleDBCalls.get_folder_structure(db_session, article_id)
++            if not model:
++                model = ArticleFolderStructure_model(article_id=article_id)
++            model.folder_structure = folder_structure
++            ArticleDBCalls.persist(db_session, model)
+diff --git a/src/figcore/internals/article/article_version.py b/src/figcore/internals/article/article_version.py
+index d0d460d96b..461a47d873 100644
+--- a/src/figcore/internals/article/article_version.py
++++ b/src/figcore/internals/article/article_version.py
+@@ -309,6 +309,12 @@ def get_versions_exclude_embargoed(
+             )
+         return versions
+ 
++    @classmethod
++    def get_folder_structure(cls, article_id, version):
++        with cls.DB.get_session(readonly=True) as db_session:
++            return ArticleVersionDBCalls.get_folder_structure(db_session, article_id, version)
++
++
+     @classmethod
+     def get_file_ids_attached_to_article_versions(cls, article_id):
+         with cls.DB.get_session(readonly=True) as db_session:
+diff --git a/src/figcore/internals/db_calls/article.py b/src/figcore/internals/db_calls/article.py
+index dc031b7a52..ff3e0c92d1 100644
+--- a/src/figcore/internals/db_calls/article.py
++++ b/src/figcore/internals/db_calls/article.py
+@@ -5,6 +5,7 @@
+ 
+ from figcore.models.dao import Account as Account_model
+ from figcore.models.dao import Article as Article_model
++from figcore.models.dao import ArticleFolderStructure as ArticleFolderStructure_model
+ from figcore.models.dao import ArticleOptions as ArticleOptions_model
+ from figcore.models.dao import ArticleMetadata as ArticleMetadata_model
+ from figcore.models.dao import ArticleMetadataVersion as ArticleMetadataVersion_model
+@@ -837,3 +838,9 @@ def get_by_identifiers(cls, db_session, identifiers, account_id):
+         query = query.filter(or_(Article_model.doi.in_(identifiers), Article_model.handle.in_(identifiers)))
+ 
+         return query.all()
++
++    @classmethod
++    def get_folder_structure(cls, db_session, article_id):
++        query = db_session.query(ArticleFolderStructure_model)
++        query = query.filter(ArticleFolderStructure_model.article_id == article_id)
++        return query.first()
+diff --git a/src/figcore/internals/db_calls/article_version.py b/src/figcore/internals/db_calls/article_version.py
+index 60f8662428..dde90f8575 100644
+--- a/src/figcore/internals/db_calls/article_version.py
++++ b/src/figcore/internals/db_calls/article_version.py
+@@ -4,6 +4,7 @@
+ from sqlalchemy.sql.expression import case
+ 
+ from figcore.models.dao import Account as Account_model
++from figcore.models.dao import ArticleFolderStructureVersion as ArticleFolderStructureVersion_model
+ from figcore.models.dao import ArticleMetadataVersion as ArticleMetadataVersion_model
+ from figcore.models.dao import ArticleVersion as ArticleVersion_model
+ from figcore.models.dao import CollectionArticleVersion as CollectionArticleVersion_model
+@@ -476,3 +477,11 @@ def get_file_ids_attached_to_article_versions(cls, db_session, article_id):
+         query = query.filter(FileArticleVersion_model.article_id == article_id)
+ 
+         return query.all()
++
++
++    @classmethod
++    def get_folder_structure(cls, db_session, article_id, version):
++        query = db_session.query(ArticleFolderStructureVersion_model)
++        query = query.filter(ArticleFolderStructureVersion_model.article_id == article_id)
++        query = query.filter(ArticleFolderStructureVersion_model.version == version)
++        return query.first()
+diff --git a/src/figcore/models/dao/__init__.py b/src/figcore/models/dao/__init__.py
+index dbedfeb7a3..77cbb0a7b2 100644
+--- a/src/figcore/models/dao/__init__.py
++++ b/src/figcore/models/dao/__init__.py
+@@ -11,6 +11,8 @@
+ from .article_comment import ArticleComment
+ from .article_embargo import ArticleEmbargo
+ from .article_embargo_version import ArticleEmbargoVersion
++from .article_folder_structure import ArticleFolderStructure
++from .article_folder_structure_version import ArticleFolderStructureVersion
+ from .article_metadata import ArticleMetadata
+ from .article_metadata_version import ArticleMetadataVersion
+ from .article_options import ArticleOptions
+diff --git a/src/figcore/models/dao/article.py b/src/figcore/models/dao/article.py
+index ab5c943c19..e2abcd2e8c 100644
+--- a/src/figcore/models/dao/article.py
++++ b/src/figcore/models/dao/article.py
+@@ -408,6 +408,10 @@ class Article(Base, ExtendedBase):
+ 
+                             /******* MAKE ARTICLE EMBARGO */
+                             insert into `article_embargo_version` (select `article_id`, _version_id, `embargo_config_id`, `group_id` from `article_embargo` where `article_id`=_article_id);
++                            
++                            /******* MAKE ARTICLE FOLDER STRUCTURE */
++                            insert into `article_folder_structure_version` (`article_id`, `version`, `folder_structure`)
++                            select `article_id`, _version_id, `folder_structure` from `article_folder_structure` where `article_id`=_article_id;
+                         END;
+                     """
+ )
+diff --git a/src/figcore/models/dao/article_folder_structure.py b/src/figcore/models/dao/article_folder_structure.py
+new file mode 100644
+index 0000000000..dbee09bc1a
+--- /dev/null
++++ b/src/figcore/models/dao/article_folder_structure.py
+@@ -0,0 +1,14 @@
++from sqlalchemy import Column
++from sqlalchemy.dialects.mysql import BIGINT
++
++from ..custom_data_types import JsonMediumListBlob
++from .base import Base, ExtendedBase
++
++
++class ArticleFolderStructure(Base, ExtendedBase):
++
++    __tablename__ = "article_folder_structure"
++    __table_args__ = {"mysql_engine": "InnoDB"}
++
++    article_id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=False)
++    folder_structure = Column(JsonMediumListBlob(), nullable=False, default=[])
+diff --git a/src/figcore/models/dao/article_folder_structure_version.py b/src/figcore/models/dao/article_folder_structure_version.py
+new file mode 100644
+index 0000000000..5e5a68f583
+--- /dev/null
++++ b/src/figcore/models/dao/article_folder_structure_version.py
+@@ -0,0 +1,15 @@
++from sqlalchemy import Column
++from sqlalchemy.dialects.mysql import BIGINT, INTEGER
++
++from ..custom_data_types import JsonMediumListBlob
++from .base import Base, ExtendedBase
++
++
++class ArticleFolderStructureVersion(Base, ExtendedBase):
++
++    __tablename__ = "article_folder_structure_version"
++    __table_args__ = {"mysql_engine": "InnoDB"}
++
++    article_id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=False)
++    version = Column(INTEGER(unsigned=True), primary_key=True, autoincrement=False)
++    folder_structure = Column(JsonMediumListBlob(), nullable=False, default=[])
+diff --git a/tests/api/account/test_api.py b/tests/api/account/test_api.py
+index 76e13c0a45..5148e059b5 100644
+--- a/tests/api/account/test_api.py
++++ b/tests/api/account/test_api.py
+@@ -1427,7 +1427,15 @@ def setUpClass(cls):
+         }
+ 
+         cls.inst.update_config(cls.config_data)
+-        article_data = {"title": "Sample article", "url": "file1"}
++        article_data = {
++            "title": "Sample article",
++            "url": "file1",
++            "description": "bcsafda",
++            "defined_type": 1,
++            "authors": [{"name": "Cas Dbc"}],
++            "categories": [2, 4],
++            "tags": ["ab", "bc", "da"],
++        }
+         cls.account = Account(cls.account1.id).load_from_model(cls.account1)
+         cls.article = cls.account.create_article(article_data)
+ 
+@@ -1500,6 +1508,36 @@ def test_create(self):
+         self.article = Article.find(self.article.id)
+         self.assertEqual(len(self.article.files), 1)
+ 
++    def test_create_publish_article_with_folder_path(self):
++        token = "ELTOKEN"
++        UploadSubsystem.create_token = MagicMock(return_value=token)
++        file_data = dict(self.file_data)
++
++        paths = ["/", "", "/level1/level2/level3", "level1/level2/", "path1/path2"]
++        files = []
++        for path in paths:
++            file_data["folder_path"] = path
++            files.append(self.account.create_file(self.article, file_data))
++
++        file_data.pop("folder_path", None)
++        files.append(self.account.create_file(self.article, file_data))
++
++        expected_structure = [
++            {"path1": [{"path2": [files[4].id]}]},
++            {"level1": [{"level2": [{"level3": [files[2].id]}, files[3].id]}]},
++            files[0].id,
++            files[1].id,
++            files[-1].id,
++        ]
++        self.assertEqual(self.article.folder_structure, expected_structure)
++
++        query = "UPDATE `file` SET `storage_state` = 'available' WHERE `article_id` = :article_id;"
++        with DBConnection.get_session() as db_session:
++            db_session.execute(query, params={"article_id": self.article.id})
++
++        self.account.actions_for(self.article).publish()
++        self.assertEqual(self.article.last_version.folder_structure, expected_structure)
++
+     def test_create_raise_permission_exception(self):
+         account = Account.find(2)
+         UploadSubsystem.create_token = MagicMock(return_value="FADSFAS")

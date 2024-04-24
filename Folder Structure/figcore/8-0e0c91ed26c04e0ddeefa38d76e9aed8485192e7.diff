@@ -1,0 +1,125 @@
+From 0e0c91ed26c04e0ddeefa38d76e9aed8485192e7 Mon Sep 17 00:00:00 2001
+From: Corneliu <corneliu.biro@gmail.com>
+Date: Fri, 12 Jan 2024 09:58:41 +0200
+Subject: [PATCH] FIG-34640: Add folder_structure in item and item_version
+ graphql query
+
+---
+ src/figcore/graphql/modifiers/item.py         |  4 ++++
+ src/figcore/graphql/schema/types/item.py      | 13 +++++++++++++
+ src/figcore/graphql/schema/types/item_v2.py   |  4 ++++
+ .../graphql/schema/types/item_version.py      | 19 +++++++++++++++++++
+ 4 files changed, 40 insertions(+)
+
+diff --git a/src/figcore/graphql/modifiers/item.py b/src/figcore/graphql/modifiers/item.py
+index 01c94a2163..7834bc2323 100644
+--- a/src/figcore/graphql/modifiers/item.py
++++ b/src/figcore/graphql/modifiers/item.py
+@@ -70,6 +70,10 @@ def get_download_disabled(obj, info, options):
+     return options.get("download_disabled", False)
+ 
+ 
++def get_folder_structure(obj, info, folder_structure):
++    return folder_structure or {}
++
++
+ def _get_doi_or_handle_identifier(doi, handle):
+     identifier_type = ""
+     identifier_value = ""
+diff --git a/src/figcore/graphql/schema/types/item.py b/src/figcore/graphql/schema/types/item.py
+index b4c069492d..a68b36317a 100644
+--- a/src/figcore/graphql/schema/types/item.py
++++ b/src/figcore/graphql/schema/types/item.py
+@@ -14,6 +14,7 @@
+     get_item_download_url,
+     get_virus_scan_info,
+     get_download_disabled,
++    get_folder_structure,
+ )
+ from figcore.graphql.resolvers.generic import entity_to_many_paginated
+ from figcore.graphql.resolvers.item import (
+@@ -58,6 +59,7 @@ class Item(GqlType):
+             "join": [["institution_config.institution_id", "article.institution_id"]],
+             "type": "outer",
+         },
++        "article_folder_structure": {"join": [["article_folder_structure.article_id", "article.id"]], "type": "outer"},
+         "article_metadata": {"join": [["article_metadata.article_id", "article.id"]], "type": "inner"},
+         "article_resource": {"join": [["article_resource.article_id", "article.id"]], "type": "outer"},
+         "article_option": {"join": [["article_option.article_id", "article.id"]], "type": "outer"},
+@@ -329,6 +331,17 @@ def group_id(cls):
+     def handle(cls):
+         return {"meta": {"db_model": "article", "db_column": "handle"}, "type": "String"}
+ 
++    @classmethod
++    def folder_structure(cls):
++        return {
++            "meta": {"depends_on": [{"db_model": "article_folder_structure", "db_column": "folder_structure"}]},
++            "modifier": {
++                "function": get_folder_structure,
++                "params": {"folder_structure": {"db_field": "article_folder_structure.folder_structure"}},
++            },
++            "type": "Json",
++        }
++
+     @classmethod
+     def id(cls):
+         return {"meta": {"db_model": "article", "db_column": "id"}, "type": "Int"}
+diff --git a/src/figcore/graphql/schema/types/item_v2.py b/src/figcore/graphql/schema/types/item_v2.py
+index db43147b10..353bd61626 100644
+--- a/src/figcore/graphql/schema/types/item_v2.py
++++ b/src/figcore/graphql/schema/types/item_v2.py
+@@ -100,6 +100,10 @@ def files(cls):
+     def files_count(cls):
+         return Item.files_count()
+ 
++    @classmethod
++    def folder_structure(self):
++        return Item.folder_structure()
++
+     @classmethod
+     def fundings(cls):
+         return Item.fundings()
+diff --git a/src/figcore/graphql/schema/types/item_version.py b/src/figcore/graphql/schema/types/item_version.py
+index edbcee7863..4ede4bcf2b 100644
+--- a/src/figcore/graphql/schema/types/item_version.py
++++ b/src/figcore/graphql/schema/types/item_version.py
+@@ -21,6 +21,7 @@
+     get_version_url,
+     get_virus_scan_info,
+     get_download_disabled,
++    get_folder_structure,
+ )
+ from figcore.graphql.resolvers import db_identity_resolver as identity_resolver, item_version as item_version_resolvers
+ from figcore.graphql.resolvers.generic import entity_to_many_paginated
+@@ -58,6 +59,13 @@ class ItemVersion(GqlType):
+                 ["article_version.version", "article_resource_version.version"],
+             ],
+         },
++        "article_folder_structure_version": {
++            "type": "outer",
++            "join": [
++                ["article_version.article_id", "article_folder_structure_version.article_id"],
++                ["article_version.version", "article_folder_structure_version.version"],
++            ],
++        },
+         "item_type": {"type": "outer", "join": [["item_type.id", "article_version.defined_type"]]},
+         "minting_info": {"type": "inner", "join": [["article_version.minting_info_id", "minting_info.id"]]},
+         "institution_config": {
+@@ -187,6 +195,17 @@ def download_disabled(cls):
+     def files_count(cls):
+         return {"meta": {"db_model": "article_version", "db_column": "files_count"}, "type": "Int"}
+ 
++    @classmethod
++    def folder_structure(cls):
++        return {
++            "meta": {"depends_on": [{"db_model": "article_folder_structure_version", "db_column": "folder_structure"}]},
++            "modifier": {
++                "function": get_folder_structure,
++                "params": {"folder_structure": {"db_field": "article_folder_structure_version.folder_structure"}},
++            },
++            "type": "Json",
++        }
++
+     @classmethod
+     def comments_count(cls):
+         return {
