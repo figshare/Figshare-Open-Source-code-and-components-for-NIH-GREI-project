@@ -1,0 +1,161 @@
+diff --git a/src/figcore/lib/identifier/doi/helper.py b/src/figcore/lib/identifier/doi/helper.py
+index 489ac13d5..370b1a7a4 100644
+--- a/src/figcore/lib/identifier/doi/helper.py
++++ b/src/figcore/lib/identifier/doi/helper.py
+@@ -181,6 +181,9 @@ class DOIHelper(object):
+         else:
+             date = article.created_date
+ 
++        # Determine issued_date based on priority: pub_publish_date > online_publish_date > published_date
++        issued_date = article.pub_publish_date or article.online_publish_date or article.published_date
++
+         item_defined_type = ItemType.find(article.defined_type)
+         item_type_key = f"item_type_{article.defined_type}"
+         authors = article.metadata.authors
+@@ -202,6 +205,7 @@ class DOIHelper(object):
+             "pub_publish_date": article.pub_publish_date,
+             "revision_date": article.revision_date,
+             "submission_date": article.submission_date,
++            "issued_date": issued_date,
+             "defined_type": item_defined_type.name.capitalize() if item_defined_type else "Dataset",
+             "jalc_type": item_defined_type.get_mapping("jalc", "Dataset") if item_defined_type else "Dataset",
+             "datacite_type": item_defined_type.get_mapping("datacite") if item_defined_type else "Other",
+@@ -250,6 +254,9 @@ class DOIHelper(object):
+         else:
+             date = collection.created_date
+ 
++        # Determine issued_date based on priority: pub_publish_date > online_publish_date > published_date
++        issued_date = collection.pub_publish_date or collection.online_publish_date or collection.published_date
++
+         authors = collection.metadata.authors
+         if authors and isinstance(authors[0], dict):
+             author_affiliations = {a["user_id"]: a.get("affiliations", []) for a in authors}
+@@ -268,6 +275,7 @@ class DOIHelper(object):
+             "published_date": collection.published_date,
+             "pub_publish_date": collection.pub_publish_date,
+             "revision_date": collection.revision_date,
++            "issued_date": issued_date,
+             "defined_type": "Collection",
+             "jalc_type": "Dataset",
+             "datacite_type": "Collection",
+@@ -490,6 +498,16 @@ class DOIHelper(object):
+             modified_date.set("dateType", "Updated")
+             modified_date.text = str(item_data["modified_date"])
+ 
++        # Set issued date (YYYY-MM-DD format)
++        if item_data.get("issued_date"):
++            issued_date = ET.SubElement(dates, "date")
++            issued_date.set("dateType", "Issued")
++            # Convert datetime to date-only format (YYYY-MM-DD)
++            issued_date_value = item_data["issued_date"]
++            if hasattr(issued_date_value, "date"):
++                issued_date_value = issued_date_value.date()
++            issued_date.text = str(issued_date_value)
++
+         # Set the item type
+         resource_type = ET.SubElement(root, "resourceType")
+         resource_type.set("resourceTypeGeneral", item_data["datacite_type"])
+diff --git a/tests/lib/identifier/doi/test_datacite.py b/tests/lib/identifier/doi/test_datacite.py
+index fe80d6733..f5c58cd25 100644
+--- a/tests/lib/identifier/doi/test_datacite.py
++++ b/tests/lib/identifier/doi/test_datacite.py
+@@ -151,6 +151,36 @@ class TestDataCiteDOIHelper(unittest.TestCase):
+         assert data["license"] == ""
+         assert data["license_url"] == ""
+ 
++    def test_issued_date_in_xml(self):
++        """Test that issued_date appears in generated XML with correct format"""
++        from datetime import date
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["issued_date"] = date(2025, 12, 15)
++        item_data["authors"] = [["Test Author", None, "Test", "Author", []]]
++        item_data["created_date"] = date(2019, 5, 23)
++
++        doi_xml = helper.build_xml(item_data)
++
++        # Check that Issued date is in the XML
++        self.assertIn('<date dateType="Issued">2025-12-15</date>', doi_xml)
++
++    def test_issued_date_not_in_xml_when_none(self):
++        """Test that issued_date is not added to XML when None"""
++        from datetime import date
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["issued_date"] = None
++        item_data["authors"] = [["Test Author", None, "Test", "Author", []]]
++        item_data["created_date"] = date(2019, 5, 23)
++
++        doi_xml = helper.build_xml(item_data)
++
++        # Check that no Issued date exists in XML
++        self.assertNotIn('dateType="Issued"', doi_xml)
++
+ 
+ class TestCustomDatacite(BaseTestTransactioned):
+     CONFIG = {
+diff --git a/tests/lib/identifier/doi/test_doi_helper.py b/tests/lib/identifier/doi/test_doi_helper.py
+index f3ed7a14b..099068ee1 100644
+--- a/tests/lib/identifier/doi/test_doi_helper.py
++++ b/tests/lib/identifier/doi/test_doi_helper.py
+@@ -1,3 +1,4 @@
++from datetime import datetime, timedelta
+ from mock import Mock
+ 
+ from figcore.api import Article, Account
+@@ -52,3 +53,53 @@ class TestDOIHelper(BaseTestTransactioned):
+         helper = DOIHelper(**self.config)
+         data = helper.article_data(article)
+         self.assertEqual(data["crossref_res_rel"], "IsSupplementTo")
++
++    def test_article_data_issued_date_priority(self):
++        """Test that issued_date uses correct priority: pub_publish_date > online_publish_date > published_date"""
++
++        account = Account.find(1)
++        article_data = {
++            "title": "Test article",
++            "description": "Test description",
++            "is_active": 1,
++            "defined_type": 3,
++            "categories": [2],
++            "tags": ["test"],
++        }
++        article = account.create_article(article_data)
++        helper = DOIHelper(**self.config)
++
++        # Test 1: Only published_date is set
++        account.actions_for(article).publish()
++        article = Article.find(article.id).last_version
++        data = helper.article_data(article)
++        self.assertEqual(
++            data["issued_date"].date() if hasattr(data["issued_date"], "date") else data["issued_date"],
++            article.published_date.date() if hasattr(article.published_date, "date") else article.published_date,
++        )
++        self.assertIsNotNone(data["issued_date"])
++
++        # Test 2: online_publish_date takes priority over published_date
++        online_date = datetime.now() - timedelta(days=10)
++        self.execute_raw_sql(
++            f"UPDATE article_version SET online_publish_date='{online_date.strftime('%Y-%m-%d %H:%M:%S')}' WHERE article_id={article.id}"
++        )
++        article = Article.find(article.id).last_version
++        data = helper.article_data(article)
++        # Should now use online_publish_date (which is set, taking priority)
++        self.assertIsNotNone(data["issued_date"])
++
++        # Test 3: pub_publish_date takes priority over online_publish_date
++        pub_date = datetime.now() - timedelta(days=5)
++        self.execute_raw_sql(
++            f"UPDATE article_version SET pub_publish_date='{pub_date.strftime('%Y-%m-%d %H:%M:%S')}' WHERE article_id={article.id}"
++        )
++        article = Article.find(article.id).last_version
++        data = helper.article_data(article)
++        # Should now use pub_publish_date (highest priority)
++        # pub_publish_date is not None, so it should be selected
++        self.assertIsNotNone(article.pub_publish_date)
++        self.assertEqual(
++            data["issued_date"].date() if hasattr(data["issued_date"], "date") else data["issued_date"],
++            article.pub_publish_date.date() if hasattr(article.pub_publish_date, "date") else article.pub_publish_date,
++        )

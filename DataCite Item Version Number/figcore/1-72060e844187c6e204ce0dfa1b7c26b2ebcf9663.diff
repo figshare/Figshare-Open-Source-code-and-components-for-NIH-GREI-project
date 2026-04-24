@@ -1,0 +1,59 @@
+diff --git a/src/figcore/lib/identifier/doi/helper.py b/src/figcore/lib/identifier/doi/helper.py
+index f32734479..489ac13d5 100644
+--- a/src/figcore/lib/identifier/doi/helper.py
++++ b/src/figcore/lib/identifier/doi/helper.py
+@@ -190,6 +190,7 @@ class DOIHelper(object):
+             author_affiliations = {a: [] for a in authors}
+
+         return {
++            "is_base_entity": True,
+             "item_id": self.build_suffix(private_article),
+             "title": replace_invalid_xml(article.title),
+             "year": str(date.year),
+@@ -256,6 +257,7 @@ class DOIHelper(object):
+             author_affiliations = {a: [] for a in authors}
+
+         return {
++            "is_base_entity": True,
+             "item_id": self.build_suffix(private_collection),
+             "title": replace_invalid_xml(collection.title),
+             "year": str(date.year),
+@@ -293,6 +295,7 @@ class DOIHelper(object):
+         version_data = self.article_data(entity)
+         version_data.update(
+             {
++                "is_base_entity": False,
+                 "item_id": self.build_suffix(entity),
+                 "url": DOIService.target_url(entity, "article", entity.version),
+                 "is_last_version": entity.is_last_version,
+@@ -307,6 +310,7 @@ class DOIHelper(object):
+         version_data = self.collection_data(entity)
+         version_data.update(
+             {
++                "is_base_entity": False,
+                 "item_id": self.build_suffix(entity),
+                 "url": DOIService.target_url(entity, "collection", entity.version),
+                 "is_last_version": entity.is_last_version,
+@@ -517,6 +521,11 @@ class DOIHelper(object):
+                 material = RelatedMaterial.find(i)
+                 self._add_relation_node(related_ids, material.identifier_type, material.relation, material.identifier)
+
++        # Set the version if greater than 0
++        if item_data.get("version", 0) > 0 and not item_data.get("is_base_entity", False):
++            version = ET.SubElement(root, "version")
++            version.text = str(item_data["version"])
++
+         # Set the license information
+         rights_list = ET.SubElement(root, "rightsList")
+         rights = ET.SubElement(rights_list, "rights")
+diff --git a/tests/api/account/test_doi.py b/tests/api/account/test_doi.py
+index 384cd7fed..fdb0ae694 100644
+--- a/tests/api/account/test_doi.py
++++ b/tests/api/account/test_doi.py
+@@ -1638,6 +1638,7 @@ class TestDOIData(BaseTestTransactioned):
+         self.assertNotEqual(item_data["title"], item.title)
+         self.assertEqual("{}/1".format(item_data.pop("url")), version_data["url"])
+         self.assertEqual("{}.v1".format(item_data.pop("item_id")), version_data["item_id"])
++        self.assertNotEqual(item_data.pop("is_base_entity"), version_data.pop("is_base_entity"))
+         for key, value in item_data.items():
+             self.assertEqual(value, version_data[key])

@@ -1,0 +1,109 @@
+diff --git a/src/pages/item/page/app.jsx b/src/pages/item/page/app.jsx
+index ee8766a17..238ea947a 100644
+--- a/src/pages/item/page/app.jsx
++++ b/src/pages/item/page/app.jsx
+@@ -109,6 +109,43 @@ export class ItemDisplay extends Component {
+         {this.renderRegisterView()}
+         <Helmet>
+           <title>{striptags(item.title)}</title>
++          {item.doi && (
++            <link
++              href={item.doi}
++              rel="cite-as"
++            />
++          )}
++          {item.handle && (
++            <link
++              href={item.handle}
++              rel="cite-as"
++            />
++          )}
++          {item.authors?.items?.map((author) => {
++            if (author.isActive && author.isPublic) {
++              return (
++                <link
++                  key={author.id}
++                  href={author.publicUrl}
++                  rel="author"
++                />);
++            }
++
++            return null;
++          })}
++          {item.license?.url && (
++            <link
++              href={item.license.url}
++              rel="license"
++            />
++          )}
++          {item.files?.elements?.map((file) => (
++            <link
++              key={file.id}
++              href={file.downloadUrl}
++              rel="item"
++            />
++          ))}
+         </Helmet>
+         <Meta />
+         <RichResults />
+diff --git a/src/pages/item/page/components/exports/index.jsx b/src/pages/item/page/components/exports/index.jsx
+index 13077aa6d..14d3b5630 100644
+--- a/src/pages/item/page/components/exports/index.jsx
++++ b/src/pages/item/page/components/exports/index.jsx
+@@ -1,11 +1,34 @@
+ import React, { Component } from "react";
+ import Select, { Option } from "@figshare/components/ui/select";
++import { Helmet } from "react-helmet-async";
+ 
+ import context from "../../context";
+ 
+ import style from "./index.css";
+ 
+ 
++function mimeType(format) {
++  switch (format) {
++    case "refworks":
++      return "application/vnd.refworks";
++    case "bibtex":
++      return "application/x-bibtex";
++    case "reference_manager":
++      return "application/x-research-info-systems";
++    case "endnote":
++      return "application/x-endnote-refer";
++    case "datacite":
++      return "application/vnd.datacite.datacite+xml";
++    case "nlm":
++      return "application/xml";
++    case "dc":
++      return "application/xml";
++    default:
++      return "text/plain";
++  }
++}
++
++
+ export default class ExportsSection extends Component {
+   static contextType = context;
+ 
+@@ -22,6 +45,21 @@ export default class ExportsSection extends Component {
+ 
+     return (
+       <div {...this.props}>
++        <Helmet>
++          {citationFormats?.map((cf) => {
++            const url = `/articles/${item.id}/${item.version}/citations/${cf.format}`;
++            const mime = mimeType(cf.format);
++
++            return (
++              <link
++                key={cf.format}
++                href={url}
++                rel="describedby"
++                type={mime}
++              />
++            );
++          })}
++        </Helmet>
+         <h2 className={style.sectionTitle}>Exports</h2>
+         <Select
+           placement="top-start"
