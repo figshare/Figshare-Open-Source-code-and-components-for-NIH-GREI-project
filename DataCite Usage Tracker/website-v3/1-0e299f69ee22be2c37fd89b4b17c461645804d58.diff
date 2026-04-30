@@ -1,0 +1,737 @@
+diff --git a/src/entryPoints/server/server.jsx b/src/entryPoints/server/server.jsx
+index 27079e5cb..1ab372a4a 100644
+--- a/src/entryPoints/server/server.jsx
++++ b/src/entryPoints/server/server.jsx
+@@ -228,7 +228,7 @@ ssrApp.get("*", async(req, res, next) => {
+     res.setHeader("Content-Type", "text/html");
+     res.setHeader("X-Content-Type-Options", "nosniff");
+     res.setHeader("Content-Security-Policy",
+-      `script-src 'self' blob: data: 'unsafe-eval' figshare.local figstatic.com *.figstatic.com figshare.network *.figshare.network figsh.com *.figsh.com figsh.us *.figsh.us figshare.us *.figshare.us figshare.com *.figshare.com *.qualtrics.com *.cloudfront.net *.altmetric.com https://www.googletagmanager.com https://www.google-analytics.com readcube.com *.readcube.com 'nonce-${CSP_NONCE}';`); // eslint-disable-line max-len
++      `script-src 'self' blob: data: 'unsafe-eval' figshare.local figstatic.com *.figstatic.com figshare.network *.figshare.network figsh.com *.figsh.com figsh.us *.figsh.us figshare.us *.figshare.us figshare.com *.figshare.com *.qualtrics.com *.cloudfront.net *.altmetric.com cdn.jsdelivr.net/npm/@datacite/datacite-tracker https://www.googletagmanager.com https://www.google-analytics.com readcube.com *.readcube.com 'nonce-${CSP_NONCE}';`); // eslint-disable-line max-len
+ 
+     res.status(routerContext.statusCode || status.SUCCESS);
+     res.write("<!doctype html>");
+diff --git a/src/pages/item/DataCiteTracker/DataCiteTracker.jsx b/src/pages/item/DataCiteTracker/DataCiteTracker.jsx
+new file mode 100644
+index 000000000..633eaa52d
+--- /dev/null
++++ b/src/pages/item/DataCiteTracker/DataCiteTracker.jsx
+@@ -0,0 +1,35 @@
++import React from "react";
++import { string } from "prop-types";
++import { Helmet } from "react-helmet-async";
++
++
++const FIGSHARE_ARS = "da-ozpkks";
++const FIGSHARE_PLUS = "da-bis6ul";
++
++export function DataCiteTracker({ doi }) {
++
++  return (
++    <Helmet>
++      {/* Track View */}
++      <script
++        data-doi={doi}
++        data-repoid={FIGSHARE_ARS}
++        defer={true}
++        src="https://cdn.jsdelivr.net/npm/@datacite/datacite-tracker"
++      />
++
++      {/* Track View */}
++      <script
++        data-doi={doi}
++        data-repoid={FIGSHARE_PLUS}
++        defer={true}
++        src="https://cdn.jsdelivr.net/npm/@datacite/datacite-tracker"
++      />
++    </Helmet>
++  );
++}
++
++DataCiteTracker.propTypes = { doi: string.isRequired };
++DataCiteTracker.defaultProps = { doi: undefined };
++
++export default React.memo(DataCiteTracker);
+diff --git a/src/pages/item/DataCiteTracker/DataCiteTracker.test.jsx b/src/pages/item/DataCiteTracker/DataCiteTracker.test.jsx
+new file mode 100644
+index 000000000..4b547930e
+--- /dev/null
++++ b/src/pages/item/DataCiteTracker/DataCiteTracker.test.jsx
+@@ -0,0 +1,18 @@
++import React from "react";
++import { shallow } from "enzyme";
++
++import DataCiteTracker from "./DataCiteTracker";
++
++
++describe("<DataCiteTracker />", () => {
++  it("renders script with props", () => {
++    const doi = "test_doi";
++    const tested = shallow(<DataCiteTracker doi={doi} />);
++
++    const script = tested.find("script");
++
++    expect(script).toHaveLength(2);
++    expect(script.at(0).props()["data-doi"]).toEqual(doi);
++    expect(script.at(1).props()["data-doi"]).toEqual(doi);
++  });
++});
+diff --git a/src/pages/item/DataCiteTracker/utils.js b/src/pages/item/DataCiteTracker/utils.js
+new file mode 100644
+index 000000000..ff867a39e
+--- /dev/null
++++ b/src/pages/item/DataCiteTracker/utils.js
+@@ -0,0 +1,32 @@
++/* eslint-disable new-cap */
++import { guard } from "@figshare/fcl/helpers/guard";
++
++
++const FIGSHARE_ARS = "da-ozpkks";
++const FIGSHARE_PLUS = "da-bis6ul";
++
++
++function getDataCiteTracker(repoId) {
++  const tracker = window.DataCiteTracker.Tracker({
++    repoId,
++    trackLocalhost: false,
++  });
++
++  return tracker;
++}
++
++export function trackItemDownloadOnDataCite({ doi }) {
++  guard(() => {
++    const isPrivate = window.location.pathname.startsWith("/account");
++
++    if (isPrivate) {
++      return;
++    }
++
++    const tracker1 = getDataCiteTracker(FIGSHARE_ARS);
++    tracker1.trackMetric("download", { doi });
++
++    const tracker2 = getDataCiteTracker(FIGSHARE_PLUS);
++    tracker2.trackMetric("download", { doi });
++  });
++}
+diff --git a/src/pages/item/DataCiteTracker/utils.test.js b/src/pages/item/DataCiteTracker/utils.test.js
+new file mode 100644
+index 000000000..6d0621337
+--- /dev/null
++++ b/src/pages/item/DataCiteTracker/utils.test.js
+@@ -0,0 +1,40 @@
++import { trackItemDownloadOnDataCite } from "./utils";
++
++
++describe("trackItemDownloadOnDataCite", () => {
++  const doi = "test/doi";
++
++  it("doesn't call Tracker when pathname contains /account", () => {
++    global.window = Object.create(window);
++    Object.defineProperty(window, "location", {
++      value: { pathname: "/account/test" },
++      writable: true,
++    });
++
++    Object.defineProperty(window, "DataCiteTracker", {
++      value: { Tracker: jest.fn() },
++      writable: true,
++    });
++
++    trackItemDownloadOnDataCite({ doi });
++
++    expect(window.DataCiteTracker.Tracker).not.toHaveBeenCalled();
++  });
++
++  it("calls Tracker when pathname doesn't contain /account", () => {
++    global.window = Object.create(window);
++    Object.defineProperty(window, "location", {
++      value: { pathname: "/test" },
++      writable: true,
++    });
++
++    Object.defineProperty(window, "DataCiteTracker", {
++      value: { Tracker: jest.fn() },
++      writable: true,
++    });
++
++    trackItemDownloadOnDataCite({ doi });
++
++    expect(window.DataCiteTracker.Tracker).toHaveBeenCalled();
++  });
++});
+diff --git a/src/pages/item/page/components/NewViewer/components/ControlsBar/FileControls/FileControls.jsx b/src/pages/item/page/components/NewViewer/components/ControlsBar/FileControls/FileControls.jsx
+index 5955da165..4ad0449d4 100644
+--- a/src/pages/item/page/components/NewViewer/components/ControlsBar/FileControls/FileControls.jsx
++++ b/src/pages/item/page/components/NewViewer/components/ControlsBar/FileControls/FileControls.jsx
+@@ -13,6 +13,7 @@ import { getUsableShareToken, isDefined } from "../../../utils";
+ import { ViewerContext } from "../../../context";
+ import PageContext from "../../../../../context";
+ import VirusTooltip from "../../../../virusTooltip";
++import { trackItemDownloadOnDataCite } from "../../../../../../DataCiteTracker/utils";
+ 
+ import styles from "./FileControls.css";
+ 
+@@ -77,6 +78,12 @@ export function FileControls({ file, highlights }) {
+     </Toggletip>
+   );
+ 
++  const onDownload = () => {
++    const { doi } = item;
++
++    trackItemDownloadOnDataCite({ doi });
++  };
++
+   const renderDownloadButton = () => {
+     if (!file || !Object.keys(file).length || (item?.filesCount === 1 && previewState !== "available")) {
+       return null;
+@@ -115,6 +122,7 @@ export function FileControls({ file, highlights }) {
+         Icon={DownloadIcon}
+         href={downloadHref}
+         theme="secondary"
++        onClick={onDownload}
+       >
+         Download file
+       </IconButton>
+diff --git a/src/pages/item/page/components/NewViewer/components/ControlsBar/FileControls/FileControls.test.jsx b/src/pages/item/page/components/NewViewer/components/ControlsBar/FileControls/FileControls.test.jsx
+index 465884374..d4954d49b 100644
+--- a/src/pages/item/page/components/NewViewer/components/ControlsBar/FileControls/FileControls.test.jsx
++++ b/src/pages/item/page/components/NewViewer/components/ControlsBar/FileControls/FileControls.test.jsx
+@@ -8,10 +8,13 @@ import Exclamation from "@figshare/fcl/icons/warning/medium";
+ import { ViewerContext } from "../../../context";
+ import PageContext from "../../../../../context";
+ import VirusTooltip from "../../../../virusTooltip";
++import { trackItemDownloadOnDataCite } from "../../../../../../DataCiteTracker/utils";
+ 
+ import { FileControls } from "./FileControls";
+ 
+ 
++jest.mock("../../../../../../DataCiteTracker/utils");
++
+ describe("<FileControls />", () => {
+   const pageContext = { item: { filesCount: 1 } };
+   const viewerState = {
+@@ -114,6 +117,18 @@ describe("<FileControls />", () => {
+     tested.unmount();
+   });
+ 
++  it("handles on click on download", () => {
++    const tested = mountComponent({ newViewerContext: { state: { isDownloadDisabled: false } } });
++
++    const downloadBtn = tested.find(IconButton).at(1);
++    expect(downloadBtn.text()).toEqual("Download file");
++
++    downloadBtn.simulate("click");
++    expect(trackItemDownloadOnDataCite).toHaveBeenCalled();
++
++    tested.unmount();
++  });
++
+   it("renders file name with highlight", () => {
+     jest.spyOn(document, "referrer", "get").mockReturnValue("http://custom.figshare.test/search?q=test");
+ 
+diff --git a/src/pages/item/page/components/NewViewer/components/modes/FileView/FileDetailsSidebar/FileDetailsSidebar.jsx b/src/pages/item/page/components/NewViewer/components/modes/FileView/FileDetailsSidebar/FileDetailsSidebar.jsx
+index fb7bf19ac..fa772e9fb 100644
+--- a/src/pages/item/page/components/NewViewer/components/modes/FileView/FileDetailsSidebar/FileDetailsSidebar.jsx
++++ b/src/pages/item/page/components/NewViewer/components/modes/FileView/FileDetailsSidebar/FileDetailsSidebar.jsx
+@@ -10,6 +10,7 @@ import VirusTooltip from "../../../../../virusTooltip";
+ import { ViewerContext } from "../../../../context";
+ import PageContext from "../../../../../../context";
+ import { getUsableShareToken } from "../../../../utils";
++import { trackItemDownloadOnDataCite } from "../../../../../../../DataCiteTracker/utils";
+ 
+ import style from "./FileDetailsSidebar.css";
+ 
+@@ -77,6 +78,12 @@ export function FileDetailsSidebar() {
+     </Toggletip>
+   );
+ 
++  const onDownload = () => {
++    const { doi } = pageContext.item;
++
++    trackItemDownloadOnDataCite({ doi });
++  };
++
+   const renderDownloadButton = () => {
+     if (isDownloadDisabled || !file || !Object.keys(file).length) {
+       return null;
+@@ -101,6 +108,7 @@ export function FileDetailsSidebar() {
+         data-control-id="file-details-sidebar-download-btn"
+         href={downloadHref}
+         tooltip="Download file"
++        onClick={onDownload}
+       >
+         download
+       </GenericButton>
+diff --git a/src/pages/item/page/components/NewViewer/components/modes/FileView/FileDetailsSidebar/FileDetailsSidebar.test.jsx b/src/pages/item/page/components/NewViewer/components/modes/FileView/FileDetailsSidebar/FileDetailsSidebar.test.jsx
+index d7d4a78f3..6d2e27fc3 100644
+--- a/src/pages/item/page/components/NewViewer/components/modes/FileView/FileDetailsSidebar/FileDetailsSidebar.test.jsx
++++ b/src/pages/item/page/components/NewViewer/components/modes/FileView/FileDetailsSidebar/FileDetailsSidebar.test.jsx
+@@ -7,10 +7,13 @@ import Exclamation from "@figshare/fcl/icons/warning/small";
+ import { ViewerContext } from "../../../../context";
+ import VirusTooltip from "../../../../../virusTooltip";
+ import PageContext from "../../../../../../context";
++import { trackItemDownloadOnDataCite } from "../../../../../../../DataCiteTracker/utils";
+ 
+ import { FileDetailsSidebar } from "./FileDetailsSidebar";
+ 
+ 
++jest.mock("../../../../../../../DataCiteTracker/utils");
++
+ const mockDispatch = jest.fn();
+ 
+ const loadedFiles = [{
+@@ -23,7 +26,7 @@ const loadedFiles = [{
+   virusScanInfo: { virusFound: false },
+ }];
+ 
+-const pageContext = { institution: { id: 1 } };
++const pageContext = { institution: { id: 1 }, item: { doi: "test/doi" } };
+ 
+ const renderComponent = ({ state, newPageContext }) =>
+   mount(
+@@ -93,6 +96,21 @@ describe("FileDetailsSidebar", () => {
+     wrapper.unmount();
+   });
+ 
++  it("handles on click on download", () => {
++    const initialState = {
++      showFileDetails: 1,
++      isDownloadDisabled: false,
++      loadedFiles,
++    };
++    const wrapper = renderComponent({ state: initialState });
++    const downloadBtn = wrapper.find("a[data-control-id=\"file-details-sidebar-download-btn\"]");
++
++    downloadBtn.simulate("click");
++    expect(trackItemDownloadOnDataCite).toHaveBeenCalled();
++
++    wrapper.unmount();
++  });
++
+   it("should add token to downloadUrl when token is present", () => {
+     const initialState = {
+       showFileDetails: 1,
+diff --git a/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewFiles/File/File.jsx b/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewFiles/File/File.jsx
+index 5b2ca6f83..704f05f0d 100644
+--- a/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewFiles/File/File.jsx
++++ b/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewFiles/File/File.jsx
+@@ -13,6 +13,7 @@ import filesize from "utils/filesize";
+ import PageContext from "../../../../../../../context";
+ import VirusTooltip from "../../../../../../virusTooltip";
+ import { getUsableShareToken } from "../../../../../utils";
++import { trackItemDownloadOnDataCite } from "../../../../../../../../DataCiteTracker/utils";
+ 
+ import style from "./File.css";
+ 
+@@ -20,7 +21,6 @@ import style from "./File.css";
+ export const File = (
+   { file, onBlur, onFocus, onClick, activeFileId, isDownloadDisabled, highlights, lastActiveFileIndex }
+ ) => {
+-
+   const pageContext = useContext(PageContext);
+   const token = getUsableShareToken(pageContext);
+   const fileButtonNode = useRef(null);
+@@ -64,6 +64,12 @@ export const File = (
+     onClick(id);
+   };
+ 
++  const onDownload = () => {
++    const { doi } = pageContext.item;
++
++    trackItemDownloadOnDataCite({ doi });
++  };
++
+   const renderDownloadButton = () => {
+     if (isDownloadDisabled) {
+       return (
+@@ -128,6 +134,7 @@ export const File = (
+         href={downloadHref}
+         tabIndex={viewBtnIndex}
+         theme="tertiary"
++        onClick={onDownload}
+       >
+         Download file
+       </IconButton>
+diff --git a/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewFiles/File/File.test.jsx b/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewFiles/File/File.test.jsx
+index 101f8f0cf..c210a0c65 100644
+--- a/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewFiles/File/File.test.jsx
++++ b/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewFiles/File/File.test.jsx
+@@ -1,14 +1,18 @@
+ import React from "react";
+ import { mount } from "enzyme";
++import { IconButton } from "@figshare/fcl/button";
+ 
+ import PageContext from "../../../../../../../context";
+ import VirusTooltip from "../../../../../../virusTooltip";
++import { trackItemDownloadOnDataCite } from "../../../../../../../../DataCiteTracker/utils";
+ 
+ import { File } from "./";
+ 
+ 
++jest.mock("../../../../../../../../DataCiteTracker/utils");
++
+ describe("<File />", () => {
+-  const pageContext = { institution: { id: 1 } };
++  const pageContext = { institution: { id: 1 }, item: { doi: "test/doi" } };
+   const file = {
+     id: 1,
+     index: 0,
+@@ -29,7 +33,10 @@ describe("<File />", () => {
+ 
+   it("handles onClick event", () => {
+     const wrapper = mount(
+-      <PageContext.Provider value={ { ...pageContext } }><File {...props} /></PageContext.Provider>);
++      <PageContext.Provider value={ { ...pageContext } }>
++        <File {...props} />
++      </PageContext.Provider>
++    );
+     const button = wrapper.find("button").first();
+     button.simulate("click");
+     expect(props.onClick).toHaveBeenCalled();
+@@ -45,7 +52,10 @@ describe("<File />", () => {
+       isDownloadDisabled: false,
+     };
+     const wrapper = mount(
+-      <PageContext.Provider value={ { ...pageContext } }><File {...modifiedProps} /></PageContext.Provider>);
++      <PageContext.Provider value={ { ...pageContext } }>
++        <File {...modifiedProps} />
++      </PageContext.Provider>
++    );
+     const downloadButton = wrapper.find("IconButton").findWhere((n) => n.prop("href") === "http://downloadlink.com/");
+     expect(downloadButton.exists()).toBeTruthy();
+ 
+@@ -61,7 +71,10 @@ describe("<File />", () => {
+       },
+     };
+     const wrapper = mount(
+-      <PageContext.Provider value={ { ...pageContext } }><File {...modifiedProps} /></PageContext.Provider>);
++      <PageContext.Provider value={ { ...pageContext } }>
++        <File {...modifiedProps} />
++      </PageContext.Provider>
++    );
+     expect(wrapper.find(VirusTooltip).exists()).toBeTruthy();
+ 
+     wrapper.unmount();
+@@ -69,7 +82,10 @@ describe("<File />", () => {
+ 
+   it("handles toggle focus", () => {
+     const wrapper = mount(
+-      <PageContext.Provider value={ { ...pageContext } }><File {...props} /></PageContext.Provider>);
++      <PageContext.Provider value={ { ...pageContext } }>
++        <File {...props} />
++      </PageContext.Provider>
++    );
+     const button = wrapper.find("button").first();
+     button.simulate("focus");
+     button.simulate("blur");
+@@ -77,4 +93,20 @@ describe("<File />", () => {
+ 
+     wrapper.unmount();
+   });
++
++  it("handles on click on download", () => {
++    const wrapper = mount(
++      <PageContext.Provider value={ { ...pageContext } }>
++        <File {...props} />
++      </PageContext.Provider>
++    );
++
++    const downloadBtn = wrapper.find(IconButton).at(1);
++    expect(downloadBtn.text()).toEqual("Download file");
++
++    downloadBtn.simulate("click");
++    expect(trackItemDownloadOnDataCite).toHaveBeenCalled();
++
++    wrapper.unmount();
++  });
+ });
+diff --git a/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewTable/TableActions/TableActions.jsx b/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewTable/TableActions/TableActions.jsx
+index c9d5daba7..7959243b6 100644
+--- a/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewTable/TableActions/TableActions.jsx
++++ b/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewTable/TableActions/TableActions.jsx
+@@ -11,6 +11,7 @@ import VirusTooltip from "../../../../../../virusTooltip";
+ import { ViewerContext } from "../../../../../context";
+ import { getUsableShareToken, isDirectoryVirused } from "../../../../../utils";
+ import PageContext from "../../../../../../../context";
++import { trackItemDownloadOnDataCite } from "../../../../../../../../DataCiteTracker/utils";
+ 
+ import style from "./TableActions.css";
+ 
+@@ -52,6 +53,13 @@ export function TableActions({ row }) {
+ 
+ 
+   const onViewFile = () => dispatch({ type: "viewer:select-file", activeFileId: id });
++  const onDownload = (event) => {
++    event.stopPropagation();
++
++    const { doi } = item;
++
++    trackItemDownloadOnDataCite({ doi });
++  };
+ 
+   const handleDownloadKeyDown = (event, href) => {
+     event.stopPropagation();
+@@ -70,9 +78,7 @@ export function TableActions({ row }) {
+       disabled={!!isDownloadDisabled}
+       href={buttonHref}
+       theme="tertiary"
+-      onClick={(event) => {
+-        event.stopPropagation();
+-      }}
++      onClick={onDownload}
+       onKeyDown={(event) => handleDownloadKeyDown(event, buttonHref)}
+     >
+       {downloadLabel}
+diff --git a/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewTable/TableActions/TableActions.test.jsx b/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewTable/TableActions/TableActions.test.jsx
+index 802af5403..aa4535ddc 100644
+--- a/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewTable/TableActions/TableActions.test.jsx
++++ b/src/pages/item/page/components/NewViewer/components/modes/ListView/ListViewTable/TableActions/TableActions.test.jsx
+@@ -9,10 +9,13 @@ import { IconButton } from "@figshare/fcl/button";
+ 
+ import { ViewerContext } from "../../../../../context";
+ import PageContext from "../../../../../../../context";
++import { trackItemDownloadOnDataCite } from "../../../../../../../../DataCiteTracker/utils";
+ 
+ import { TableActions } from "./";
+ 
+ 
++jest.mock("../../../../../../../../DataCiteTracker/utils");
++
+ const pageContext = {
+   item: {
+     id: 1,
+@@ -153,6 +156,15 @@ describe("TableActions", () => {
+     tested.unmount();
+   });
+ 
++  it("handles on click on download", () => {
++    const tested = mountComponent({});
++
++    tested.find(IconButton).at(1).simulate("click");
++    expect(trackItemDownloadOnDataCite).toHaveBeenCalled();
++
++    tested.unmount();
++  });
++
+   it("handles key down event for download", () => {
+     const href = "http://localhost/";
+     const event = { stopPropagation: jest.fn(), key: "Enter" };
+diff --git a/src/pages/item/page/components/NewViewer/components/modes/ThumbnailView/ThumbnailView.jsx b/src/pages/item/page/components/NewViewer/components/modes/ThumbnailView/ThumbnailView.jsx
+index ff99c06d6..8a7097079 100644
+--- a/src/pages/item/page/components/NewViewer/components/modes/ThumbnailView/ThumbnailView.jsx
++++ b/src/pages/item/page/components/NewViewer/components/modes/ThumbnailView/ThumbnailView.jsx
+@@ -25,7 +25,7 @@ export function ThumbnailView({ currentItems, onLoadMore }) {
+   const pageContext = useContext(PageContext);
+   const { item } = pageContext;
+   const token = getUsableShareToken(pageContext);
+-  const { downloadUrl: itemDownloadUrl, filesCount, folderStructure, virusedFileIds } = item;
++  const { doi, downloadUrl: itemDownloadUrl, filesCount, folderStructure, virusedFileIds } = item;
+ 
+   const viewportRef = useRef(null);
+ 
+@@ -160,6 +160,7 @@ export function ThumbnailView({ currentItems, onLoadMore }) {
+           <ThumbnailCard
+             key={id}
+             currentTabIndex={currentTabIndex}
++            doi={doi}
+             downloadUrl={downloadUrl}
+             element={element}
+             firstHighlightIndex={firstHighlightIndex}
+diff --git a/src/pages/item/page/components/actions/download/index.jsx b/src/pages/item/page/components/actions/download/index.jsx
+index c121aca17..f58a80eeb 100644
+--- a/src/pages/item/page/components/actions/download/index.jsx
++++ b/src/pages/item/page/components/actions/download/index.jsx
+@@ -10,6 +10,7 @@ import { Helmet } from "react-helmet-async";
+ 
+ import VirusTooltip from "../../virusTooltip";
+ import Context from "../../../context";
++import { trackItemDownloadOnDataCite } from "../../../../DataCiteTracker/utils";
+ 
+ import style from "./index.css";
+ 
+@@ -91,6 +92,7 @@ export default class DownloadButton extends Component {
+           href={downloadLink}
+           innerRef={this.setTabButtonRef()}
+           theme="secondary"
++          onClick={this.onDownload}
+           {...tabButtonProps}
+         >
+           <span>{text}</span>
+@@ -156,5 +158,11 @@ export default class DownloadButton extends Component {
+     this.tabButtonNode = node;
+   }
+ 
++  onDownload = () => {
++    const { doi } = this.props.item;
++
++    trackItemDownloadOnDataCite({ doi });
++  }
++
+   focus = () => this.tabButtonNode.focus();
+ }
+diff --git a/src/pages/item/public/index.jsx b/src/pages/item/public/index.jsx
+index 3cf0757dc..0a4afc26f 100644
+--- a/src/pages/item/public/index.jsx
++++ b/src/pages/item/public/index.jsx
+@@ -3,6 +3,7 @@ import React, { Component } from "react";
+ import { Query } from "@apollo/client/react/components";
+ import { Helmet } from "react-helmet-async";
+ 
++import DataCiteTracker from "../DataCiteTracker/DataCiteTracker";
+ import ItemPage from "../page";
+ import { extractDomainFromUrl } from "../../../utils/extractDomainFromUrl";
+ 
+@@ -39,9 +40,9 @@ export default class ItemPublicPage extends Component {
+   renderWithData = (response) => {
+     const { location, match } = this.props;
+     const data = response.data ?? response.previousData;
+-    const publicItem = data?.publicItem;
+-    const brandingUrl = publicItem?.branding?.url;
+-    const baseUrl = publicItem?.baseUrl;
++    const { baseUrl, branding, doi } = data?.publicItem || {};
++    const { url: brandingUrl } = branding || {};
++
+     let helmetCanonical = null;
+ 
+     if (brandingUrl && baseUrl) {
+@@ -67,6 +68,7 @@ export default class ItemPublicPage extends Component {
+           location={location}
+           match={match}
+         />
++        <DataCiteTracker doi={doi} />
+       </>
+     );
+   }
+diff --git a/src/pages/item/public/index.test.jsx b/src/pages/item/public/index.test.jsx
+index a7f409555..92a0af89f 100644
+--- a/src/pages/item/public/index.test.jsx
++++ b/src/pages/item/public/index.test.jsx
+@@ -19,6 +19,13 @@ jest.mock("../page/app", () => {
+   };
+ });
+ 
++jest.mock("../DataCiteTracker/DataCiteTracker", () => {
++  return {
++    __esModule: true,
++    default: () => null,
++  };
++});
++
+ const session = { account: { institutionId: 1 } };
+ 
+ describe("<ItemPublicPage />", () => {
+diff --git a/src/shared/ui/ThumbnailCard/ThumbnailCard.jsx b/src/shared/ui/ThumbnailCard/ThumbnailCard.jsx
+index fef2e374f..c366ffee3 100644
+--- a/src/shared/ui/ThumbnailCard/ThumbnailCard.jsx
++++ b/src/shared/ui/ThumbnailCard/ThumbnailCard.jsx
+@@ -13,6 +13,7 @@ import { isPartOfItemHighlight } from "shared/ui/highlights/utils";
+ 
+ import VirusTooltip from "../../../pages/item/page/components/virusTooltip";
+ import { addTokenToPreviewData } from "../../../pages/item/page/components/NewViewer/utils";
++import { trackItemDownloadOnDataCite } from "../../../pages/item/DataCiteTracker/utils";
+ 
+ import DirectoryIcon from "./icons/directory";
+ import DirectoryInvertIcon from "./icons/directoryInvert";
+@@ -20,6 +21,8 @@ import styles from "./ThumbnailCard.css";
+ 
+ 
+ export function ThumbnailCard({
++  currentTabIndex,
++  doi,
+   downloadUrl,
+   element,
+   firstHighlightIndex,
+@@ -30,7 +33,6 @@ export function ThumbnailCard({
+   token,
+   onClick,
+   setFirstHighlightIndex,
+-  currentTabIndex,
+ }) {
+   const { completePath, isDirectory, id, name, size, virusScanInfo } = element;
+   const label = isDirectory ? "folder" : "file";
+@@ -123,6 +125,12 @@ export function ThumbnailCard({
+     </Toggletip>
+   );
+ 
++  const onDownload = (event) => {
++    event.stopPropagation();
++
++    trackItemDownloadOnDataCite({ doi });
++  };
++
+   const renderDownloadButton = () => {
+     if (isDownloadDisabled) {
+       return (
+@@ -158,7 +166,7 @@ export function ThumbnailCard({
+         href={downloadHref}
+         tabIndex={currentTabIndex}
+         theme="tertiary"
+-        onClick={(event) => event.stopPropagation()}
++        onClick={onDownload}
+         onKeyDown={(event) => handleDownloadKeyDown(event, downloadHref)}
+       >
+         {`Download ${label}`}
+@@ -210,6 +218,7 @@ ThumbnailCard.propTypes = {
+   firstHighlightIndex: PropTypes.number.isRequired,
+   setFirstHighlightIndex: PropTypes.func.isRequired,
+   currentTabIndex: PropTypes.string,
++  doi: PropTypes.string,
+   downloadUrl: PropTypes.string,
+   highlights: PropTypes.array,
+   index: PropTypes.number,
+@@ -221,6 +230,7 @@ ThumbnailCard.propTypes = {
+ 
+ ThumbnailCard.defaultProps = {
+   currentTabIndex: null,
++  doi: "",
+   downloadUrl: "",
+   highlights: [],
+   index: undefined,
+diff --git a/src/shared/ui/ThumbnailCard/ThumbnailCard.test.jsx b/src/shared/ui/ThumbnailCard/ThumbnailCard.test.jsx
+index bd6330bdd..1e9e71ff2 100644
+--- a/src/shared/ui/ThumbnailCard/ThumbnailCard.test.jsx
++++ b/src/shared/ui/ThumbnailCard/ThumbnailCard.test.jsx
+@@ -7,11 +7,13 @@ import { IconButton } from "@figshare/fcl/button";
+ import { Thumbnail } from "@figshare/viewers";
+ 
+ import VirusTooltip from "../../../pages/item/page/components/virusTooltip";
++import { trackItemDownloadOnDataCite } from "../../../pages/item/DataCiteTracker/utils";
+ 
+ import { ThumbnailCard } from "./index";
+ 
+ 
+ jest.mock("../../../pages/item/page/components/virusTooltip");
++jest.mock("../../../pages/item/DataCiteTracker/utils");
+ jest.mock("@figshare/fcl/toggletip", () => {
+   return {
+     __esModule: true,
+@@ -40,9 +42,11 @@ const directory = {
+ const props = {
+   element: file,
+   downloadUrl: "",
++  firstHighlightIndex: 1,
+   isDirectoryVirused: false,
+   isDownloadDisabled: false,
+   token: "",
++  setFirstHighlightIndex: jest.fn(),
+   onClick: jest.fn(),
+ };
+ 
+@@ -145,6 +149,16 @@ describe("ThumbnailCard", () => {
+     expect(props.onClick).toHaveBeenCalled();
+   });
+ 
++  it("handles onClick for download", () => {
++    const tested = mount(<ThumbnailCard {...props} downloadUrl="url" />);
++
++    const downloadBtn = tested.find(IconButton).at(1);
++    downloadBtn.simulate("click");
++
++    expect(downloadBtn).toHaveLength(1);
++    expect(trackItemDownloadOnDataCite).toHaveBeenCalled();
++  });
++
+   it("handles onKeyDown for Enter key", () => {
+     const tested = mount(<ThumbnailCard {...props} />);
+ 
