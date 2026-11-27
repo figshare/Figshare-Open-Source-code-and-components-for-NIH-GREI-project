@@ -1,0 +1,201 @@
+diff --git a/src/replication/es_schema/__init__.py b/src/replication/es_schema/__init__.py
+index 799bd37..b1f88c6 100644
+--- a/src/replication/es_schema/__init__.py
++++ b/src/replication/es_schema/__init__.py
+@@ -18,6 +18,7 @@ from replication.es_schema import (
+     private_project_itbm,
+     public_project,
+     public_project_itbm,
++    ror,
+     tag,
+     user,
+     hgv,
+@@ -133,6 +134,10 @@ indices = {
+         "mappings": follow.mappings,
+         "settings": follow.settings,
+     },
++    "ror": {
++        "mappings": ror.mappings,
++        "settings": ror.settings,
++    },
+     "review_item": {
+         "mappings": {},
+         "settings": {},
+diff --git a/src/replication/es_schema/common_settings.py b/src/replication/es_schema/common_settings.py
+index 055ba4e..7c845c7 100644
+--- a/src/replication/es_schema/common_settings.py
++++ b/src/replication/es_schema/common_settings.py
+@@ -50,6 +50,14 @@ FILTERS = {
+     },
+ }
+ 
++CHAR_FILTERS = {
++    "strip_ror_url": {
++        "type": "pattern_replace",
++        "pattern": "https?://ror\\.org/",
++        "replacement": "",
++    },
++}
++
+ ANALYZERS = {
+     "fig_text_with_html": {
+         "tokenizer": "standard",
+@@ -78,4 +86,9 @@ ANALYZERS = {
+         ],
+     },
+     "fig_path_hierarchy": {"tokenizer": "path_hierarchy"},
++    "fig_ror_id": {
++        "tokenizer": "keyword",
++        "char_filter": ["strip_ror_url"],
++        "filter": ["lowercase"],
++    },
+ }
+diff --git a/src/replication/es_schema/ror.py b/src/replication/es_schema/ror.py
+new file mode 100644
+index 0000000..ddba662
+--- /dev/null
++++ b/src/replication/es_schema/ror.py
+@@ -0,0 +1,63 @@
++from .common_settings import ANALYZERS, CHAR_FILTERS, NORMALIZERS
++
++# ROR (Research Organization Registry) index for autocomplete search.
++# Used by the affiliation editor on profiles and items.
++# Data imported from Zenodo monthly (~137k organizations).
++
++# Multi-field definition for ROR ID fields: keyword for exact match/facets,
++# text subfield with fig_ror_id analyzer for searching by ID only (e.g. "02bfwt286").
++ROR_ID_FIELD = {
++    "type": "keyword",
++    "fields": {
++        "search": {"type": "text", "analyzer": "fig_ror_id"},
++    },
++}
++
++mappings = {
++    "dynamic": "strict",
++    "properties": {
++        # Primary identifier — full URL e.g. "https://ror.org/02bfwt286"
++        "ror_id": ROR_ID_FIELD,
++        # Organization display name — search_as_you_type for autocomplete
++        "name": {
++            "type": "text",
++            "fields": {
++                "search": {"type": "search_as_you_type"},
++                "raw": {"type": "keyword", "normalizer": "fig_keyword"},
++            },
++        },
++        # 1=active, 2=inactive, 3=withdrawn
++        "status": {"type": "byte"},
++        # ISO country code for filtering (e.g. "GB", "US")
++        "country_code": {"type": "keyword"},
++        # Human-readable country name for display
++        "country_name": {"type": "keyword"},
++        # City for display/filtering
++        "city": {"type": "keyword"},
++        # Parent organization ROR ID — full URL
++        "parent_ror_id": ROR_ID_FIELD,
++        # Child organizations (denormalized for display alongside parent matches)
++        "children": {
++            "type": "nested",
++            "dynamic": "strict",
++            "properties": {
++                "ror_id": ROR_ID_FIELD,
++                "name": {"type": "keyword"},
++            },
++        },
++    },
++}
++
++settings = {
++    "analysis": {
++        "char_filter": {
++            "strip_ror_url": CHAR_FILTERS["strip_ror_url"],
++        },
++        "analyzer": {
++            "fig_ror_id": ANALYZERS["fig_ror_id"],
++        },
++        "normalizer": {
++            "fig_keyword": NORMALIZERS["fig_keyword"],
++        },
++    },
++}
+diff --git a/tests/scripts/test_schema_ror.py b/tests/scripts/test_schema_ror.py
+new file mode 100644
+index 0000000..7db244b
+--- /dev/null
++++ b/tests/scripts/test_schema_ror.py
+@@ -0,0 +1,74 @@
++from mock import MagicMock
++
++from replication.indexers.lib.es_api import EsApi
++
++from scripts.schema import Schema
++
++
++def test_schema_ror(mocker):
++    es_api = EsApi()
++    es_api_delete_index: MagicMock = mocker.patch.object(EsApi, "delete_index")
++    es_api_create_index: MagicMock = mocker.patch.object(EsApi, "create_index")
++
++    Schema().reset_indices(es_api=es_api, indices=["ror"], suffix="010101", link=True)
++
++    ror_id_field = {
++        "type": "keyword",
++        "fields": {
++            "search": {"type": "text", "analyzer": "fig_ror_id"},
++        },
++    }
++
++    index_mapping = {
++        "mappings": {
++            "dynamic": "strict",
++            "properties": {
++                "ror_id": ror_id_field,
++                "name": {
++                    "type": "text",
++                    "fields": {
++                        "search": {"type": "search_as_you_type"},
++                        "raw": {"type": "keyword", "normalizer": "fig_keyword"},
++                    },
++                },
++                "status": {"type": "byte"},
++                "country_code": {"type": "keyword"},
++                "country_name": {"type": "keyword"},
++                "city": {"type": "keyword"},
++                "parent_ror_id": ror_id_field,
++                "children": {
++                    "type": "nested",
++                    "dynamic": "strict",
++                    "properties": {
++                        "ror_id": ror_id_field,
++                        "name": {"type": "keyword"},
++                    },
++                },
++            },
++        },
++        "settings": {
++            "analysis": {
++                "char_filter": {
++                    "strip_ror_url": {
++                        "type": "pattern_replace",
++                        "pattern": "https?://ror\\.org/",
++                        "replacement": "",
++                    },
++                },
++                "analyzer": {
++                    "fig_ror_id": {
++                        "tokenizer": "keyword",
++                        "char_filter": ["strip_ror_url"],
++                        "filter": ["lowercase"],
++                    },
++                },
++                "normalizer": {
++                    "fig_keyword": {"type": "custom", "filter": ["lowercase", "asciifolding"]},
++                },
++            }
++        },
++        "aliases": {"ror": {}},
++    }
++
++    es_api_delete_index.assert_called_with("ror_010101")
++    es_api_create_index.assert_called_with("ror_010101", index_mapping)

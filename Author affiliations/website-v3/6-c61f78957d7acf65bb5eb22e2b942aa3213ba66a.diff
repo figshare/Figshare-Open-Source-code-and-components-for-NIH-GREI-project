@@ -1,0 +1,90 @@
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx
+index e3f404f99..c0f713693 100644
+--- a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx
+@@ -249,6 +249,43 @@ describe("AffiliationOverlay", () => {
+     teardown();
+   });
+ 
++  it("shows an error when name contains only HTML tags (stripped to empty)", async() => {
++    const scope = setup();
++    scope.run();
++
++    const [nameInput] = screen.getAllByRole("textbox");
++    await scope.user.type(nameInput, "<img src=x onerror=alert(1)>");
++
++    await scope.user.click(screen.getByRole("button", { name: "Add affiliation" }));
++
++    await waitFor(() => {
++      expect(screen.getByText("Affiliation name is required")).toBeInTheDocument();
++    });
++    expect(scope.props.onSave).not.toHaveBeenCalled();
++
++    teardown();
++  });
++
++  it("strips HTML tags from name before saving", async() => {
++    const scope = setup();
++    scope.run();
++
++    const [nameInput] = screen.getAllByRole("textbox");
++    await scope.user.type(nameInput, "University of <b>Testing</b>");
++
++    await scope.user.click(screen.getByRole("button", { name: "Add affiliation" }));
++
++    await waitFor(() => {
++      expect(scope.props.onSave).toHaveBeenCalledWith({
++        rorId: "",
++        name: "University of Testing",
++        url: "",
++      });
++    });
++
++    teardown();
++  });
++
+   it("calls onClose when the Cancel button is clicked", async() => {
+     const scope = setup();
+     scope.run();
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx
+index 3eb726d52..0bd0af708 100644
+--- a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx
+@@ -25,6 +25,11 @@ interface AffiliationOverlayProps {
+ const MAX_NAME_LENGTH = 255;
+ const MAX_URL_LENGTH = 255;
+ 
++// Strip HTML tags from a string to prevent XSS payloads from being saved as empty names
++function stripHtmlTags(text: string): string {
++  return text.replace(/<[^>]*>/g, "");
++}
++
+ // Schema defines the form fields, their initial values, labels, and required status
+ const AFFILIATION_FORM_SCHEMA = {
+   id: "edit-affiliation",
+@@ -57,11 +62,14 @@ const AFFILIATION_FORM_VALIDATION = {
+     type: "compoundValidation",
+     withResults: true,
+     fn: (value: string) => {
+-      if (!value?.trim()) {
++      // Strip HTML tags before validating so XSS payloads like <img onerror=...> are caught
++      const cleaned = stripHtmlTags(value || "").trim();
++
++      if (!cleaned) {
+         return { valid: false, message: "Affiliation name is required" };
+       }
+ 
+-      if (value.trim().length > MAX_NAME_LENGTH) {
++      if (cleaned.length > MAX_NAME_LENGTH) {
+         return { valid: false, message: `Affiliation name must be ${MAX_NAME_LENGTH} characters or fewer` };
+       }
+ 
+@@ -128,7 +136,7 @@ export function AffiliationOverlay({
+       return;
+     }
+ 
+-    const nameValue = getIn(form, "state.fields.name.value", "").trim();
++    const nameValue = stripHtmlTags(getIn(form, "state.fields.name.value", "")).trim();
+     const urlValue = getIn(form, "state.fields.url.value", "").trim();
+ 
+     onSave({

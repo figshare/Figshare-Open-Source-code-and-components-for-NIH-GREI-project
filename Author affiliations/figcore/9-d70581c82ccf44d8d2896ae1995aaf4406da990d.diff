@@ -1,0 +1,75 @@
+diff --git a/src/figcore/api/user/validator.py b/src/figcore/api/user/validator.py
+index 1c74dc610..c7a17600a 100644
+--- a/src/figcore/api/user/validator.py
++++ b/src/figcore/api/user/validator.py
+@@ -224,6 +224,8 @@ class UserValidator(Validator):
+                     raise fig_exc.InvalidValue("Affiliation url must be a string")
+                 if not self.validate_string(raw_url, max_length=self.MAX_NAME_LENGTH):
+                     raise fig_exc.InvalidLength("Affiliation url must not exceed 255 characters")
++                if not self.validate_url(raw_url):
++                    raise fig_exc.InvalidValue("Affiliation url must be a valid HTTP(S) URL")
+ 
+     def validate_personal_profiles(self):
+         personal_profiles = self._data.get("personal_profiles")
+diff --git a/src/figcore/lib/validator.py b/src/figcore/lib/validator.py
+index 6f06ae933..0a69711a3 100644
+--- a/src/figcore/lib/validator.py
++++ b/src/figcore/lib/validator.py
+@@ -308,7 +308,11 @@ class Validator(object):
+         if not url:
+             return True
+ 
+-        sanitized_url = cls.sanitize_url(url)
++        try:
++            sanitized_url = cls.sanitize_url(url)
++        except ValueError:
++            # Malformed URLs (e.g. unmatched IPv6 brackets) raise in urlparse
++            return False
+ 
+         return bool(cls.VALID_URL_REGEX.match(sanitized_url))
+ 
+diff --git a/tests/api/user/test_update_public_profile.py b/tests/api/user/test_update_public_profile.py
+index 406660861..991277fab 100644
+--- a/tests/api/user/test_update_public_profile.py
++++ b/tests/api/user/test_update_public_profile.py
+@@ -389,6 +389,13 @@ class TestUpdatePublicProfile(BaseTestTransactioned):
+         self.inst_account.actions_for(self.inst_user).update_public_profile({"personal_profiles": ten_valid_urls})
+         self.assertEqual(self.inst_user.personal_profiles, ten_valid_urls)
+ 
++    def test_personal_profiles_malformed_url_rejected(self):
++        # Malformed URLs like unmatched IPv6 brackets should raise InvalidValue, not ValueError
++        with self.assertRaises(fig_exc.InvalidValue):
++            self.inst_account.actions_for(self.inst_user).update_public_profile(
++                {"personal_profiles": [{"url": "https://["}]}
++            )
++
+     @patch.object(Taxonomy, "find_by_institution_taxonomy")
+     @patch.object(Category, "get_categories_by_taxonomy")
+     def test_fields_of_interest(self, category_patch, taxonomy_patch):
+@@ -523,6 +530,26 @@ class TestUpdatePublicProfile(BaseTestTransactioned):
+                     {"affiliations": [{"name": "Org", "url": invalid_url}]}
+                 )
+ 
++    def test_affiliations_malformed_url_rejected(self):
++        # Malformed URLs like unmatched IPv6 brackets should raise InvalidValue, not ValueError
++        with self.assertRaises(fig_exc.InvalidValue):
++            self.figsh_account.actions_for(self.figsh_user).update_public_profile(
++                {"affiliations": [{"name": "Org", "url": "https://["}]}
++            )
++
++    def test_affiliations_invalid_url_scheme_rejected(self):
++        # Only http(s)/ftp(s) URLs should be accepted
++        invalid_urls = [
++            "javascript:alert(1)",
++            "data:text/html,<script>alert(1)</script>",
++            "example.com/no-scheme",
++        ]
++        for url in invalid_urls:
++            with self.assertRaises(fig_exc.InvalidValue):
++                self.figsh_account.actions_for(self.figsh_user).update_public_profile(
++                    {"affiliations": [{"name": "Org", "url": url}]}
++                )
++
+     def test_affiliations_single_char_name_accepted(self):
+         self.figsh_account.actions_for(self.figsh_user).update_public_profile(
+             {"affiliations": [{"name": "X", "url": ""}]}

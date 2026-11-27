@@ -1,0 +1,41 @@
+diff --git a/figshare_api2/api_docs b/figshare_api2/api_docs
+index beee8721..2d19ba18 160000
+--- a/figshare_api2/api_docs
++++ b/figshare_api2/api_docs
+@@ -1 +1 @@
+-Subproject commit beee8721e7467e23621bdbf8d33489c25e5df349
++Subproject commit 2d19ba18df1bdac6703667ca3938ec97f5f831d6
+diff --git a/figshare_api2/app/presenters/profile.py b/figshare_api2/app/presenters/profile.py
+index 78f94450..c2e97d0c 100644
+--- a/figshare_api2/app/presenters/profile.py
++++ b/figshare_api2/app/presenters/profile.py
+@@ -15,3 +15,4 @@ class ProfilePresenter(Presenter):
+     field_id = field("fields_of_interest", skipif=value_is_none)
+     field_by_source_id = field("fields_of_interest_by_source_id", skipif=value_is_none)
+     personal_profiles = field("personal_profiles", skipif=value_is_none)
++    affiliations = field("affiliations", skipif=value_is_none)
+diff --git a/figshare_api2/tests/app/views/profile/update_profile_test.py b/figshare_api2/tests/app/views/profile/update_profile_test.py
+index 2a2d2ffb..d60ef990 100644
+--- a/figshare_api2/tests/app/views/profile/update_profile_test.py
++++ b/figshare_api2/tests/app/views/profile/update_profile_test.py
+@@ -102,6 +102,10 @@ def test_update_profile_success(api_handler, mocked_oauth, patcher, http_request
+         "publications": ["some publication"],
+         "personal_profiles": ["https://personal1.com", "https://personal2.com"],
+         "bio": "biographical information",
++        "affiliations": [
++            {"ror_id": "02jbv0t02", "name": "Harvard University", "url": "https://www.harvard.edu", "order": 0},
++            {"name": "Riverside Lab", "url": "", "order": 1},
++        ],
+     }
+ 
+     mocked_oauth.account.actions_for.return_value.update_public_profile.return_value = None
+@@ -120,5 +124,9 @@ def test_update_profile_success(api_handler, mocked_oauth, patcher, http_request
+             "linkedin_id": "https://linkedin.com/company/12tasa1",
+             "personal_profiles": ["https://personal1.com", "https://personal2.com"],
+             "description": "biographical information",
++            "affiliations": [
++                {"ror_id": "02jbv0t02", "name": "Harvard University", "url": "https://www.harvard.edu", "order": 0},
++                {"name": "Riverside Lab", "url": "", "order": 1},
++            ],
+         }
+     )

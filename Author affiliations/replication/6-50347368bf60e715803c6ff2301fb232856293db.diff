@@ -1,0 +1,473 @@
+diff --git a/src/replication/indexers/project/db_queries.py b/src/replication/indexers/project/db_queries.py
+index 7c0a05b..8fc9795 100644
+--- a/src/replication/indexers/project/db_queries.py
++++ b/src/replication/indexers/project/db_queries.py
+@@ -109,6 +109,35 @@ AUTHORS_QUERY = """
+ |    1 | SIMPLE      | grid    | const | PRIMARY       | PRIMARY | 767     | const |    1 |       |
+ +------+-------------+---------+-------+---------------+---------+---------+-------+------+-------+
+ """
++"""
++    Fetch authors and fields blob for all published items in a project.
++    Used to collect affiliations from the project's items.
++
++    EXPLAIN
++    SELECT `article_metadata_version`.`authors`, `article_metadata_version`.`fields`
++    FROM `article_version`
++    JOIN `article_metadata_version`
++        ON `article_version`.`article_id` = `article_metadata_version`.`article_id`
++        AND `article_version`.`version` = `article_metadata_version`.`version`
++    WHERE `article_version`.`project_id` = 10000
++        AND `article_version`.`is_last_version` = 1;
+++------+-------------+----------------------------+------+---------------+---------+---------+-------+------+-------------+
++| id   | select_type | table                      | type | possible_keys | key     | key_len | ref   | rows | Extra       |
+++------+-------------+----------------------------+------+---------------+---------+---------+-------+------+-------------+
++|    1 | SIMPLE      | article_version            | ref  | project_id    | ...     | 8       | const |    1 | Using where |
++|    1 | SIMPLE      | article_metadata_version   | ref  | PRIMARY       | PRIMARY | 16      | ...   |    1 |             |
+++------+-------------+----------------------------+------+---------------+---------+---------+-------+------+-------------+
++"""
++PROJECT_ITEMS_AUTHORS_QUERY = """
++    SELECT {fields}
++    FROM `article_version`
++    JOIN `article_metadata_version`
++        ON `article_version`.`article_id` = `article_metadata_version`.`article_id`
++        AND `article_version`.`version` = `article_metadata_version`.`version`
++    WHERE `article_version`.`project_id` = :element_id
++        AND `article_version`.`is_last_version` = 1
++"""
++
+ FUNDING_QUERY = """
+     SELECT {fields}
+     FROM `funding`
+diff --git a/src/replication/indexers/project/project.py b/src/replication/indexers/project/project.py
+index 8e006e0..e43c081 100644
+--- a/src/replication/indexers/project/project.py
++++ b/src/replication/indexers/project/project.py
+@@ -27,6 +27,7 @@ from replication.indexers.common.itbm_guard import itbm_disabled
+ from .db_queries import (
+     AUTHORS_QUERY,
+     PRIVATE_PROJECTS_QUERY,
++    PROJECT_ITEMS_AUTHORS_QUERY,
+     PUBLIC_PROJECTS_QUERY,
+ )
+ from .mappings import (
+@@ -99,12 +100,12 @@ class Project(Index):
+                 owner_account_id = es_dict["owner"]
+ 
+                 # need to index private projects in collab's and viewers' institutions so they show up in my content
+-                authors, affiliations, collaborators_and_viewers_institutions = cls.get_authors(
+-                    entity_id, institution_id
+-                )
++                authors, _, collaborators_and_viewers_institutions = cls.get_authors(entity_id, institution_id)
+                 es_dict["authors"] = cls.cleanup_entity_metadata(copy.deepcopy(authors), ["photo_url"])
+-                es_dict["affiliations"] = affiliations
+-                es_dict["affiliations_nested"] = affiliations
++                # Affiliations come from the project's items, not from author profiles.
++                item_affiliations = cls.get_item_affiliations(entity_id)
++                es_dict["affiliations"] = item_affiliations
++                es_dict["affiliations_nested"] = item_affiliations
+                 es_dict["owner"] = get_owner(cls.DATABASE, owner_account_id)
+                 es_dict["publication_year"] = get_publication_year(
+                     es_dict["dates"].get("pub_publish"), es_dict["dates"].get("published")
+@@ -398,6 +399,78 @@ class Project(Index):
+ 
+         return authors_metadata, affiliations, collaborators_and_viewers_institutions
+ 
++    @classmethod
++    def get_item_affiliations(cls, project_id):
++        """Collect deduplicated affiliations from all published items in the project.
++
++        For each item, affiliations are extracted from the authors' inline data:
++        - ITBM items: authors are in article_metadata_version.fields blob
++        - Legacy items: authors are in article_metadata_version.authors column
++
++        Returns a list of {"id": ror_id, "title": name} dicts.
++        """
++        db_fields = ["article_metadata_version.authors", "article_metadata_version.fields"]
++        rows = get_multiple_by_id(cls.DATABASE, project_id, PROJECT_ITEMS_AUTHORS_QUERY, db_fields)
++
++        affiliations = []
++        seen_ror_ids = set()
++
++        for row in rows:
++            item_authors = cls._extract_authors_from_item(row)
++            for author in item_authors:
++                # Legacy items can store authors as plain IDs (e.g. [1000015]) — skip non-dict entries.
++                if not isinstance(author, dict):
++                    continue
++                # Combine affiliations and legacy_affiliations (from GRID migration),
++                # mirroring the logic in common.get_authors for items.
++                affs = list(author.get("affiliations") or []) + list(author.get("legacy_affiliations") or [])
++                for aff in affs:
++                    if isinstance(aff, dict):
++                        ror_id = aff.get("ror_id", "")
++                        name = aff.get("name", "")
++                    elif isinstance(aff, str):
++                        # Legacy string format — no name available, skip.
++                        continue
++                    else:
++                        continue
++                    if ror_id and name and ror_id not in seen_ror_ids:
++                        seen_ror_ids.add(ror_id)
++                        affiliations.append({"id": ror_id, "title": name})
++
++        return affiliations
++
++    @staticmethod
++    def _extract_authors_from_item(row):
++        """Extract the authors list from an item's DB row.
++
++        Tries the ITBM fields blob first (richer data), then falls back to
++        the legacy authors column.
++        """
++        # ITBM path: authors are inside the fields blob as a person_list entry.
++        fields_raw = row.get("article_metadata_version.fields")
++        if fields_raw:
++            try:
++                fields_blob = json.loads(fields_raw) if isinstance(fields_raw, str) else fields_raw
++                for field_data in fields_blob.values():
++                    if field_data.get("field_name") == "authors" and isinstance(field_data.get("value"), list):
++                        return field_data["value"]
++            except (json.JSONDecodeError, AttributeError):
++                pass
++
++        # Legacy path: authors column with [{user_id, affiliations}, ...].
++        authors_raw = row.get("article_metadata_version.authors")
++        if authors_raw:
++            try:
++                if isinstance(authors_raw, (bytes, bytearray)):
++                    authors_raw = authors_raw.decode("utf-8")
++                authors = json.loads(authors_raw) if isinstance(authors_raw, str) else authors_raw
++                if isinstance(authors, list):
++                    return authors
++            except (json.JSONDecodeError, AttributeError):
++                pass
++
++        return []
++
+     @classmethod
+     def cleanup_entity_metadata(cls, entities_list, fields_to_remove):
+         clean_entities = []
+diff --git a/src/replication/indexers/project_itbm/project_itbm.py b/src/replication/indexers/project_itbm/project_itbm.py
+index a322c5c..853aa25 100644
+--- a/src/replication/indexers/project_itbm/project_itbm.py
++++ b/src/replication/indexers/project_itbm/project_itbm.py
+@@ -145,10 +145,12 @@ class ProjectItbm(Project):
+         owner_account_id = es_dict["owner"]
+ 
+         # Authors are fetched via the project-specific query to preserve role information.
+-        authors, affiliations, collaborators_and_viewers_institutions = cls.get_authors(entity_id, institution_id)
++        authors, _, collaborators_and_viewers_institutions = cls.get_authors(entity_id, institution_id)
+         es_dict["authors"] = cls.cleanup_entity_metadata(copy.deepcopy(authors), ["photo_url"])
+-        es_dict["affiliations"] = affiliations
+-        es_dict["affiliations_nested"] = affiliations
++        # Affiliations come from the project's items, not from author profiles.
++        item_affiliations = cls.get_item_affiliations(entity_id)
++        es_dict["affiliations"] = item_affiliations
++        es_dict["affiliations_nested"] = item_affiliations
+         es_dict["owner"] = get_owner(cls.DATABASE, owner_account_id)
+         # publisher_published (blob stock field) is the authoritative ITBM source for publication_year.
+         es_dict["publication_year"] = get_publication_year(
+diff --git a/tests/replication/project_itbm/data.py b/tests/replication/project_itbm/data.py
+index 60da76a..815d5c0 100644
+--- a/tests/replication/project_itbm/data.py
++++ b/tests/replication/project_itbm/data.py
+@@ -144,6 +144,18 @@ class TestPublicProjectItbmInsert:
+             },
+         ]
+ 
++    @classmethod
++    def db_get_item_authors(cls):
++        """Mock rows from PROJECT_ITEMS_AUTHORS_QUERY — one legacy item with affiliations."""
++        return [
++            {
++                "article_metadata_version.authors": json.dumps(
++                    [{"user_id": 2000078, "affiliations": [{"ror_id": "04abc1234", "name": "Second Aff"}]}]
++                ),
++                "article_metadata_version.fields": None,
++            }
++        ]
++
+     @classmethod
+     def db_get_institutional_group(cls):
+         return {"group_id": 1}
+diff --git a/tests/replication/project_itbm/test_project_itbm.py b/tests/replication/project_itbm/test_project_itbm.py
+index 4732876..d610cc1 100644
+--- a/tests/replication/project_itbm/test_project_itbm.py
++++ b/tests/replication/project_itbm/test_project_itbm.py
+@@ -39,7 +39,7 @@ def test_public_project_itbm_insert(mocker):
+     # get_first call order: @itbm_enabled, project, owner, institutional_group, stats,
+     #   institutional_indices_flag (get_allowed_associated_indices), private_owner
+     # get_multiple call order: process_fields_blob (custom_field_options, funding),
+-    #   cls.get_authors (authors, affiliations), get_content_groups (associated_groups, content_groups)
++    #   cls.get_authors, cls.get_item_affiliations, get_content_groups (associated_groups, content_groups)
+     _mock_db(
+         mocker,
+         get_first_responses=[
+@@ -55,6 +55,7 @@ def test_public_project_itbm_insert(mocker):
+             D.db_get_underlying_field_settings(),
+             D.db_get_funding_by_ids(),
+             D.db_get_authors_by_project_id(),
++            D.db_get_item_authors(),
+             D.db_get_associated_groups(),
+             D.db_get_content_groups(),
+         ],
+@@ -97,6 +98,7 @@ def test_public_project_itbm_empty_blob_uses_db_fallback(mocker):
+         ],
+         get_multiple_responses=[
+             D.db_get_authors_by_project_id(),
++            D.db_get_item_authors(),
+             D.db_get_associated_groups(),
+             D.db_get_content_groups(),
+         ],
+@@ -210,6 +212,7 @@ def test_public_project_itbm_reset_uses_upsert(mocker):
+             D.db_get_underlying_field_settings(),
+             D.db_get_funding_by_ids(),
+             D.db_get_authors_by_project_id(),
++            D.db_get_item_authors(),
+             D.db_get_associated_groups(),
+             D.db_get_content_groups(),
+         ],
+@@ -629,6 +632,7 @@ def test_project_upsert_public_with_mixed_collaborators_writes_public_copy_only_
+         "get_multiple",
+         side_effect=[
+             _LEGACY_AUTHORS_WITH_AFFILIATIONS,  # get_authors
++            [],  # get_item_affiliations (no published items)
+             [],  # get_funding (empty)
+             [_LEGACY_GROUP],  # associated_groups
+             [_LEGACY_GROUP],  # content_groups
+@@ -788,6 +792,7 @@ def test_project_itbm_upsert_public_with_mixed_collaborators_skips_legacy_common
+             D.db_get_underlying_field_settings(),  # process_custom_fields
+             D.db_get_funding_by_ids(),  # get_funding (blob)
+             authors_mixed,  # get_authors
++            D.db_get_item_authors(),  # get_item_affiliations
+             D.db_get_associated_groups(),  # associated_groups
+             D.db_get_content_groups(),  # content_groups
+         ],
+@@ -933,7 +938,7 @@ def _run_legacy_public_upsert(mocker, dispatcher, es_patch=None):
+     mocker.patch.object(
+         DbApi,
+         "get_multiple",
+-        side_effect=[_LEGACY_AUTHORS_WITH_AFFILIATIONS, [], [_LEGACY_GROUP], [_LEGACY_GROUP]],
++        side_effect=[_LEGACY_AUTHORS_WITH_AFFILIATIONS, [], [], [_LEGACY_GROUP], [_LEGACY_GROUP]],
+     )
+     es_patch = es_patch or mocker.patch.object(EsApi, "create_or_update_document")
+     Project.on_message_project(dispatcher)
+@@ -979,6 +984,7 @@ def _run_itbm_public_upsert(mocker, collaborator_institution_id, dispatcher=None
+             D.db_get_underlying_field_settings(),
+             D.db_get_funding_by_ids(),
+             authors,
++            D.db_get_item_authors(),
+             D.db_get_associated_groups(),
+             D.db_get_content_groups(),
+         ],
+@@ -1106,3 +1112,124 @@ def test_project_itbm_delete_public_with_missing_docs_still_removes_legacy_and_c
+     project_id = D.db_get_project_by_id()["project.id"]
+     delete_multi_patch.assert_any_call(["public_project_0"], project_id)
+     assert delete_multi_patch.call_count == 2  # legacy public batch + collaborator private batch
++
++
++# ---------------------------------------------------------------------------
++# get_item_affiliations / _extract_authors_from_item unit tests
++# ---------------------------------------------------------------------------
++
++
++def test_extract_authors_from_item_itbm_fields_blob():
++    """ITBM items: authors are inside the fields blob as a person_list entry."""
++    fields_blob = json.dumps(
++        {
++            "1": {"field_name": "title", "field_type": "text", "internal_type": "core", "value": "Test Item"},
++            "3": {
++                "field_name": "authors",
++                "field_type": "person_list",
++                "internal_type": "core",
++                "value": [
++                    {"name": "Alice", "affiliations": [{"ror_id": "abc123", "name": "Uni A"}]},
++                    {"name": "Bob", "affiliations": []},
++                ],
++            },
++        }
++    )
++    row = {"article_metadata_version.fields": fields_blob, "article_metadata_version.authors": None}
++    result = Project._extract_authors_from_item(row)
++    assert len(result) == 2
++    assert result[0]["name"] == "Alice"
++    assert result[0]["affiliations"] == [{"ror_id": "abc123", "name": "Uni A"}]
++
++
++def test_extract_authors_from_item_legacy_authors_column():
++    """Legacy items: authors are in the authors column as a JSON list."""
++    authors_json = json.dumps(
++        [
++            {"user_id": 100, "affiliations": [{"ror_id": "xyz789", "name": "Uni X"}], "legacy_affiliations": []},
++        ]
++    )
++    row = {"article_metadata_version.fields": None, "article_metadata_version.authors": authors_json}
++    result = Project._extract_authors_from_item(row)
++    assert len(result) == 1
++    assert result[0]["affiliations"] == [{"ror_id": "xyz789", "name": "Uni X"}]
++
++
++def test_extract_authors_from_item_empty_row():
++    """Both fields and authors are empty — returns empty list."""
++    row = {"article_metadata_version.fields": None, "article_metadata_version.authors": None}
++    assert Project._extract_authors_from_item(row) == []
++
++
++def test_extract_authors_from_item_empty_itbm_authors_is_authoritative():
++    """An empty ITBM authors list is authoritative — legacy authors column must NOT be used as fallback."""
++    fields_blob = json.dumps(
++        {
++            "3": {
++                "field_name": "authors",
++                "field_type": "person_list",
++                "internal_type": "core",
++                "value": [],
++            }
++        }
++    )
++    # Legacy column has authors, but the ITBM blob says empty — ITBM wins.
++    legacy_authors = json.dumps([{"user_id": 100, "affiliations": [{"ror_id": "xyz", "name": "Uni"}]}])
++    row = {"article_metadata_version.fields": fields_blob, "article_metadata_version.authors": legacy_authors}
++    assert Project._extract_authors_from_item(row) == []
++
++
++def test_get_item_affiliations_deduplicates_and_includes_legacy(mocker):
++    """get_item_affiliations deduplicates by ror_id and includes legacy_affiliations."""
++    # Two items: one ITBM with an affiliation, one legacy with the same + a legacy_affiliations entry.
++    itbm_row = {
++        "article_metadata_version.fields": json.dumps(
++            {
++                "3": {
++                    "field_name": "authors",
++                    "field_type": "person_list",
++                    "internal_type": "core",
++                    "value": [{"name": "Alice", "affiliations": [{"ror_id": "aaa111", "name": "Uni A"}]}],
++                }
++            }
++        ),
++        "article_metadata_version.authors": None,
++    }
++    legacy_row = {
++        "article_metadata_version.fields": None,
++        "article_metadata_version.authors": json.dumps(
++            [
++                {
++                    "user_id": 200,
++                    "affiliations": [{"ror_id": "aaa111", "name": "Uni A"}],  # duplicate
++                    "legacy_affiliations": [{"ror_id": "bbb222", "name": "Uni B"}],
++                }
++            ]
++        ),
++    }
++    mocker.patch(
++        "replication.indexers.project.project.get_multiple_by_id",
++        return_value=[itbm_row, legacy_row],
++    )
++    result = Project.get_item_affiliations(1234)
++
++    # aaa111 appears in both items — deduplicated to one entry. bbb222 from legacy_affiliations included.
++    assert len(result) == 2
++    ror_ids = {a["id"] for a in result}
++    assert ror_ids == {"aaa111", "bbb222"}
++
++
++def test_get_item_affiliations_skips_id_only_authors(mocker):
++    """Legacy items can store authors as plain IDs (e.g. [1000015]) — these are skipped without error."""
++    row = {
++        "article_metadata_version.fields": None,
++        "article_metadata_version.authors": json.dumps(
++            [1000015, {"user_id": 200, "affiliations": [{"ror_id": "abc", "name": "Uni"}]}]
++        ),
++    }
++    mocker.patch(
++        "replication.indexers.project.project.get_multiple_by_id",
++        return_value=[row],
++    )
++    result = Project.get_item_affiliations(1234)
++    assert result == [{"id": "abc", "title": "Uni"}]
+diff --git a/tests/replication/public_project/test_public_project.py b/tests/replication/public_project/test_public_project.py
+index 09e5b8f..449903d 100644
+--- a/tests/replication/public_project/test_public_project.py
++++ b/tests/replication/public_project/test_public_project.py
+@@ -8,6 +8,17 @@ from replication.indexers.lib.db_api import DbApi
+ from replication.indexers.lib.es_api import EsApi
+ from tests.replication.public_project import data
+ 
++# Mock rows for PROJECT_ITEMS_AUTHORS_QUERY — one legacy item whose author carries the same
++# affiliation that previously came from user_profile.affiliations.
++_ITEM_AUTHORS_ROWS = [
++    {
++        "article_metadata_version.authors": json.dumps(
++            [{"user_id": 2000078, "affiliations": [{"ror_id": "04abc1234", "name": "Second Aff"}]}]
++        ),
++        "article_metadata_version.fields": None,
++    }
++]
++
+ 
+ @pytest.fixture(autouse=True)
+ def es_delete(mocker):
+@@ -53,6 +64,7 @@ def test_public_project_insert(mocker):
+         "get_multiple",
+         side_effect=[
+             authors_with_aff_db_data,
++            _ITEM_AUTHORS_ROWS,
+             funding_data,
+             associated_groups,
+             content_groups,
+@@ -126,6 +138,7 @@ def test_public_project_update(mocker):
+         "get_multiple",
+         side_effect=[
+             authors_with_aff_db_data,
++            _ITEM_AUTHORS_ROWS,
+             funding_data,
+             associated_groups,
+             content_groups,
+@@ -319,6 +332,7 @@ def test_public_project_insert_on_different_index(mocker):
+         "get_multiple",
+         side_effect=[
+             authors_with_aff_db_data,
++            _ITEM_AUTHORS_ROWS,
+             funding_data,
+             associated_groups,
+             content_groups,
+@@ -392,6 +406,7 @@ def test_public_project_reset(mocker):
+         "get_multiple",
+         side_effect=[
+             authors_with_aff_db_data,
++            _ITEM_AUTHORS_ROWS,
+             funding_data,
+             associated_groups,
+             content_groups,
+@@ -465,6 +480,7 @@ def test_public_project_insert_with_private(mocker):
+         "get_multiple",
+         side_effect=[
+             authors_with_aff_db_data,
++            _ITEM_AUTHORS_ROWS,
+             funding_data,
+             associated_groups,
+             content_groups,
+@@ -534,6 +550,7 @@ def test_public_project_non_latin_group_name(mocker):
+         "get_multiple",
+         side_effect=[
+             authors_with_aff_db_data,
++            _ITEM_AUTHORS_ROWS,
+             funding_data,
+             associated_groups,
+             content_groups,
+@@ -588,6 +605,7 @@ def test_public_project_digit_group_name(mocker):
+         "get_multiple",
+         side_effect=[
+             authors_with_aff_db_data,
++            _ITEM_AUTHORS_ROWS,
+             funding_data,
+             associated_groups,
+             content_groups,
+@@ -642,6 +660,7 @@ def test_public_project_special_char_group_name(mocker):
+         "get_multiple",
+         side_effect=[
+             authors_with_aff_db_data,
++            _ITEM_AUTHORS_ROWS,
+             funding_data,
+             associated_groups,
+             content_groups,

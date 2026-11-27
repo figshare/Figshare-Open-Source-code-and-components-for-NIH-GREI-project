@@ -1,0 +1,2956 @@
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.module.css b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.module.css
+new file mode 100644
+index 000000000..dfbcdbd37
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.module.css
+@@ -0,0 +1,17 @@
++.overlay {
++  border-radius: var(--gridSize);
++}
++
++.fields {
++  display: flex;
++  flex-direction: column;
++  gap: calc(4 * var(--gridSize));
++
++  width: 100%;
++  align-self: stretch;
++}
++
++/* Override FCL TextInput fixed width (360px) to stretch full width */
++.fields > div > div {
++  width: 100% !important;
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx
+new file mode 100644
+index 000000000..f06059e67
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx
+@@ -0,0 +1,210 @@
++import React from "react";
++import { render, cleanup, screen, waitFor } from "@testing-library/react";
++import userEvent from "@testing-library/user-event";
++import { TestScope } from "types/testing";
++
++import { AffiliationOverlay } from "./AffiliationOverlay";
++
++
++// Overlay renders its children directly so tests can interact with inner content
++jest.mock("@digital-science/figshare-fcl/overlay", () => {
++  return {
++    Overlay: ({ children, isVisible }: { children: React.ReactNode; isVisible: boolean }) =>
++      isVisible ? <div data-testid="overlay">{children}</div> : null,
++    OverlayHeader: ({ title }: { title: string }) => <div data-testid="overlay-header">{title}</div>,
++    OverlayContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
++    OverlayFooter: Object.assign(
++      ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
++      { Primary: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }
++    ),
++  };
++});
++
++// Button renders as a native button so clicks are testable
++function MockButton({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
++  return <button type="button" onClick={onClick}>{children}</button>;
++}
++MockButton.Label = ({ children }: { children: React.ReactNode }) => <span>{children}</span>;
++MockButton.Icon = ({ children }: { children: React.ReactNode }) => <span>{children}</span>;
++jest.mock("shared/ui/latest/Button", () => {
++  return { Button: MockButton };
++});
++
++// TextInput renders as a native input; forward name/disabled/value/onChange
++jest.mock("@digital-science/figshare-fcl/input/text", () => {
++  return {
++    __esModule: true,
++    default: (props: {
++      disabled?: boolean;
++      value?: string;
++      name?: string;
++      onChange?: React.ChangeEventHandler<HTMLInputElement>;
++      placeholder?: string;
++      id?: string;
++    }) => (
++      <input
++        disabled={props.disabled}
++        id={props.id}
++        name={props.name}
++        placeholder={props.placeholder}
++        type="text"
++        value={props.value}
++        onChange={props.onChange}
++      />
++    ),
++  };
++});
++
++
++describe("AffiliationOverlay", () => {
++  function setup() {
++    const scope: TestScope = {
++      user: userEvent.setup(),
++      props: {
++        isVisible: true,
++        isEditing: false,
++        affiliation: undefined,
++        onSave: jest.fn(),
++        onClose: jest.fn(),
++      },
++    };
++
++    scope.run = () => {
++      scope.wrapper = render(<AffiliationOverlay {...scope.props} />);
++    };
++
++    return scope;
++  }
++
++  function teardown() {
++    cleanup();
++  }
++
++  it("renders correctly when isEditing is false — shows \"Add affiliation\" title and button", () => {
++    const scope = setup();
++    scope.run();
++
++    expect(screen.getByTestId("overlay-header")).toHaveTextContent("Add affiliation");
++    // The submit button label should say "Add affiliation", not "Save affiliation"
++    expect(screen.getByRole("button", { name: "Add affiliation" })).toBeInTheDocument();
++    expect(screen.queryByRole("button", { name: "Save affiliation" })).not.toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders correctly when isEditing is true — shows \"Edit affiliation\" title and \"Save affiliation\" button", () => {
++    const scope = setup();
++    scope.props.isEditing = true;
++    scope.props.affiliation = { name: "MIT", url: "https://mit.edu" };
++    scope.run();
++
++    expect(screen.getByTestId("overlay-header")).toHaveTextContent("Edit affiliation");
++    expect(screen.getByRole("button", { name: "Save affiliation" })).toBeInTheDocument();
++    expect(screen.queryByRole("button", { name: "Add affiliation" })).not.toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders correctly when affiliation has a rorId — name field is disabled", () => {
++    const scope = setup();
++    scope.props.affiliation = { rorId: "01abc123", name: "MIT", url: "https://mit.edu" };
++    scope.run();
++
++    // The first input is the name field
++    const inputs = screen.getAllByRole("textbox");
++    expect(inputs[0]).toBeDisabled();
++
++    teardown();
++  });
++
++  it("renders correctly when affiliation has no rorId — name field is editable", () => {
++    const scope = setup();
++    scope.props.affiliation = { name: "My Org", url: "" };
++    scope.run();
++
++    const inputs = screen.getAllByRole("textbox");
++    expect(inputs[0]).not.toBeDisabled();
++
++    teardown();
++  });
++
++  it("shows an error when saving with an empty name", async() => {
++    const scope = setup();
++    scope.run();
++
++    await scope.user.click(screen.getByRole("button", { name: "Add affiliation" }));
++
++    await waitFor(() => {
++      expect(screen.getByText("Affiliation name is required")).toBeInTheDocument();
++    });
++    expect(scope.props.onSave).not.toHaveBeenCalled();
++
++    teardown();
++  });
++
++  it("calls onSave with trimmed values when name is provided", async() => {
++    const scope = setup();
++    scope.run();
++
++    const [nameInput, urlInput] = screen.getAllByRole("textbox");
++    await scope.user.type(nameInput, "  Harvard  ");
++    await scope.user.type(urlInput, "  https://harvard.edu  ");
++
++    await scope.user.click(screen.getByRole("button", { name: "Add affiliation" }));
++
++    await waitFor(() => {
++      expect(scope.props.onSave).toHaveBeenCalledWith({
++        rorId: "",
++        name: "Harvard",
++        url: "https://harvard.edu",
++      });
++    });
++
++    teardown();
++  });
++
++  it("shows an error when saving with an invalid URL", async() => {
++    const scope = setup();
++    scope.run();
++
++    const [nameInput, urlInput] = screen.getAllByRole("textbox");
++    await scope.user.type(nameInput, "My Org");
++    await scope.user.type(urlInput, "not-a-valid-url");
++
++    await scope.user.click(screen.getByRole("button", { name: "Add affiliation" }));
++
++    await waitFor(() => {
++      expect(screen.getByText("Please enter a valid URL")).toBeInTheDocument();
++    });
++    expect(scope.props.onSave).not.toHaveBeenCalled();
++
++    teardown();
++  });
++
++  it("allows saving with an empty URL — URL is optional", async() => {
++    const scope = setup();
++    scope.run();
++
++    const [nameInput] = screen.getAllByRole("textbox");
++    await scope.user.type(nameInput, "My Org");
++
++    await scope.user.click(screen.getByRole("button", { name: "Add affiliation" }));
++
++    await waitFor(() => {
++      expect(scope.props.onSave).toHaveBeenCalledWith({ rorId: "", name: "My Org", url: "" });
++    });
++
++    teardown();
++  });
++
++  it("calls onClose when the Cancel button is clicked", async() => {
++    const scope = setup();
++    scope.run();
++
++    await scope.user.click(screen.getByRole("button", { name: "Cancel" }));
++
++    expect(scope.props.onClose).toHaveBeenCalledTimes(1);
++
++    teardown();
++  });
++});
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx
+new file mode 100644
+index 000000000..ab2ddcc9b
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx
+@@ -0,0 +1,172 @@
++import React, { useCallback, useMemo, useEffect } from "react";
++import { Overlay, OverlayHeader, OverlayContent, OverlayFooter } from "@digital-science/figshare-fcl/overlay";
++import { useForm, Field, Form, FormContext, TextFieldComponent } from "shared/ui/forms";
++import getIn from "utils/getIn";
++import { Button } from "shared/ui/latest/Button";
++import { isValidUrl } from "utils/validation";
++
++import styles from "./AffiliationOverlay.module.css";
++
++
++interface Affiliation {
++  rorId?: string;
++  name: string;
++  url: string;
++}
++
++interface AffiliationOverlayProps {
++  isVisible: boolean;
++  isEditing?: boolean;
++  affiliation?: Affiliation;
++  onSave: (affiliation: Affiliation) => void;
++  onClose: () => void;
++}
++
++// Schema defines the form fields, their initial values, labels, and required status
++const AFFILIATION_FORM_SCHEMA = {
++  id: "edit-affiliation",
++  namespace: "affiliations",
++  order: ["name", "url"],
++  fields: {
++    name: {
++      id: "name",
++      value: "",
++      initial: "",
++      disabled: false,
++      required: true,
++      settings: { label: "Affiliation name" },
++    },
++    url: {
++      id: "url",
++      value: "",
++      initial: "",
++      disabled: false,
++      required: false,
++      settings: { label: "URL" },
++    },
++  },
++};
++
++// Validation rules: name is required, url must be valid if provided
++const AFFILIATION_FORM_VALIDATION = {
++  name: [{
++    at: ["blur:touched", "submit"],
++    type: "compoundValidation",
++    withResults: true,
++    fn: (value: string) => {
++      if (!value?.trim()) {
++        return { valid: false, message: "Affiliation name is required" };
++      }
++
++      return undefined;
++    },
++  }],
++  url: [{
++    at: ["blur:touched", "submit"],
++    type: "compoundValidation",
++    withResults: true,
++    fn: (value: string) => {
++      const trimmed = value?.trim();
++
++      if (trimmed && !isValidUrl(trimmed)) {
++        return { valid: false, message: "Please enter a valid URL" };
++      }
++
++      return undefined;
++    },
++  }],
++};
++
++
++export function AffiliationOverlay({
++  isVisible,
++  isEditing = false,
++  affiliation,
++  onSave,
++  onClose,
++}: AffiliationOverlayProps) {
++  // Seed form data from the affiliation prop when the overlay opens
++  const initialFormData = useMemo(() => {
++    return { name: affiliation?.name || "", url: affiliation?.url || "" };
++  }, [affiliation?.name, affiliation?.url]);
++
++  const formMeta = useMemo(() => {
++    return {};
++  }, []);
++
++  const form = useForm({
++    schema: AFFILIATION_FORM_SCHEMA,
++    validation: AFFILIATION_FORM_VALIDATION,
++    data: initialFormData,
++    meta: formMeta,
++    persist: false,
++    sync: true,
++  });
++
++  // Reset the form when the overlay opens to reflect the current affiliation
++  useEffect(() => {
++    if (isVisible) {
++      form.resetForm({ data: { name: affiliation?.name || "", url: affiliation?.url || "" } });
++    }
++  }, [isVisible]); // eslint-disable-line
++
++  const handleSave = useCallback(() => {
++    const { valid } = form.validateForm({ at: "submit" });
++
++    if (!valid) {
++      return;
++    }
++
++    const nameValue = getIn(form, "state.fields.name.value", "").trim();
++    const urlValue = getIn(form, "state.fields.url.value", "").trim();
++
++    onSave({
++      rorId: affiliation?.rorId || "",
++      name: nameValue,
++      url: urlValue,
++    });
++  }, [form, affiliation, onSave]);
++
++  // Disable the name field when editing a ROR-sourced affiliation
++  const isNameDisabled = !!affiliation?.rorId;
++
++  return (
++    <Overlay
++      background="primary"
++      className={styles.overlay}
++      id="edit-affiliation-overlay"
++      isVisible={isVisible}
++      onClose={onClose}
++    >
++      <OverlayHeader title={isEditing ? "Edit affiliation" : "Add affiliation"} />
++      <OverlayContent>
++        <FormContext.Provider value={form}>
++          <Form id={form.state.formId}>
++            <div className={styles.fields}>
++              <Field
++                name="name"
++                required={true}
++                validateOnBlur={true}
++                component={TextFieldComponent}
++                disabled={isNameDisabled}
++              />
++              <Field
++                name="url"
++                validateOnBlur={true}
++                component={TextFieldComponent}
++              />
++            </div>
++          </Form>
++        </FormContext.Provider>
++      </OverlayContent>
++      <OverlayFooter>
++        <OverlayFooter.Primary>
++          <Button kind="secondary" em="low" onClick={onClose}><Button.Label>Cancel</Button.Label></Button>
++          <Button kind="primary" onClick={handleSave}>
++            <Button.Label>{isEditing ? "Save affiliation" : "Add affiliation"}</Button.Label>
++          </Button>
++        </OverlayFooter.Primary>
++      </OverlayFooter>
++    </Overlay>
++  );
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationRow/AffiliationRow.module.css b/src/pages/account/profileEdit/components/affiliations/AffiliationRow/AffiliationRow.module.css
+new file mode 100644
+index 000000000..712edb5a5
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationRow/AffiliationRow.module.css
+@@ -0,0 +1,77 @@
++.row {
++  display: flex;
++  flex-direction: row;
++  align-items: center;
++
++  box-sizing: border-box;
++
++  border: 1px solid var(--color-border-primary);
++  border-radius: 8px;
++}
++
++.reorder {
++  display: flex;
++  flex-direction: row;
++  align-items: center;
++  flex-shrink: 0;
++}
++
++.dragHandle {
++  display: flex;
++  align-items: center;
++
++  cursor: grab;
++}
++
++.content {
++  display: flex;
++  flex-direction: column;
++
++  min-width: 0;
++  padding: calc(2 * var(--gridSize)) calc(3 * var(--gridSize));
++  align-items: flex-start;
++  gap: calc(0.5 * var(--gridSize));
++  flex: 1;
++}
++
++.name {
++  font-family: var(--fontFamily);
++  font-size: var(--typography-M-fontSize);
++  font-weight: 400;
++  line-height: var(--typography-M-lineHeight);
++
++  color: var(--color-typography-primary);
++}
++
++.link {
++  font-family: var(--fontFamily);
++  font-size: var(--typography-S-fontSize);
++  font-weight: 400;
++  line-height: var(--typography-S-lineHeight);
++
++  display: flex;
++
++  text-decoration: underline;
++
++  color: var(--color-branding-figRed);
++  align-items: center;
++  gap: calc(0.5 * var(--gridSize));
++}
++
++.link:hover,
++.link:focus {
++  color: var(--color-button-primary-background_hover);
++}
++
++.linkIcon {
++  width: calc(2 * var(--gridSize));
++  height: calc(2 * var(--gridSize));
++  fill: currentcolor;
++}
++
++.actions {
++  display: flex;
++  flex-direction: row;
++  align-items: center;
++  flex-shrink: 0;
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationRow/AffiliationRow.test.tsx b/src/pages/account/profileEdit/components/affiliations/AffiliationRow/AffiliationRow.test.tsx
+new file mode 100644
+index 000000000..d02603eaf
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationRow/AffiliationRow.test.tsx
+@@ -0,0 +1,182 @@
++import React from "react";
++import { render, cleanup, screen, fireEvent } from "@testing-library/react";
++
++import { AffiliationRow } from "./AffiliationRow";
++
++
++// Button renders as a native button that forwards onClick/disabled and renders
++// children. Button.Icon and Button.Label are pass-through spans so their
++// text content contributes to the accessible button name.
++jest.mock("shared/ui/latest/Button", () => {
++  const Button = ({
++    children,
++    onClick,
++    disabled,
++  }: {
++    children: React.ReactNode;
++    onClick?: () => void;
++    disabled?: boolean;
++  }) => (
++    <button type="button" disabled={disabled} onClick={onClick}>
++      {children}
++    </button>
++  );
++
++  Button.Icon = ({ children }: { children: React.ReactNode }) => <span>{children}</span>;
++  Button.Label = ({ children }: { children: React.ReactNode }) => <span>{children}</span>;
++
++  return { Button };
++});
++
++// All FCL SVG icon imports render as a plain span so they don't require
++// the real SVG assets in the test environment.
++jest.mock("@digital-science/figshare-fcl/icons/react/DragDrop", () => {
++  return {
++    __esModule: true,
++    default: () => <span>icon</span>,
++  };
++});
++
++jest.mock("@digital-science/figshare-fcl/icons/react/ChevronUp", () => {
++  return {
++    __esModule: true,
++    default: () => <span>icon</span>,
++  };
++});
++
++jest.mock("@digital-science/figshare-fcl/icons/react/ChevronDown", () => {
++  return {
++    __esModule: true,
++    default: () => <span>icon</span>,
++  };
++});
++
++jest.mock("@digital-science/figshare-fcl/icons/react/Edit", () => {
++  return {
++    __esModule: true,
++    default: () => <span>icon</span>,
++  };
++});
++
++jest.mock("@digital-science/figshare-fcl/icons/react/Delete", () => {
++  return {
++    __esModule: true,
++    default: () => <span>icon</span>,
++  };
++});
++
++jest.mock("@digital-science/figshare-fcl/icons/react/GoToLink", () => {
++  return {
++    __esModule: true,
++    default: () => <span>icon</span>,
++  };
++});
++
++
++describe("AffiliationRow", () => {
++  // Default props that satisfy the interface; individual tests override as needed
++  const defaultProps = {
++    affiliation: { name: "MIT", url: "https://mit.edu" },
++    reorderable: true,
++    isFirst: false,
++    isLast: false,
++    onEdit: jest.fn(),
++    onDelete: jest.fn(),
++    onMoveUp: jest.fn(),
++    onMoveDown: jest.fn(),
++  };
++
++  function teardown() {
++    cleanup();
++  }
++
++  it("renders affiliation name", () => {
++    render(<AffiliationRow {...defaultProps} />);
++
++    expect(screen.getByText("MIT")).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders URL as a link when url is present", () => {
++    render(<AffiliationRow {...defaultProps} />);
++
++    const link = screen.getByRole("link");
++    expect(link).toHaveAttribute("href", "https://mit.edu");
++
++    teardown();
++  });
++
++  it("does not render a link when url is empty", () => {
++    render(
++      <AffiliationRow
++        {...defaultProps}
++        affiliation={ { name: "MIT", url: "" } }
++      />
++    );
++
++    expect(screen.queryByRole("link")).not.toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("calls onEdit when the Edit button is clicked", () => {
++    const onEdit = jest.fn();
++    render(<AffiliationRow {...defaultProps} onEdit={onEdit} />);
++
++    fireEvent.click(screen.getByRole("button", { name: /Edit/i }));
++
++    expect(onEdit).toHaveBeenCalledTimes(1);
++
++    teardown();
++  });
++
++  it("calls onDelete when the Delete button is clicked", () => {
++    const onDelete = jest.fn();
++    render(<AffiliationRow {...defaultProps} onDelete={onDelete} />);
++
++    fireEvent.click(screen.getByRole("button", { name: /Delete/i }));
++
++    expect(onDelete).toHaveBeenCalledTimes(1);
++
++    teardown();
++  });
++
++  it("calls onMoveUp when the Move up button is clicked", () => {
++    const onMoveUp = jest.fn();
++    render(<AffiliationRow {...defaultProps} onMoveUp={onMoveUp} />);
++
++    fireEvent.click(screen.getByRole("button", { name: /Move up/i }));
++
++    expect(onMoveUp).toHaveBeenCalledTimes(1);
++
++    teardown();
++  });
++
++  it("calls onMoveDown when the Move down button is clicked", () => {
++    const onMoveDown = jest.fn();
++    render(<AffiliationRow {...defaultProps} onMoveDown={onMoveDown} />);
++
++    fireEvent.click(screen.getByRole("button", { name: /Move down/i }));
++
++    expect(onMoveDown).toHaveBeenCalledTimes(1);
++
++    teardown();
++  });
++
++  it("disables the Move up button when isFirst=true", () => {
++    render(<AffiliationRow {...defaultProps} isFirst={true} />);
++
++    expect(screen.getByRole("button", { name: /Move up/i })).toBeDisabled();
++
++    teardown();
++  });
++
++  it("disables the Move down button when isLast=true", () => {
++    render(<AffiliationRow {...defaultProps} isLast={true} />);
++
++    expect(screen.getByRole("button", { name: /Move down/i })).toBeDisabled();
++
++    teardown();
++  });
++});
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationRow/AffiliationRow.tsx b/src/pages/account/profileEdit/components/affiliations/AffiliationRow/AffiliationRow.tsx
+new file mode 100644
+index 000000000..cdfe949e4
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationRow/AffiliationRow.tsx
+@@ -0,0 +1,72 @@
++import React from "react";
++import { Button } from "shared/ui/latest/Button";
++import DragAndDropSvg from "@digital-science/figshare-fcl/icons/react/DragDrop";
++import ChevronUpSvg from "@digital-science/figshare-fcl/icons/react/ChevronUp";
++import ChevronDownSvg from "@digital-science/figshare-fcl/icons/react/ChevronDown";
++import EditSvg from "@digital-science/figshare-fcl/icons/react/Edit";
++import DeleteSvg from "@digital-science/figshare-fcl/icons/react/Delete";
++import GoToLinkSvg from "@digital-science/figshare-fcl/icons/react/GoToLink";
++
++import styles from "./AffiliationRow.module.css";
++
++
++interface Affiliation {
++  rorId?: string;
++  name: string;
++  url?: string;
++}
++
++interface AffiliationRowProps {
++  affiliation: Affiliation;
++  reorderable: boolean;
++  isFirst: boolean;
++  isLast: boolean;
++  dragHandleProps?: any;
++  onMoveUp?: () => void;
++  onMoveDown?: () => void;
++  onEdit?: () => void;
++  onDelete?: () => void;
++}
++
++
++export function AffiliationRow({ affiliation, reorderable, isFirst, isLast, dragHandleProps, onMoveUp, onMoveDown, onEdit, onDelete }: AffiliationRowProps) {
++  return (
++    <div className={styles.row}>
++      <div className={styles.reorder}>
++        <div {...dragHandleProps} className={styles.dragHandle}>
++          <Button kind="tertiary" em={reorderable ? "high" : "low"} span="icon" disabled={!reorderable} data-clickable={false} tabIndex={-1}>
++            <Button.Icon><DragAndDropSvg /></Button.Icon>
++            <Button.Label hidden={true}>Drag</Button.Label>
++          </Button>
++        </div>
++        <Button kind="tertiary" em={isFirst ? "low" : "high"} span="icon" disabled={isFirst} onClick={onMoveUp}>
++          <Button.Icon><ChevronUpSvg /></Button.Icon>
++          <Button.Label hidden={true}>Move up</Button.Label>
++        </Button>
++        <Button kind="tertiary" em={isLast ? "low" : "high"} span="icon" disabled={isLast} onClick={onMoveDown}>
++          <Button.Icon><ChevronDownSvg /></Button.Icon>
++          <Button.Label hidden={true}>Move down</Button.Label>
++        </Button>
++      </div>
++      <div className={styles.content}>
++        <span className={styles.name}>{affiliation.name}</span>
++        {affiliation.url && (
++          <a className={styles.link} href={affiliation.url} rel="noopener noreferrer" target="_blank">
++            <span>{affiliation.url}</span>
++            <GoToLinkSvg className={styles.linkIcon} />
++          </a>
++        )}
++      </div>
++      <div className={styles.actions}>
++        <Button tooltip="Edit affiliation" kind="tertiary" em="low" span="icon" onClick={onEdit}>
++          <Button.Icon><EditSvg /></Button.Icon>
++          <Button.Label hidden={true}>Edit</Button.Label>
++        </Button>
++        <Button tooltip="Remove affiliation" kind="tertiary" em="danger" span="icon" onClick={onDelete}>
++          <Button.Icon><DeleteSvg /></Button.Icon>
++          <Button.Label hidden={true}>Delete</Button.Label>
++        </Button>
++      </div>
++    </div>
++  );
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/Affiliations.gql b/src/pages/account/profileEdit/components/affiliations/Affiliations.gql
+new file mode 100644
+index 000000000..cd8dab9db
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/Affiliations.gql
+@@ -0,0 +1,10 @@
++query searchRorOrganizations($searchTerm: String!, $pageSize: Int, $cursor: String) {
++  searchRorOrganizations(searchTerm: $searchTerm, pageSize: $pageSize, cursor: $cursor) {
++    count
++    cursor
++    elements {
++      rorId
++      name
++    }
++  }
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/Affiliations.module.css b/src/pages/account/profileEdit/components/affiliations/Affiliations.module.css
+new file mode 100644
+index 000000000..9673cf8e8
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/Affiliations.module.css
+@@ -0,0 +1,46 @@
++.container {
++  width: 100%;
++}
++
++/* Duplicate affiliation alert */
++.duplicateAlert {
++  margin-bottom: calc(2 * var(--gridSize));
++}
++
++.duplicateAlert [data-part="alert-icon-margin"] {
++  margin-top: auto;
++  margin-bottom: auto;
++}
++
++.list {
++  display: flex;
++  flex-direction: column;
++  gap: var(--gridSize);
++
++  margin-bottom: calc(3 * var(--gridSize));
++}
++
++.searchColumn {
++  display: grid;
++  grid-template-columns: 1fr auto;
++  gap: 8px;
++
++  width: 100%;
++}
++
++.searchColumn [data-scope="search-input"] {
++  grid-column: 1;
++}
++
++/* Override ContentBox defaults for dropdowns.
++   grid-column: 1 keeps the dropdown aligned with the search input column only. */
++.searchColumn > [class*="box"] {
++  grid-column: 1;
++
++  min-height: unset;
++  margin-top: 0;
++  padding: var(--gridSize) 0;
++
++  border-radius: var(--gridSize);
++  box-shadow: 2px 2px 7px rgba(0, 0, 0, 0.14);
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx b/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx
+new file mode 100644
+index 000000000..8dc0fb2ab
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx
+@@ -0,0 +1,581 @@
++import React from "react";
++import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
++
++import { AffiliationsComponent } from "./Affiliations";
++
++
++// useRorSearch is stubbed so tests never hit a real network call
++jest.mock("./useRorSearch", () => {
++  return {
++    useRorSearch: () => {
++      return {
++        searchTerm: "",
++        setSearchTerm: jest.fn(),
++        loading: false,
++        error: undefined,
++        results: [],
++        hasMore: false,
++        handleLoadMore: jest.fn(),
++      };
++    },
++  };
++});
++
++// react-beautiful-dnd wrappers are pass-throughs — they just render their
++// children so the draggable rows appear in the DOM without needing a real DnD context
++jest.mock("react-beautiful-dnd", () => {
++  return {
++    DragDropContext: ({ children }: { children: React.ReactNode }) => <>{children}</>,
++    Droppable: ({ children }: { children: (provided: any) => React.ReactNode }) =>
++      <>{children({ innerRef: jest.fn(), droppableProps: {}, placeholder: null })}</>,
++    Draggable: ({ children }: { children: (provided: any) => React.ReactNode }) =>
++      <>{children({ innerRef: jest.fn(), draggableProps: {}, dragHandleProps: {} })}</>,
++  };
++});
++
++// SearchDropdown stub exposes onSelect and onAddManually buttons
++function MockSearchDropdown({ onSelect, onAddManually }: { onSelect: (org: any) => void; onAddManually: () => void }) {
++  return (
++    <div data-testid="search-dropdown">
++      <button type="button" onClick={() => onSelect({ rorId: "sel-ror", name: "Selected Org" })}>Select org</button>
++      <button type="button" onClick={onAddManually}>Add manually</button>
++    </div>
++  );
++}
++jest.mock("./SearchDropdown/SearchDropdown", () => {
++  return { SearchDropdown: (props: any) => <MockSearchDropdown {...props} /> };
++});
++
++// AffiliationOverlay stub — always renders, exposes isVisible/isEditing as data attrs
++function MockOverlay({ isVisible, isEditing, onSave }: { isVisible: boolean; isEditing: boolean; onSave: (a: any) => void }) {
++  return (
++    <div data-testid="affiliation-overlay" data-is-visible={String(isVisible)} data-is-editing={String(isEditing)}>
++      <button type="button" onClick={() => onSave({ rorId: "test-ror", name: "Test Org", url: "" })}>Save overlay</button>
++    </div>
++  );
++}
++jest.mock("./AffiliationOverlay/AffiliationOverlay", () => {
++  return { AffiliationOverlay: (props: any) => <MockOverlay {...props} /> };
++});
++
++// AffiliationRow stub — exposes name + all action buttons
++function MockRow({ affiliation, onEdit, onDelete, onMoveUp, onMoveDown }: any) {
++  return (
++    <div data-testid="affiliation-row">
++      <span>{affiliation.name}</span>
++      <button type="button" onClick={onEdit}>Edit row</button>
++      <button type="button" onClick={onDelete}>Delete row</button>
++      <button type="button" onClick={onMoveUp}>Move up</button>
++      <button type="button" onClick={onMoveDown}>Move down</button>
++    </div>
++  );
++}
++jest.mock("./AffiliationRow/AffiliationRow", () => {
++  return { AffiliationRow: (props: any) => <MockRow {...props} /> };
++});
++
++// AffiliationsList is tested separately — stub to a sentinel element
++jest.mock("./AffiliationsList/AffiliationsList", () => {
++  return { AffiliationsList: () => <div data-testid="affiliations-list" /> };
++});
++
++// Latest Button renders as a native button so click assertions work
++function MockButton({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
++  return <button type="button" onClick={onClick}>{children}</button>;
++}
++MockButton.Label = ({ children }: { children: React.ReactNode }) => <span>{children}</span>;
++MockButton.Icon = ({ children }: { children: React.ReactNode }) => <span>{children}</span>;
++jest.mock("shared/ui/latest/Button", () => {
++  return { Button: MockButton };
++});
++
++// Plus icon — no SVG assets needed in tests
++jest.mock("@digital-science/figshare-fcl/icons/react/Plus", () => {
++  return {
++    __esModule: true,
++    default: () => null,
++  };
++});
++
++// SearchInput renders as a plain input for value/onChange assertions
++jest.mock("shared/ui/latest/SearchInput", () => {
++  return {
++    SearchInput: (props: React.InputHTMLAttributes<HTMLInputElement>) => (
++      <input data-testid="search-input" {...props} />
++    ),
++  };
++});
++
++// Alert renders a sentinel element plus a close button to test dismissal
++jest.mock("shared/ui/latest/Alert", () => {
++  return {
++    Alert: ({ onClose }: { onClose: () => void }) => (
++      <div data-testid="duplicate-alert">
++        <button type="button" onClick={onClose}>Close alert</button>
++      </div>
++    ),
++  };
++});
++
++
++describe("AffiliationsComponent", () => {
++  // Common default props for non-locked, empty-state usage
++  const defaultProps = {
++    name: "affiliations",
++    updateField: jest.fn(),
++    value: [],
++    locked: false,
++  };
++
++  function teardown() {
++    cleanup();
++  }
++
++  it("renders the \"Add another affiliation\" button when not searching", () => {
++    render(<AffiliationsComponent {...defaultProps} />);
++
++    expect(
++      screen.getByRole("button", { name: /Add another affiliation/i })
++    ).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders the locked view (AffiliationsList) when locked=true", () => {
++    render(<AffiliationsComponent {...defaultProps} locked={true} />);
++
++    expect(screen.getByTestId("affiliations-list")).toBeInTheDocument();
++    // The editable controls must not be present in locked mode
++    expect(
++      screen.queryByRole("button", { name: /Add another affiliation/i })
++    ).not.toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("syncs value prop into local state on mount", () => {
++    const value = [{ name: "MIT", url: "https://mit.edu" }];
++
++    render(
++      <AffiliationsComponent
++        {...defaultProps}
++        value={value}
++      />
++    );
++
++    // The row for MIT should appear, confirming local state was set from the value prop
++    expect(screen.getByText("MIT")).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("shows the search UI when \"Add another affiliation\" is clicked", async() => {
++    render(<AffiliationsComponent {...defaultProps} />);
++
++    fireEvent.click(screen.getByRole("button", { name: /Add another affiliation/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("search-input")).toBeInTheDocument();
++      expect(screen.getByTestId("search-dropdown")).toBeInTheDocument();
++    });
++
++    // The add button should no longer be visible once search mode is active
++    expect(
++      screen.queryByRole("button", { name: /Add another affiliation/i })
++    ).not.toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders an affiliation row for each affiliation", () => {
++    const value = [
++      { name: "MIT", url: "https://mit.edu" },
++      { name: "Harvard", url: "https://harvard.edu" },
++    ];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} />
++    );
++
++    const rows = screen.getAllByTestId("affiliation-row");
++    expect(rows).toHaveLength(2);
++    expect(screen.getByText("MIT")).toBeInTheDocument();
++    expect(screen.getByText("Harvard")).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("calls updateField when an affiliation is deleted", async() => {
++    const updateField = jest.fn();
++    const value = [
++      { name: "MIT", url: "https://mit.edu" },
++      { name: "Harvard", url: "https://harvard.edu" },
++    ];
++
++    render(
++      <AffiliationsComponent
++        {...defaultProps}
++        value={value}
++        updateField={updateField}
++      />
++    );
++
++    // Click "Delete row" on the first affiliation row
++    const deleteButtons = screen.getAllByRole("button", { name: /Delete row/i });
++    fireEvent.click(deleteButtons[0]);
++
++    await waitFor(() => {
++      // updateField should have been called with only Harvard remaining
++      expect(updateField).toHaveBeenLastCalledWith("affiliations", { value: [{ name: "Harvard", url: "https://harvard.edu" }] });
++    });
++
++    teardown();
++  });
++
++  it("shows the duplicate alert when adding an affiliation that already exists", async() => {
++    // Start with one ROR affiliation already present
++    const value = [{ rorId: "test-ror", name: "Test Org", url: "" }];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} />
++    );
++
++    // Open search mode, then trigger a save from the overlay mock with the
++    // same rorId that is already in the list
++    fireEvent.click(screen.getByRole("button", { name: /Add another affiliation/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("search-dropdown")).toBeInTheDocument();
++    });
++
++    // The overlay mock is always rendered; trigger its save button which
++    // calls onSave with { rorId: "test-ror", name: "Test Org", url: "" }
++    fireEvent.click(screen.getByRole("button", { name: /Save overlay/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("duplicate-alert")).toBeInTheDocument();
++    });
++
++    teardown();
++  });
++
++  it("cancels search mode and returns to Add button", async() => {
++    render(<AffiliationsComponent {...defaultProps} />);
++
++    fireEvent.click(screen.getByRole("button", { name: /Add another affiliation/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("search-dropdown")).toBeInTheDocument();
++    });
++
++    fireEvent.click(screen.getByRole("button", { name: /Cancel/i }));
++
++    await waitFor(() => {
++      expect(screen.getByRole("button", { name: /Add another affiliation/i })).toBeInTheDocument();
++    });
++    expect(screen.queryByTestId("search-dropdown")).not.toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("opens the overlay in edit mode when Edit row is clicked", async() => {
++    const value = [{ name: "MIT", url: "https://mit.edu" }];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} />
++    );
++
++    fireEvent.click(screen.getByRole("button", { name: /Edit row/i }));
++
++    await waitFor(() => {
++      const overlay = screen.getByTestId("affiliation-overlay");
++      expect(overlay).toHaveAttribute("data-is-editing", "true");
++    });
++
++    teardown();
++  });
++
++  it("adds a new affiliation when overlay saves a non-duplicate", async() => {
++    const updateField = jest.fn();
++
++    render(
++      <AffiliationsComponent {...defaultProps} updateField={updateField} />
++    );
++
++    // Trigger save from the overlay (always rendered)
++    fireEvent.click(screen.getByRole("button", { name: /Save overlay/i }));
++
++    await waitFor(() => {
++      expect(updateField).toHaveBeenLastCalledWith("affiliations", { value: [{ rorId: "test-ror", name: "Test Org", url: "" }] });
++    });
++
++    teardown();
++  });
++
++  it("edits an existing affiliation via overlay save", async() => {
++    const updateField = jest.fn();
++    const value = [{ name: "MIT", url: "" }];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} updateField={updateField} />
++    );
++
++    // Click edit on the row
++    fireEvent.click(screen.getByRole("button", { name: /Edit row/i }));
++
++    // Save from overlay — this replaces the existing affiliation
++    fireEvent.click(screen.getByRole("button", { name: /Save overlay/i }));
++
++    await waitFor(() => {
++      expect(updateField).toHaveBeenLastCalledWith("affiliations", { value: [{ rorId: "test-ror", name: "Test Org", url: "" }] });
++    });
++
++    teardown();
++  });
++
++  it("closes the overlay without saving", () => {
++    render(<AffiliationsComponent {...defaultProps} />);
++
++    // The overlay mock is always rendered; check it starts as not visible
++    expect(screen.getByTestId("affiliation-overlay")).toHaveAttribute("data-is-visible", "false");
++
++    teardown();
++  });
++
++  it("opens the overlay when selecting an org from search dropdown", async() => {
++    render(<AffiliationsComponent {...defaultProps} />);
++
++    fireEvent.click(screen.getByRole("button", { name: /Add another affiliation/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("search-dropdown")).toBeInTheDocument();
++    });
++
++    fireEvent.click(screen.getByRole("button", { name: /Select org/i }));
++
++    await waitFor(() => {
++      const overlay = screen.getByTestId("affiliation-overlay");
++      expect(overlay).toHaveAttribute("data-is-visible", "true");
++      expect(overlay).toHaveAttribute("data-is-editing", "false");
++    });
++
++    teardown();
++  });
++
++  it("opens the overlay for manual add from search dropdown", async() => {
++    render(<AffiliationsComponent {...defaultProps} />);
++
++    fireEvent.click(screen.getByRole("button", { name: /Add another affiliation/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("search-dropdown")).toBeInTheDocument();
++    });
++
++    fireEvent.click(screen.getByRole("button", { name: /Add manually/i }));
++
++    await waitFor(() => {
++      const overlay = screen.getByTestId("affiliation-overlay");
++      expect(overlay).toHaveAttribute("data-is-visible", "true");
++    });
++
++    teardown();
++  });
++
++  it("reorders affiliations when Move down is clicked", async() => {
++    const updateField = jest.fn();
++    const value = [
++      { name: "First", url: "" },
++      { name: "Second", url: "" },
++    ];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} updateField={updateField} />
++    );
++
++    // Click "Move down" on the first row
++    const moveDownButtons = screen.getAllByRole("button", { name: /Move down/i });
++    fireEvent.click(moveDownButtons[0]);
++
++    await waitFor(() => {
++      expect(updateField).toHaveBeenLastCalledWith("affiliations", { value: [{ name: "Second", url: "" }, { name: "First", url: "" }] });
++    });
++
++    teardown();
++  });
++
++  it("reorders affiliations when Move up is clicked", async() => {
++    const updateField = jest.fn();
++    const value = [
++      { name: "First", url: "" },
++      { name: "Second", url: "" },
++    ];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} updateField={updateField} />
++    );
++
++    // Click "Move up" on the second row
++    const moveUpButtons = screen.getAllByRole("button", { name: /Move up/i });
++    fireEvent.click(moveUpButtons[1]);
++
++    await waitFor(() => {
++      expect(updateField).toHaveBeenLastCalledWith("affiliations", { value: [{ name: "Second", url: "" }, { name: "First", url: "" }] });
++    });
++
++    teardown();
++  });
++
++  it("ignores move up when already first", () => {
++    const updateField = jest.fn();
++    const value = [
++      { name: "First", url: "" },
++      { name: "Second", url: "" },
++    ];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} updateField={updateField} />
++    );
++
++    const callCountBefore = updateField.mock.calls.length;
++
++    // Click "Move up" on the first row — should be a no-op
++    const moveUpButtons = screen.getAllByRole("button", { name: /Move up/i });
++    fireEvent.click(moveUpButtons[0]);
++
++    // No new updateField call expected
++    expect(updateField.mock.calls).toHaveLength(callCountBefore);
++
++    teardown();
++  });
++
++  it("reorders affiliations when move up/down is triggered via AffiliationRow", () => {
++    const updateField = jest.fn();
++    const value = [
++      { name: "First", url: "" },
++      { name: "Second", url: "" },
++    ];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} updateField={updateField} />
++    );
++
++    // The AffiliationRow mock doesn't expose onMoveUp/onMoveDown buttons,
++    // but we can verify the rows rendered in order
++    const rows = screen.getAllByTestId("affiliation-row");
++    expect(rows).toHaveLength(2);
++    expect(rows[0]).toHaveTextContent("First");
++    expect(rows[1]).toHaveTextContent("Second");
++
++    teardown();
++  });
++
++  it("shows duplicate alert when editing an affiliation to match another", async() => {
++    const value = [
++      { rorId: "test-ror", name: "Test Org", url: "" },
++      { rorId: "other-ror", name: "Other Org", url: "" },
++    ];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} />
++    );
++
++    // Click edit on the second row
++    const editButtons = screen.getAllByRole("button", { name: /Edit row/i });
++    fireEvent.click(editButtons[1]);
++
++    // The overlay mock saves with { rorId: "test-ror", name: "Test Org", url: "" }
++    // which matches the first affiliation — should trigger duplicate alert
++    fireEvent.click(screen.getByRole("button", { name: /Save overlay/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("duplicate-alert")).toBeInTheDocument();
++    });
++
++    teardown();
++  });
++
++  it("allows editing an affiliation without duplicate alert when it doesn't match another", async() => {
++    const updateField = jest.fn();
++    const value = [
++      { rorId: "unique-ror", name: "Unique Org", url: "" },
++    ];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} updateField={updateField} />
++    );
++
++    // Edit the only row — overlay saves { rorId: "test-ror", name: "Test Org", url: "" }
++    // which doesn't match the existing rorId, so no duplicate
++    fireEvent.click(screen.getByRole("button", { name: /Edit row/i }));
++    fireEvent.click(screen.getByRole("button", { name: /Save overlay/i }));
++
++    await waitFor(() => {
++      expect(updateField).toHaveBeenLastCalledWith("affiliations", { value: [{ rorId: "test-ror", name: "Test Org", url: "" }] });
++    });
++
++    // No duplicate alert should be shown
++    expect(screen.queryByTestId("duplicate-alert")).not.toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("hides the duplicate alert when the user starts a new search", async() => {
++    const value = [{ rorId: "test-ror", name: "Test Org", url: "" }];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} />
++    );
++
++    // Trigger the duplicate alert
++    fireEvent.click(screen.getByRole("button", { name: /Add another affiliation/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("search-dropdown")).toBeInTheDocument();
++    });
++
++    fireEvent.click(screen.getByRole("button", { name: /Save overlay/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("duplicate-alert")).toBeInTheDocument();
++    });
++
++    // Search mode is still active after duplicate — type in the search input to dismiss the alert
++    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "new search" } });
++
++    await waitFor(() => {
++      expect(screen.queryByTestId("duplicate-alert")).not.toBeInTheDocument();
++    });
++
++    teardown();
++  });
++
++  it("hides the duplicate alert when dismissed", async() => {
++    const value = [{ rorId: "test-ror", name: "Test Org", url: "" }];
++
++    render(
++      <AffiliationsComponent {...defaultProps} value={value} />
++    );
++
++    // Trigger the duplicate alert via the same sequence as the previous test
++    fireEvent.click(screen.getByRole("button", { name: /Add another affiliation/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("search-dropdown")).toBeInTheDocument();
++    });
++
++    fireEvent.click(screen.getByRole("button", { name: /Save overlay/i }));
++
++    await waitFor(() => {
++      expect(screen.getByTestId("duplicate-alert")).toBeInTheDocument();
++    });
++
++    // Dismiss the alert using the close button provided by the Alert mock
++    fireEvent.click(screen.getByRole("button", { name: /Close alert/i }));
++
++    await waitFor(() => {
++      expect(screen.queryByTestId("duplicate-alert")).not.toBeInTheDocument();
++    });
++
++    teardown();
++  });
++});
+diff --git a/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx b/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx
+new file mode 100644
+index 000000000..9ab871d5f
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx
+@@ -0,0 +1,241 @@
++import React, { useState, useCallback, useEffect } from "react";
++import { Button } from "shared/ui/latest/Button";
++import PlusSvg from "@digital-science/figshare-fcl/icons/react/Plus";
++import { SearchInput } from "shared/ui/latest/SearchInput";
++import { Alert } from "shared/ui/latest/Alert";
++import { DragDropContext, Droppable, Draggable } from "react-beautiful-dnd";
++
++import { SearchDropdown } from "./SearchDropdown/SearchDropdown";
++import { AffiliationOverlay } from "./AffiliationOverlay/AffiliationOverlay";
++import { AffiliationRow } from "./AffiliationRow/AffiliationRow";
++import { AffiliationsList } from "./AffiliationsList/AffiliationsList";
++import { useRorSearch } from "./useRorSearch";
++import styles from "./Affiliations.module.css";
++
++
++export function AffiliationsComponent({ name, updateField, value = [], locked = false }) {
++  const [affiliations, setAffiliations] = useState([]);
++  const [isSearching, setIsSearching] = useState(false);
++  const [showOverlay, setShowOverlay] = useState(false);
++  const [showDuplicateAlert, setShowDuplicateAlert] = useState(false);
++  const [selectedOrg, setSelectedOrg] = useState(null);
++  const [editingIndex, setEditingIndex] = useState<number | null>(null);
++
++  const { searchTerm, setSearchTerm, loading, error, results, hasMore, handleLoadMore } = useRorSearch();
++
++  // Sync local state from form field value when it changes (e.g. initial load from API)
++  useEffect(() => {
++    setAffiliations(value);
++  }, [value]);
++
++  const updateAffiliations = useCallback((newAffiliations) => {
++    setAffiliations(newAffiliations);
++    updateField?.(name, { value: newAffiliations });
++  }, [name, updateField]);
++
++  /** Resets overlay and search state back to idle. */
++  const resetToIdle = useCallback(() => {
++    setShowOverlay(false);
++    setEditingIndex(null);
++    setSelectedOrg(null);
++    setIsSearching(false);
++    setSearchTerm("");
++  }, [setSearchTerm]);
++
++  // -- Search handlers --
++
++  const handleAddClick = useCallback(() => {
++    setShowDuplicateAlert(false);
++    setIsSearching(true);
++    setSearchTerm("");
++  }, [setSearchTerm]);
++
++  const handleCancel = useCallback(() => {
++    setIsSearching(false);
++    setSearchTerm("");
++  }, [setSearchTerm]);
++
++  const handleSearchChange = useCallback((event) => {
++    setSearchTerm(event.target.value);
++    // Dismiss the duplicate alert as soon as the user starts a new search
++    setShowDuplicateAlert(false);
++  }, [setSearchTerm]);
++
++  // -- Overlay handlers --
++
++  const handleSelect = useCallback((org) => {
++    setSelectedOrg(org);
++    setEditingIndex(null);
++    setShowOverlay(true);
++  }, []);
++
++  const handleAddManually = useCallback(() => {
++    setEditingIndex(null);
++    setSelectedOrg(null);
++    setShowOverlay(true);
++  }, []);
++
++  const handleEdit = useCallback((index) => {
++    setEditingIndex(index);
++    setSelectedOrg(null);
++    setShowOverlay(true);
++  }, []);
++
++  const handleOverlayClose = useCallback(() => {
++    setShowOverlay(false);
++    setEditingIndex(null);
++    setSelectedOrg(null);
++  }, []);
++
++  const handleOverlaySave = useCallback((affiliation) => {
++    // Check duplicates by rorId (ROR orgs) or case-insensitive name (manual entries),
++    // excluding the item being edited so it doesn't match itself
++    const isDuplicate = affiliations.some((a, i) =>
++      i !== editingIndex &&
++      ((affiliation.rorId && a.rorId === affiliation.rorId) ||
++       (!affiliation.rorId && !a.rorId && a.name.toLowerCase() === affiliation.name.toLowerCase()))
++    );
++
++    if (isDuplicate) {
++      setShowDuplicateAlert(true);
++      setShowOverlay(false);
++      setEditingIndex(null);
++      setSelectedOrg(null);
++
++      return;
++    }
++
++    if (editingIndex !== null) {
++      const next = [...affiliations];
++      next[editingIndex] = affiliation;
++      updateAffiliations(next);
++    } else {
++      updateAffiliations([...affiliations, affiliation]);
++    }
++
++    resetToIdle();
++  }, [editingIndex, affiliations, updateAffiliations, resetToIdle]);
++
++  // -- Reorder / delete handlers --
++
++  const handleReorder = useCallback((index, direction) => {
++    const next = [...affiliations];
++    const targetIndex = direction === "up" ? index - 1 : index + 1;
++    if (targetIndex < 0 || targetIndex >= next.length) {
++      return;
++    }
++    [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
++    updateAffiliations(next);
++  }, [affiliations, updateAffiliations]);
++
++  const handleDelete = useCallback((index) => {
++    updateAffiliations(affiliations.filter((_, i) => i !== index));
++  }, [affiliations, updateAffiliations]);
++
++  const handleDragEnd = useCallback((result) => {
++    if (!result.destination || result.source.index === result.destination.index) {
++      return;
++    }
++    const next = [...affiliations];
++    const [moved] = next.splice(result.source.index, 1);
++    next.splice(result.destination.index, 0, moved);
++    updateAffiliations(next);
++  }, [affiliations, updateAffiliations]);
++
++  // -- Render --
++
++  const reorderable = affiliations.length > 1;
++
++  if (locked) {
++    return <AffiliationsList affiliations={affiliations} />;
++  }
++
++  const getOverlayAffiliation = () => {
++    if (editingIndex !== null) {
++      return affiliations[editingIndex];
++    }
++
++    if (selectedOrg) {
++      return { rorId: selectedOrg.rorId, name: selectedOrg.name, url: "" };
++    }
++
++    return undefined;
++  };
++  const overlayAffiliation = getOverlayAffiliation();
++
++  return (
++    <div className={styles.container}>
++      {showDuplicateAlert && (
++        <Alert
++          className={styles.duplicateAlert}
++          message="This affiliation is already in your list."
++          persistent={false}
++          type="info"
++          onClose={() => setShowDuplicateAlert(false)}
++        />
++      )}
++      <DragDropContext onDragEnd={handleDragEnd}>
++        <Droppable droppableId="affiliations-droppable" isDropDisabled={!reorderable}>
++          {(provided) => (
++            <div ref={provided.innerRef} className={styles.list} {...provided.droppableProps}>
++              {affiliations.map((aff, index) => (
++                <Draggable key={aff.rorId || aff.name} draggableId={aff.rorId || aff.name} index={index} isDragDisabled={!reorderable}>
++                  {(item) => (
++                    <div ref={item.innerRef} {...item.draggableProps}>
++                      <AffiliationRow
++                        affiliation={aff}
++                        dragHandleProps={item.dragHandleProps}
++                        isFirst={index === 0}
++                        isLast={index === affiliations.length - 1}
++                        reorderable={reorderable}
++                        onDelete={() => handleDelete(index)}
++                        onEdit={() => handleEdit(index)}
++                        onMoveUp={() => handleReorder(index, "up")}
++                        onMoveDown={() => handleReorder(index, "down")}
++                      />
++                    </div>
++                  )}
++                </Draggable>
++              ))}
++              {provided.placeholder}
++            </div>
++          )}
++        </Droppable>
++      </DragDropContext>
++      {isSearching ? (
++        <div className={styles.searchColumn}>
++          <SearchInput
++            placeholder="Search the ROR registry or type a name"
++            value={searchTerm}
++            onChange={handleSearchChange}
++          />
++          <Button kind="tertiary" onClick={handleCancel}>
++            <Button.Label>Cancel</Button.Label>
++          </Button>
++          <SearchDropdown
++            error={error}
++            hasMore={hasMore}
++            loading={loading}
++            results={results}
++            searchTerm={searchTerm}
++            onAddManually={handleAddManually}
++            onLoadMore={handleLoadMore}
++            onSelect={handleSelect}
++          />
++        </div>
++      ) : (
++        <Button kind="tertiary" onClick={handleAddClick}>
++          <Button.Icon><PlusSvg /></Button.Icon>
++          <Button.Label>Add another affiliation</Button.Label>
++        </Button>
++      )}
++      <AffiliationOverlay
++        affiliation={overlayAffiliation}
++        isEditing={editingIndex !== null}
++        isVisible={showOverlay}
++        onClose={handleOverlayClose}
++        onSave={handleOverlaySave}
++      />
++    </div>
++  );
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationsList/AffiliationsList.module.css b/src/pages/account/profileEdit/components/affiliations/AffiliationsList/AffiliationsList.module.css
+new file mode 100644
+index 000000000..b527582c5
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationsList/AffiliationsList.module.css
+@@ -0,0 +1,48 @@
++.list {
++  display: flex;
++  flex-direction: column;
++
++  margin: 0;
++  padding: 0;
++
++  list-style: none;
++  align-items: flex-start;
++  gap: calc(2 * var(--gridSize));
++}
++
++.item {
++  line-height: var(--typography-M-lineHeight);
++}
++
++.link {
++  font-family: var(--fontFamily);
++  font-size: var(--typography-M-fontSize);
++  font-weight: 400;
++  line-height: var(--typography-M-lineHeight);
++
++  display: inline-flex;
++
++  text-decoration: underline;
++
++  color: var(--color-branding-figRed);
++  align-items: center;
++  gap: calc(0.5 * var(--gridSize));
++}
++
++.link:hover,
++.link:focus {
++  color: var(--color-branding-figRed);
++}
++
++.linkIcon {
++  flex-shrink: 0;
++}
++
++.plainName {
++  font-family: var(--fontFamily);
++  font-size: var(--typography-M-fontSize);
++  font-weight: 400;
++  line-height: var(--typography-M-lineHeight);
++
++  color: var(--color-typography-primary);
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationsList/AffiliationsList.test.tsx b/src/pages/account/profileEdit/components/affiliations/AffiliationsList/AffiliationsList.test.tsx
+new file mode 100644
+index 000000000..7d423d21c
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationsList/AffiliationsList.test.tsx
+@@ -0,0 +1,79 @@
++import React from "react";
++import { render, cleanup, screen } from "@testing-library/react";
++
++import { AffiliationsList } from "./AffiliationsList";
++
++
++// Render icon as a simple span so assertions on link content are unambiguous
++jest.mock("@digital-science/figshare-fcl/icons/react/GoToLink", () => {
++  return {
++    __esModule: true,
++    default: () => <span>icon</span>,
++  };
++});
++
++
++describe("AffiliationsList", () => {
++  function teardown() {
++    cleanup();
++  }
++
++  it("renders correctly when given an empty affiliations array — returns null", () => {
++    const { container } = render(<AffiliationsList affiliations={[]} />);
++
++    expect(container.firstChild).toBeNull();
++
++    teardown();
++  });
++
++  it("renders correctly when affiliations have no URL — shows plain text", () => {
++    render(
++      <AffiliationsList
++        affiliations={[
++          { name: "University of Example" },
++          { name: "Institute of Science" },
++        ]}
++      />
++    );
++
++    expect(screen.getByText("University of Example")).toBeInTheDocument();
++    expect(screen.getByText("Institute of Science")).toBeInTheDocument();
++    // No links should be present
++    expect(screen.queryByRole("link")).not.toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders correctly when affiliations have a URL — shows links with correct href", () => {
++    render(
++      <AffiliationsList
++        affiliations={[
++          { name: "MIT", url: "https://mit.edu" },
++          { name: "Harvard", url: "https://harvard.edu" },
++        ]}
++      />
++    );
++
++    const mitLink = screen.getByRole("link", { name: /MIT/ });
++    const harvardLink = screen.getByRole("link", { name: /Harvard/ });
++
++    expect(mitLink).toHaveAttribute("href", "https://mit.edu");
++    expect(harvardLink).toHaveAttribute("href", "https://harvard.edu");
++
++    teardown();
++  });
++
++  it("renders correctly — links have target='_blank' and rel='noopener noreferrer' for security", () => {
++    render(
++      <AffiliationsList
++        affiliations={[{ name: "Stanford", url: "https://stanford.edu" }]}
++      />
++    );
++
++    const link = screen.getByRole("link", { name: /Stanford/ });
++    expect(link).toHaveAttribute("target", "_blank");
++    expect(link).toHaveAttribute("rel", "noopener noreferrer");
++
++    teardown();
++  });
++});
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationsList/AffiliationsList.tsx b/src/pages/account/profileEdit/components/affiliations/AffiliationsList/AffiliationsList.tsx
+new file mode 100644
+index 000000000..f15801f97
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationsList/AffiliationsList.tsx
+@@ -0,0 +1,44 @@
++import React from "react";
++import GoToLinkIcon from "@digital-science/figshare-fcl/icons/react/GoToLink";
++
++import styles from "./AffiliationsList.module.css";
++
++
++interface Affiliation {
++  rorId?: string;
++  name: string;
++  url?: string;
++}
++
++interface AffiliationsListProps {
++  affiliations: Affiliation[];
++}
++
++
++/**
++ * Read-only list of affiliations, used on the locked edit profile page
++ * and the public user profile page. Affiliations with a URL render as
++ * links with an external-link icon; others render as plain text.
++ */
++export function AffiliationsList({ affiliations }: AffiliationsListProps) {
++  if (affiliations.length === 0) {
++    return null;
++  }
++
++  return (
++    <ul className={styles.list}>
++      {affiliations.map((aff) => (
++        <li key={aff.rorId || aff.name} className={styles.item}>
++          {aff.url ? (
++            <a className={styles.link} href={aff.url} rel="noopener noreferrer" target="_blank">
++              {aff.name}
++              <GoToLinkIcon className={styles.linkIcon} height={12} width={12} />
++            </a>
++          ) : (
++            <span className={styles.plainName}>{aff.name}</span>
++          )}
++        </li>
++      ))}
++    </ul>
++  );
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/OrganizationList/OrganizationList.module.css b/src/pages/account/profileEdit/components/affiliations/OrganizationList/OrganizationList.module.css
+new file mode 100644
+index 000000000..9fae5bd9d
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/OrganizationList/OrganizationList.module.css
+@@ -0,0 +1,70 @@
++.resultsList {
++  overflow-y: auto;
++
++  width: 100%;
++  margin: 0;
++  padding: 0;
++
++  list-style: none;
++  flex: 1;
++}
++
++.resultItem {
++  /* Reset FCL global a,button styles (normalize.css) */
++  font-family: var(--fontFamily);
++
++  display: flex;
++  flex-direction: column;
++
++  width: 100%;
++  padding: calc(2 * var(--gridSize)) calc(3 * var(--gridSize));
++
++  cursor: pointer;
++  text-align: left;
++  text-decoration: none;
++
++  color: inherit;
++  border: none;
++  background: var(--color-layout-primary-background);
++  justify-content: center;
++  align-items: flex-start;
++  gap: calc(0.5 * var(--gridSize));
++  align-self: stretch;
++}
++
++.resultItem:hover,
++.resultItem:focus {
++  text-decoration: none;
++
++  color: inherit;
++
++  /* Reset FCL global *:focus box-shadow */
++  border-radius: 0;
++  outline: none;
++  background: var(--color-layout-secondary-background);
++  box-shadow: none;
++}
++
++.resultItem:focus-visible {
++  box-shadow: inset 0 0 0 2px var(--color-typography-primary);
++}
++
++.resultName {
++  font-family: var(--fontFamily);
++  font-size: var(--typography-M-fontSize);
++  font-weight: 400;
++  line-height: var(--typography-M-lineHeight);
++
++  color: var(--color-typography-primary);
++  align-self: stretch;
++}
++
++.resultRorId {
++  font-family: var(--fontFamily);
++  font-size: var(--typography-S-fontSize);
++  font-weight: 400;
++  line-height: var(--typography-S-lineHeight);
++
++  color: var(--color-typography-secondary);
++  align-self: stretch;
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/OrganizationList/OrganizationList.test.tsx b/src/pages/account/profileEdit/components/affiliations/OrganizationList/OrganizationList.test.tsx
+new file mode 100644
+index 000000000..d83a52308
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/OrganizationList/OrganizationList.test.tsx
+@@ -0,0 +1,92 @@
++import React from "react";
++import { render, cleanup, screen, fireEvent } from "@testing-library/react";
++
++import { OrganizationList, OrganizationListItem } from "./OrganizationList";
++
++
++// Stub out the scroll listener — it wires up DOM event listeners that are
++// irrelevant to these unit tests and would require a real scrollable container
++jest.mock(
++  "../../../../itemEdit/main/form/formField/figshareFields/authors/components/userList/useOnScrollToBottomListener",
++  () => {
++    return {
++      useOnScrollToBottomListener: () => {
++        return { elementRef: { current: null } };
++      },
++    };
++  }
++);
++
++
++const sampleOrg = { rorId: "01abc123", name: "Massachusetts Institute of Technology" };
++
++
++describe("OrganizationList", () => {
++  function teardown() {
++    cleanup();
++  }
++
++  it("renders correctly — wraps children in a container", () => {
++    render(
++      <OrganizationList>
++        <div>Child item</div>
++      </OrganizationList>
++    );
++
++    expect(screen.getByText("Child item")).toBeInTheDocument();
++
++    teardown();
++  });
++});
++
++
++describe("OrganizationListItem", () => {
++  function teardown() {
++    cleanup();
++  }
++
++  it("renders correctly — shows organization name and full ROR URL", () => {
++    render(<OrganizationListItem org={sampleOrg} />);
++
++    expect(screen.getByText("Massachusetts Institute of Technology")).toBeInTheDocument();
++    expect(screen.getByText("https://ror.org/01abc123")).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("calls onSelect with the org when clicked", () => {
++    const onSelect = jest.fn();
++    render(<OrganizationListItem org={sampleOrg} onSelect={onSelect} />);
++
++    fireEvent.click(screen.getByRole("button"));
++
++    expect(onSelect).toHaveBeenCalledTimes(1);
++    expect(onSelect).toHaveBeenCalledWith(sampleOrg);
++
++    teardown();
++  });
++
++  it("calls onSelect with the org when Enter key is pressed", () => {
++    const onSelect = jest.fn();
++    render(<OrganizationListItem org={sampleOrg} onSelect={onSelect} />);
++
++    fireEvent.keyDown(screen.getByRole("button"), { key: "Enter" });
++
++    expect(onSelect).toHaveBeenCalledTimes(1);
++    expect(onSelect).toHaveBeenCalledWith(sampleOrg);
++
++    teardown();
++  });
++
++  it("calls onSelect with the org when Space key is pressed", () => {
++    const onSelect = jest.fn();
++    render(<OrganizationListItem org={sampleOrg} onSelect={onSelect} />);
++
++    fireEvent.keyDown(screen.getByRole("button"), { key: " " });
++
++    expect(onSelect).toHaveBeenCalledTimes(1);
++    expect(onSelect).toHaveBeenCalledWith(sampleOrg);
++
++    teardown();
++  });
++});
+diff --git a/src/pages/account/profileEdit/components/affiliations/OrganizationList/OrganizationList.tsx b/src/pages/account/profileEdit/components/affiliations/OrganizationList/OrganizationList.tsx
+new file mode 100644
+index 000000000..5f0d58080
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/OrganizationList/OrganizationList.tsx
+@@ -0,0 +1,61 @@
++import React from "react";
++
++import { useOnScrollToBottomListener } from "../../../../itemEdit/main/form/formField/figshareFields/authors/components/userList/useOnScrollToBottomListener";
++
++import styles from "./OrganizationList.module.css";
++
++
++const ROR_URL_PREFIX = "https://ror.org/";
++
++
++export interface RorOrganization {
++  rorId: string;
++  name: string;
++}
++
++interface OrganizationListProps {
++  children: React.ReactNode;
++  onScrollToBottom?: () => void;
++}
++
++interface OrganizationListItemProps {
++  org: RorOrganization;
++  onSelect?: (org: RorOrganization) => void;
++}
++
++
++export function OrganizationList({ children, onScrollToBottom }: OrganizationListProps) {
++  const { elementRef } = useOnScrollToBottomListener(onScrollToBottom);
++
++  return (
++    <div ref={elementRef} className={styles.resultsList}>
++      {children}
++    </div>
++  );
++}
++
++
++export function OrganizationListItem({ org, onSelect }: OrganizationListItemProps) {
++  const handleClick = () => {
++    onSelect?.(org);
++  };
++
++  const handleKeyDown = (event: React.KeyboardEvent) => {
++    if (event.key === "Enter" || event.key === " ") {
++      event.preventDefault();
++      onSelect?.(org);
++    }
++  };
++
++  return (
++    <button
++      className={styles.resultItem}
++      type="button"
++      onClick={handleClick}
++      onKeyDown={handleKeyDown}
++    >
++      <span className={styles.resultName}>{org.name}</span>
++      <span className={styles.resultRorId}>{`${ROR_URL_PREFIX}${org.rorId}`}</span>
++    </button>
++  );
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/SearchDropdown/SearchDropdown.module.css b/src/pages/account/profileEdit/components/affiliations/SearchDropdown/SearchDropdown.module.css
+new file mode 100644
+index 000000000..14762113e
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/SearchDropdown/SearchDropdown.module.css
+@@ -0,0 +1,67 @@
++/* Empty state / no results inner content */
++.emptyState {
++  display: flex;
++  flex-direction: column;
++  justify-content: center;
++  align-items: center;
++
++  padding: calc(2 * var(--gridSize)) calc(3 * var(--gridSize));
++  gap: calc(2 * var(--gridSize));
++  align-self: stretch;
++}
++
++.emptyStateText {
++  font-family: var(--fontFamily);
++  font-size: var(--typography-M-fontSize);
++  font-weight: 400;
++  line-height: var(--typography-M-lineHeight);
++
++  color: var(--color-typography-secondary);
++}
++
++/* Results wrap */
++.resultsWrap {
++  /* inherits from .searchColumn > [class*="box"] */
++}
++
++/* Separator between results and footer */
++.separator {
++  display: flex;
++  flex-direction: column;
++
++  width: 100%;
++  padding: var(--gridSize) 0;
++  align-items: flex-start;
++  align-self: stretch;
++}
++
++.separatorLine {
++  width: 100%;
++  height: 1px;
++
++  background: var(--color-border-primary);
++}
++
++/* Footer */
++.listFooter {
++  display: flex;
++  flex-direction: row;
++
++  width: 100%;
++  padding: calc(2 * var(--gridSize)) calc(3 * var(--gridSize));
++
++  background: var(--color-layout-primary-background);
++  justify-content: center;
++  align-items: center;
++  gap: calc(2 * var(--gridSize));
++  align-self: stretch;
++}
++
++.listFooterText {
++  font-family: var(--fontFamily);
++  font-size: var(--typography-M-fontSize);
++  font-weight: 400;
++  line-height: var(--typography-M-lineHeight);
++
++  color: var(--color-typography-secondary);
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/SearchDropdown/SearchDropdown.test.tsx b/src/pages/account/profileEdit/components/affiliations/SearchDropdown/SearchDropdown.test.tsx
+new file mode 100644
+index 000000000..6698151bc
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/SearchDropdown/SearchDropdown.test.tsx
+@@ -0,0 +1,208 @@
++import React from "react";
++import { render, cleanup, screen } from "@testing-library/react";
++
++import { RorOrganization } from "../OrganizationList/OrganizationList";
++
++import { SearchDropdown } from "./SearchDropdown";
++
++
++// Render ContentBox and LoaderContentBox as simple wrappers so we can
++// assert on content without dealing with the real component's side effects
++jest.mock(
++  "../../../../itemEdit/main/form/formField/figshareFields/authors/components/contentBox",
++  () => {
++    return {
++      ContentBox: ({ children }: { children: React.ReactNode }) => (
++        <div data-testid="content-box">{children}</div>
++      ),
++      LoaderContentBox: () => <div data-testid="loader-content-box" />,
++    };
++  }
++);
++
++// OrganizationList and OrganizationListItem are tested separately; stub them out
++jest.mock("../OrganizationList/OrganizationList", () => {
++  return {
++    OrganizationList: ({ children }: { children: React.ReactNode }) => (
++      <ul data-testid="organization-list">{children}</ul>
++    ),
++    OrganizationListItem: ({ org }: { org: RorOrganization }) => (
++      <li data-testid="organization-list-item">{org.name}</li>
++    ),
++  };
++});
++
++// Button renders as a native button for click assertions
++function MockButton({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
++  return <button type="button" onClick={onClick}>{children}</button>;
++}
++MockButton.Label = ({ children }: { children: React.ReactNode }) => <span>{children}</span>;
++MockButton.Icon = ({ children }: { children: React.ReactNode }) => <span>{children}</span>;
++jest.mock("shared/ui/latest/Button", () => {
++  return { Button: MockButton };
++});
++
++
++const sampleResults: RorOrganization[] = [
++  { rorId: "01abc", name: "MIT" },
++  { rorId: "02def", name: "Harvard" },
++];
++
++describe("SearchDropdown", () => {
++  function teardown() {
++    cleanup();
++  }
++
++  it("renders correctly when searchTerm is \"\" — shows empty state message", () => {
++    render(
++      <SearchDropdown
++        hasMore={true}
++        loading={false}
++        results={[]}
++        searchTerm=""
++        onAddManually={jest.fn()}
++      />
++    );
++
++    expect(
++      screen.getByText("Start typing to search for an organization, or add manually.")
++    ).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders correctly when searchTerm length is less than 3 — returns null", () => {
++    const { container } = render(
++      <SearchDropdown
++        hasMore={true}
++        loading={false}
++        results={[]}
++        searchTerm="ab"
++        onAddManually={jest.fn()}
++      />
++    );
++
++    expect(container.firstChild).toBeNull();
++
++    teardown();
++  });
++
++  it("renders correctly when loading and no results — shows loader", () => {
++    render(
++      <SearchDropdown
++        hasMore={true}
++        loading={true}
++        results={[]}
++        searchTerm="mit"
++        onAddManually={jest.fn()}
++      />
++    );
++
++    expect(screen.getByTestId("loader-content-box")).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders correctly when not loading and no results — shows \"No organizations found\"", () => {
++    render(
++      <SearchDropdown
++        hasMore={true}
++        loading={false}
++        results={[]}
++        searchTerm="xyz"
++        onAddManually={jest.fn()}
++      />
++    );
++
++    expect(screen.getByText("No organizations found")).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders correctly when results exist — shows the results list", () => {
++    render(
++      <SearchDropdown
++        hasMore={true}
++        loading={false}
++        results={sampleResults}
++        searchTerm="mit"
++        onAddManually={jest.fn()}
++      />
++    );
++
++    expect(screen.getByTestId("organization-list")).toBeInTheDocument();
++    expect(screen.getByText("MIT")).toBeInTheDocument();
++    expect(screen.getByText("Harvard")).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders correctly when hasMore is false — shows \"Not on the list?\" footer", () => {
++    render(
++      <SearchDropdown
++        hasMore={false}
++        loading={false}
++        results={sampleResults}
++        searchTerm="mit"
++        onAddManually={jest.fn()}
++      />
++    );
++
++    expect(screen.getByText("Not on the list?")).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders correctly when hasMore is true — does not show the footer", () => {
++    render(
++      <SearchDropdown
++        hasMore={true}
++        loading={false}
++        results={sampleResults}
++        searchTerm="mit"
++        onAddManually={jest.fn()}
++      />
++    );
++
++    expect(screen.queryByText("Not on the list?")).not.toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders error state when error is provided", () => {
++    render(
++      <SearchDropdown
++        error={new Error("Network error")}
++        hasMore={false}
++        loading={false}
++        results={[]}
++        searchTerm="mit"
++        onAddManually={jest.fn()}
++      />
++    );
++
++    expect(screen.getByText("Something went wrong. Please try again.")).toBeInTheDocument();
++    expect(screen.getByRole("button", { name: /Add organization details/i })).toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("renders error state instead of no-results when both error and empty results", () => {
++    render(
++      <SearchDropdown
++        error={new Error("Server error")}
++        hasMore={false}
++        loading={false}
++        results={[]}
++        searchTerm="xyz"
++        onAddManually={jest.fn()}
++      />
++    );
++
++    // Should show error, not "No organizations found"
++    expect(screen.getByText("Something went wrong. Please try again.")).toBeInTheDocument();
++    expect(screen.queryByText("No organizations found")).not.toBeInTheDocument();
++
++    teardown();
++  });
++});
+diff --git a/src/pages/account/profileEdit/components/affiliations/SearchDropdown/SearchDropdown.tsx b/src/pages/account/profileEdit/components/affiliations/SearchDropdown/SearchDropdown.tsx
+new file mode 100644
+index 000000000..b1a594808
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/SearchDropdown/SearchDropdown.tsx
+@@ -0,0 +1,90 @@
++import React from "react";
++import { Button } from "shared/ui/latest/Button";
++
++import {
++  ContentBox,
++  LoaderContentBox,
++} from "../../../../itemEdit/main/form/formField/figshareFields/authors/components/contentBox";
++import { OrganizationList, OrganizationListItem, RorOrganization } from "../OrganizationList/OrganizationList";
++
++import styles from "./SearchDropdown.module.css";
++
++
++interface SearchDropdownProps {
++  loading: boolean;
++  error?: Error;
++  results: RorOrganization[];
++  searchTerm: string;
++  hasMore: boolean;
++  onSelect?: (org: RorOrganization) => void;
++  onAddManually?: () => void;
++  onLoadMore?: () => void;
++}
++
++
++export function SearchDropdown({ loading, error, results, searchTerm, hasMore, onSelect, onAddManually, onLoadMore }: SearchDropdownProps) {
++  const isEmpty = searchTerm === "";
++  const hasQuery = searchTerm.length >= 3;
++
++  if (isEmpty) {
++    return (
++      <ContentBox layout="dropdown" spacing="none" theme="primary">
++        <div className={styles.emptyState}>
++          <span className={styles.emptyStateText}>Start typing to search for an organization, or add manually.</span>
++          <Button onClick={onAddManually}>Add organization details</Button>
++        </div>
++      </ContentBox>
++    );
++  }
++
++  if (!hasQuery) {
++    return null;
++  }
++
++  if (loading && results.length === 0) {
++    return <LoaderContentBox />;
++  }
++
++  if (error) {
++    return (
++      <ContentBox layout="dropdown" spacing="none" theme="primary">
++        <div className={styles.emptyState}>
++          <span aria-live="assertive" className={styles.emptyStateText} role="alert">Something went wrong. Please try again.</span>
++          <Button onClick={onAddManually}>Add organization details</Button>
++        </div>
++      </ContentBox>
++    );
++  }
++
++  if (!loading && results.length === 0) {
++    return (
++      <ContentBox layout="dropdown" spacing="none" theme="primary">
++        <div className={styles.emptyState}>
++          <span aria-live="assertive" className={styles.emptyStateText} role="status">No organizations found</span>
++          <Button onClick={onAddManually}>Add organization details</Button>
++        </div>
++      </ContentBox>
++    );
++  }
++
++  return (
++    <ContentBox className={styles.resultsWrap} layout="dropdown" spacing="none" theme="primary">
++      <OrganizationList onScrollToBottom={onLoadMore}>
++        {results.map((org) => (
++          <OrganizationListItem key={org.rorId} org={org} onSelect={onSelect} />
++        ))}
++      </OrganizationList>
++      {!hasMore && (
++        <>
++          <div className={styles.separator}>
++            <div className={styles.separatorLine} />
++          </div>
++          <div className={styles.listFooter}>
++            <span className={styles.listFooterText}>Not on the list?</span>
++            <Button onClick={onAddManually}>Add organization details</Button>
++          </div>
++        </>
++      )}
++    </ContentBox>
++  );
++}
+diff --git a/src/pages/account/profileEdit/components/affiliations/index.tsx b/src/pages/account/profileEdit/components/affiliations/index.tsx
+new file mode 100644
+index 000000000..35bf0c7cb
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/index.tsx
+@@ -0,0 +1 @@
++export { AffiliationsComponent } from "./Affiliations";
+diff --git a/src/pages/account/profileEdit/components/affiliations/useRorSearch.test.ts b/src/pages/account/profileEdit/components/affiliations/useRorSearch.test.ts
+new file mode 100644
+index 000000000..4f3135f31
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/useRorSearch.test.ts
+@@ -0,0 +1,93 @@
++import { renderHook, act } from "@testing-library/react-hooks";
++
++import { useRorSearch } from "./useRorSearch";
++
++
++// Mock useLazyQuery — returns a stable executeSearch fn and query result
++const mockExecuteSearch = jest.fn();
++const mockFetchMore = jest.fn();
++
++jest.mock("@apollo/client/react/hooks", () => {
++  return {
++    useLazyQuery: () => [
++      mockExecuteSearch,
++      {
++        data: {
++          searchRorOrganizations: {
++            cursor: "next-cursor",
++            elements: [{ rorId: "041kmwe10", name: "University of Oxford" }],
++          },
++        },
++        loading: false,
++        fetchMore: mockFetchMore,
++      },
++    ],
++  };
++});
++
++// Mock the GQL query import
++jest.mock("./Affiliations.gql", () => {
++  return { searchRorOrganizations: "mocked-query" };
++});
++
++
++describe("useRorSearch", () => {
++  beforeEach(() => {
++    jest.useFakeTimers();
++    mockExecuteSearch.mockClear();
++    mockFetchMore.mockClear();
++  });
++
++  afterEach(() => {
++    jest.useRealTimers();
++  });
++
++  it("returns initial state with empty searchTerm", () => {
++    const { result } = renderHook(() => useRorSearch());
++
++    expect(result.current.searchTerm).toBe("");
++    expect(result.current.loading).toBe(false);
++    expect(result.current.results).toEqual([{ rorId: "041kmwe10", name: "University of Oxford" }]);
++    expect(result.current.hasMore).toBe(true);
++  });
++
++  it("does not execute search when searchTerm has fewer than 3 characters", () => {
++    const { result } = renderHook(() => useRorSearch());
++
++    act(() => {
++      result.current.setSearchTerm("ab");
++    });
++
++    jest.advanceTimersByTime(500);
++    expect(mockExecuteSearch).not.toHaveBeenCalled();
++  });
++
++  it("executes a debounced search when searchTerm has 3+ characters", () => {
++    const { result } = renderHook(() => useRorSearch());
++
++    act(() => {
++      result.current.setSearchTerm("Oxford");
++    });
++
++    // Should not fire immediately
++    expect(mockExecuteSearch).not.toHaveBeenCalled();
++
++    // Advance past the debounce (300ms)
++    jest.advanceTimersByTime(300);
++
++    expect(mockExecuteSearch).toHaveBeenCalledWith({ variables: { searchTerm: "Oxford", pageSize: 10 } });
++  });
++
++  it("calls fetchMore with cursor when handleLoadMore is invoked", () => {
++    mockFetchMore.mockResolvedValue({});
++    const { result } = renderHook(() => useRorSearch());
++
++    act(() => {
++      result.current.handleLoadMore();
++    });
++
++    expect(mockFetchMore).toHaveBeenCalledWith(
++      expect.objectContaining({ variables: expect.objectContaining({ cursor: "next-cursor" }) })
++    );
++  });
++});
+diff --git a/src/pages/account/profileEdit/components/affiliations/useRorSearch.ts b/src/pages/account/profileEdit/components/affiliations/useRorSearch.ts
+new file mode 100644
+index 000000000..0c287b76b
+--- /dev/null
++++ b/src/pages/account/profileEdit/components/affiliations/useRorSearch.ts
+@@ -0,0 +1,81 @@
++import { useState, useCallback, useEffect, useRef } from "react";
++import { useLazyQuery } from "@apollo/client/react/hooks";
++
++import { searchRorOrganizations } from "./Affiliations.gql";
++
++
++const DEBOUNCE_MS = 300;
++const PAGE_SIZE = 10;
++
++
++/** Encapsulates the debounced ROR search query with cursor-based pagination. */
++export function useRorSearch() {
++  const [searchTerm, setSearchTerm] = useState("");
++  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
++  const loadingMoreRef = useRef(false);
++
++  const [executeSearch, { data, loading, error, fetchMore }] = useLazyQuery(searchRorOrganizations, { fetchPolicy: "network-only" });
++
++  // Debounced search — fires after user stops typing
++  useEffect(() => {
++    if (debounceRef.current) {
++      clearTimeout(debounceRef.current);
++    }
++
++    if (searchTerm.length < 3) {
++      // Always return a cleanup function for consistent-return compliance
++      return () => undefined;
++    }
++
++    debounceRef.current = setTimeout(() => {
++      loadingMoreRef.current = false;
++      executeSearch({ variables: { searchTerm, pageSize: PAGE_SIZE } });
++    }, DEBOUNCE_MS);
++
++    return () => {
++      if (debounceRef.current) {
++        clearTimeout(debounceRef.current);
++      }
++    };
++  }, [searchTerm, executeSearch]);
++
++  const handleLoadMore = useCallback(() => {
++    const cursor = data?.searchRorOrganizations?.cursor;
++
++    if (!cursor || loadingMoreRef.current || !fetchMore) {
++      return;
++    }
++
++    loadingMoreRef.current = true;
++
++    fetchMore({
++      variables: { searchTerm, pageSize: PAGE_SIZE, cursor },
++      updateQuery: (prev, { fetchMoreResult }) => {
++        loadingMoreRef.current = false;
++
++        if (!fetchMoreResult) {
++          return prev;
++        }
++
++        return {
++          ...prev,
++          searchRorOrganizations: {
++            ...prev.searchRorOrganizations,
++            cursor: fetchMoreResult.searchRorOrganizations.cursor,
++            elements: [
++              ...prev.searchRorOrganizations.elements,
++              ...fetchMoreResult.searchRorOrganizations.elements,
++            ],
++          },
++        };
++      },
++    }).catch(() => {
++      loadingMoreRef.current = false;
++    });
++  }, [data, searchTerm, fetchMore]);
++
++  const results = data?.searchRorOrganizations?.elements || [];
++  const hasMore = !!data?.searchRorOrganizations?.cursor;
++
++  return { searchTerm, setSearchTerm, loading, error, results, hasMore, handleLoadMore };
++}
+diff --git a/src/pages/account/profileEdit/form/schema.jsx b/src/pages/account/profileEdit/form/schema.jsx
+index e4969c90f..a492fded1 100644
+--- a/src/pages/account/profileEdit/form/schema.jsx
++++ b/src/pages/account/profileEdit/form/schema.jsx
+@@ -84,6 +84,20 @@ export const getFormSchema = (meta) => {
+         nested: true,
+         locked: false,
+       },
++      affiliations: {
++        id: "affiliations",
++        name: "affiliations",
++        type: "array",
++        value: [],
++        initial: [],
++        label: "",
++        required: false,
++        nested: false,
++        locked: false,
++        normalizeValue: (value) =>
++          value.reduce((normalisedString, currentValue) =>
++            `${normalisedString}-${currentValue.rorId}-${currentValue.name}-${currentValue.url}`, ""),
++      },
+       bio: {
+         id: "bio",
+         name: "bio",
+@@ -177,6 +191,7 @@ export const getFormSchema = (meta) => {
+       "jobTitle",
+       "fieldsOfInterest",
+       "location",
++      "affiliations",
+       "bio",
+       "facebook",
+       "twitter",
+diff --git a/src/pages/account/profileEdit/index.gql b/src/pages/account/profileEdit/index.gql
+index 94f4078fb..500529a35 100644
+--- a/src/pages/account/profileEdit/index.gql
++++ b/src/pages/account/profileEdit/index.gql
+@@ -43,6 +43,12 @@ query getProfileData($id: Int!) {
+       }
+     }
+     personalProfiles
++    affiliations {
++      rorId
++      name
++      url
++      order
++    }
+   }
+ }
+ 
+diff --git a/src/pages/account/profileEdit/page.jsx b/src/pages/account/profileEdit/page.jsx
+index 265f1bf4a..9a90a20ca 100644
+--- a/src/pages/account/profileEdit/page.jsx
++++ b/src/pages/account/profileEdit/page.jsx
+@@ -17,6 +17,7 @@ import { OrcidFieldComponent } from "./components/orcid";
+ import { TextFieldComponentWithLock } from "./components/textFieldWithLock";
+ import { TextEditorFieldComponentWithLock } from "./components/textEditorFieldWithLock";
+ import { PersonalProfilesComponent } from "./components/personalProfiles";
++import { AffiliationsComponent } from "./components/affiliations";
+ import { PublicationsComponent } from "./components/publications";
+ import { ProfilePictureComponent } from "./components/profilePicture";
+ import { getProfileData, updateUserProfile } from "./index.gql";
+@@ -91,6 +92,9 @@ export const EditProfileForm = ({ institution, lockedFields, mandatoryAccountFie
+         userData.twitter = fields.twitter.value;
+         userData.linkedin = fields.linkedin.value;
+         userData.personalProfiles = fields.personalProfiles.value;
++        userData.affiliations = (fields.affiliations.value || []).map(({ rorId, name, url }, index) => {
++          return { rorId, name, url: url || "", order: index };
++        });
+ 
+         if (isActiveFeature) {
+           userData.fieldsOfInterest = fields.fieldsOfInterest.value.map(({ id }) => id);
+@@ -226,6 +230,10 @@ export const EditProfileForm = ({ institution, lockedFields, mandatoryAccountFie
+             <Field component={TextFieldComponentWithLock} locked={allFieldsLocked} name="location" />
+           </FieldSection>
+           <FieldSectionSeparator />
++          <FieldSection title="Affiliations">
++            <Field component={AffiliationsComponent} locked={allFieldsLocked} name="affiliations" />
++          </FieldSection>
++          <FieldSectionSeparator />
+           <FieldSection title="Biographical information">
+             <Field component={TextEditorFieldComponentWithLock} locked={allFieldsLocked} name="bio" />
+           </FieldSection>
+@@ -333,6 +341,7 @@ function mapProfileData(profileData) {
+     ...profileData,
+     personalProfiles: profileData?.personalProfiles || [],
+     publications: profileData.publications.elements.map(({ publication }) => publication),
++    affiliations: profileData?.affiliations || [],
+   };
+ }
+ 
+diff --git a/src/pages/account/profileEdit/page.test.tsx b/src/pages/account/profileEdit/page.test.tsx
+index d52956d47..f1137cfe4 100644
+--- a/src/pages/account/profileEdit/page.test.tsx
++++ b/src/pages/account/profileEdit/page.test.tsx
+@@ -26,6 +26,8 @@ const { getProfileData, updateUserProfile } = profileQueries;
+ type FieldOfInterest = { url: string; title: string; id: number; parentId: number };
+ type PersonalProfile = { url: string; label?: string };
+ 
++type Affiliation = { rorId: string; name: string; url: string; order: number };
++
+ type Profile = {
+   id: number;
+   firstName: string;
+@@ -43,6 +45,7 @@ type Profile = {
+   fieldsOfInterest: FieldOfInterest[];
+   publications: { hasMore: boolean; elements: { publication: string }[] };
+   personalProfiles: PersonalProfile[];
++  affiliations: Affiliation[];
+ };
+ 
+ type FieldComponentProps = {
+@@ -150,6 +153,7 @@ const FIELDS_ORDER = [
+   "jobTitle",
+   "fieldsOfInterest",
+   "location",
++  "affiliations",
+   "bio",
+   "facebook",
+   "twitter",
+@@ -196,6 +200,10 @@ const createProfile = (): Profile => {
+     personalProfiles: [
+       { url: "https://google.com", label: "Google" },
+     ],
++    affiliations: [
++      { rorId: "02jbv0t02", name: "Harvard University", url: "https://www.harvard.edu", order: 0 },
++      { rorId: "042nb2s44", name: "Massachusetts Institute of Technology", url: "https://www.mit.edu", order: 1 },
++    ],
+   };
+ };
+ 
+@@ -577,6 +585,10 @@ describe("EditProfileForm", () => {
+         twitter: "https://twitter.com/johndoe",
+         linkedin: "https://linkedin.com/in/johndoe",
+         personalProfiles: [{ url: "https://google.com", label: "Google" }],
++        affiliations: [
++          { rorId: "02jbv0t02", name: "Harvard University", url: "https://www.harvard.edu", order: 0 },
++          { rorId: "042nb2s44", name: "Massachusetts Institute of Technology", url: "https://www.mit.edu", order: 1 },
++        ],
+         temporaryPhotoUrl: "https://storage.com/figlocal-temp/1000000/temp.png",
+       },
+     });
+@@ -627,6 +639,10 @@ describe("EditProfileForm", () => {
+         twitter: "https://twitter.com/johndoe",
+         linkedin: "https://linkedin.com/in/johndoe",
+         personalProfiles: [{ url: "https://google.com", label: "Google" }],
++        affiliations: [
++          { rorId: "02jbv0t02", name: "Harvard University", url: "https://www.harvard.edu", order: 0 },
++          { rorId: "042nb2s44", name: "Massachusetts Institute of Technology", url: "https://www.mit.edu", order: 1 },
++        ],
+         temporaryPhotoUrl: "delete",
+       },
+     });
+@@ -889,6 +905,10 @@ describe("EditProfileForm", () => {
+         twitter: "https://twitter.com/johndoe",
+         linkedin: "https://linkedin.com/in/johndoe",
+         personalProfiles: [{ url: "https://google.com", label: "Google" }],
++        affiliations: [
++          { rorId: "02jbv0t02", name: "Harvard University", url: "https://www.harvard.edu", order: 0 },
++          { rorId: "042nb2s44", name: "Massachusetts Institute of Technology", url: "https://www.mit.edu", order: 1 },
++        ],
+         temporaryPhotoUrl: "delete",
+       },
+     });
+diff --git a/src/pages/profile/components/details/index.jsx b/src/pages/profile/components/details/index.jsx
+index 81d2937c4..a7de27ead 100644
+--- a/src/pages/profile/components/details/index.jsx
++++ b/src/pages/profile/components/details/index.jsx
+@@ -5,6 +5,7 @@ import GoToIcon from "@digital-science/figshare-fcl/icons/goToLink/large";
+ import OrcidIcon from "@digital-science/figshare-fcl/icons/orcid/small";
+ 
+ import SocialArea from "../social";
++import { AffiliationsList } from "../../../account/profileEdit/components/affiliations/AffiliationsList/AffiliationsList";
+ import Context from "../../context";
+ 
+ import style from "./index.css";
+@@ -35,6 +36,7 @@ export default class ProfileDetails extends Component {
+           {this.renderOrcId()}
+           {this.renderJobTitle()}
+           {this.renderLocation()}
++          {this.renderAffiliations()}
+           <SocialArea />
+         </div>
+       </section>
+@@ -119,4 +121,15 @@ export default class ProfileDetails extends Component {
+ 
+     return <p>{profile.location}</p>;
+   };
++
++  renderAffiliations = () => {
++    const { profile } = this.context;
++    const affiliations = profile.affiliations || [];
++
++    if (!affiliations.length) {
++      return null;
++    }
++
++    return <AffiliationsList affiliations={affiliations} />;
++  };
+ }
+diff --git a/src/pages/profile/components/details/index.test.tsx b/src/pages/profile/components/details/index.test.tsx
+index a4cc2ca08..272d56f85 100644
+--- a/src/pages/profile/components/details/index.test.tsx
++++ b/src/pages/profile/components/details/index.test.tsx
+@@ -1,6 +1,6 @@
+ import type { TestScope } from "types/testing";
+ import React from "react";
+-import { render, cleanup } from "@testing-library/react";
++import { render, cleanup, screen } from "@testing-library/react";
+ 
+ import mockedProfile from "../../mocks/profile";
+ import Context from "../../context";
+@@ -86,4 +86,39 @@ describe("<ProfileDetails />", () => {
+ 
+     teardown();
+   });
++
++  it("renders affiliations with links and plain text", () => {
++    const scope = setup();
++    scope.run();
++
++    // Affiliations with URLs render as links
++    expect(screen.getByText("University of Cambridge")).toBeInTheDocument();
++    expect(screen.getByText("University of Cambridge").closest("a")).toHaveAttribute("href", "https://www.cam.ac.uk");
++    expect(screen.getByText("University of Oxford")).toBeInTheDocument();
++    expect(screen.getByText("University of Oxford").closest("a")).toHaveAttribute("href", "https://www.ox.ac.uk");
++
++    // Affiliation without URL renders as plain text (no link)
++    expect(screen.getByText("Riverside Community Health Lab")).toBeInTheDocument();
++    expect(screen.getByText("Riverside Community Health Lab").closest("a")).toBeNull();
++
++    teardown();
++  });
++
++  it("hides affiliations when affiliations array is empty", () => {
++    const scope = setup({ affiliations: [] });
++    scope.run();
++
++    expect(screen.queryByText("University of Cambridge")).not.toBeInTheDocument();
++
++    teardown();
++  });
++
++  it("hides affiliations when affiliations is undefined", () => {
++    const scope = setup({ affiliations: undefined });
++    scope.run();
++
++    expect(screen.queryByText("University of Cambridge")).not.toBeInTheDocument();
++
++    teardown();
++  });
+ });
+diff --git a/src/pages/profile/index.gql b/src/pages/profile/index.gql
+index c28f6b20a..b10124232 100644
+--- a/src/pages/profile/index.gql
++++ b/src/pages/profile/index.gql
+@@ -8,6 +8,11 @@ query getData($id: Int!) {
+     bio: description
+     jobTitle
+     location
++    affiliations {
++      name
++      url
++      order
++    }
+     facebook
+     twitter
+     linkedin
+diff --git a/src/pages/profile/mocks/profile.ts b/src/pages/profile/mocks/profile.ts
+index e269a7196..49e73044e 100644
+--- a/src/pages/profile/mocks/profile.ts
++++ b/src/pages/profile/mocks/profile.ts
+@@ -71,4 +71,9 @@ export default {
+     { url: "https://elements.com", label: "Elements profile" },
+     { url: "https://google.com" },
+   ],
++  affiliations: [
++    { name: "University of Cambridge", url: "https://www.cam.ac.uk", order: 0 },
++    { name: "University of Oxford", url: "https://www.ox.ac.uk", order: 1 },
++    { name: "Riverside Community Health Lab", url: "", order: 2 },
++  ],
+ };

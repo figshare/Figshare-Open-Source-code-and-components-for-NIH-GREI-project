@@ -1,0 +1,96 @@
+diff --git a/src/figcore/lib/identifier/doi/helper.py b/src/figcore/lib/identifier/doi/helper.py
+index fa19d9c03..169fc8c42 100644
+--- a/src/figcore/lib/identifier/doi/helper.py
++++ b/src/figcore/lib/identifier/doi/helper.py
+@@ -655,7 +655,10 @@ class DOIHelper(object):
+         root.set("xmlns", "http://datacite.org/schema/kernel-4")
+         root.set("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
+         url1 = "http://datacite.org/schema/kernel-4"
+-        url2 = "http://schema.datacite.org/meta/kernel-4.4/metadata.xsd"
++        # 4.7 adds RAiD, SWHID (relatedIdentifierType) and Other (relationType).
++        # TODO(@teodoragrosu): send relationTypeInformation when relation is "Other" —
++        # needs a new column on related_material and UI support to capture the value.
++        url2 = "http://schema.datacite.org/meta/kernel-4.7/metadata.xsd"
+         root.set("xsi:schemaLocation", "{} {}".format(url1, url2))
+ 
+         # Set the desired DOI (Note that ANDS ignores this entry)
+diff --git a/tests/lib/identifier/doi/test_datacite.py b/tests/lib/identifier/doi/test_datacite.py
+index ed431b43d..afe255e7f 100644
+--- a/tests/lib/identifier/doi/test_datacite.py
++++ b/tests/lib/identifier/doi/test_datacite.py
+@@ -1275,7 +1275,7 @@ class TestDataCiteDOIHelperITBM(unittest.TestCase):
+         expected_xml = (
+             '<resource xmlns="http://datacite.org/schema/kernel-4"'
+             ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+-            ' xsi:schemaLocation="http://datacite.org/schema/kernel-4 http://schema.datacite.org/meta/kernel-4.4/metadata.xsd">'
++            ' xsi:schemaLocation="http://datacite.org/schema/kernel-4 http://schema.datacite.org/meta/kernel-4.7/metadata.xsd">'
+             '<identifier identifierType="DOI">10.0166/FK2.stagefigshare.123456</identifier>'
+             "<creators>"
+             "<creator>"
+@@ -1456,6 +1456,66 @@ class TestDataCiteDOIHelperITBM(unittest.TestCase):
+         self.assertIn('relationType="IsIdenticalTo"', xml)
+         self.assertIn('relationType="IsPartOf"', xml)
+ 
++    def test_raid_identifier_type_emitted_in_itbm_xml(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        mock_rm.side_effect = [
++            mock.Mock(identifier="https://raid.org/10.26259/5c43ca8f", identifier_type="RAiD", relation="References"),
++        ]
++        related_materials_field = mock.Mock(id=103)
++        related_materials_field.name = "related_materials"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"103": {"value": [401]}},
++            schema=[related_materials_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn('relatedIdentifierType="RAiD"', xml)
++        self.assertIn('relationType="References"', xml)
++        self.assertIn("https://raid.org/10.26259/5c43ca8f", xml)
++
++    def test_swhid_identifier_type_emitted_in_itbm_xml(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        mock_rm.side_effect = [
++            mock.Mock(
++                identifier="swh:1:cnt:94a9ed024d3859793618152ea559a168bbcbb5e2",
++                identifier_type="SWHID",
++                relation="IsSupplementTo",
++            ),
++        ]
++        related_materials_field = mock.Mock(id=103)
++        related_materials_field.name = "related_materials"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"103": {"value": [401]}},
++            schema=[related_materials_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn('relatedIdentifierType="SWHID"', xml)
++        self.assertIn('relationType="IsSupplementTo"', xml)
++        self.assertIn("swh:1:cnt:94a9ed024d3859793618152ea559a168bbcbb5e2", xml)
++
++    def test_other_relation_type_emitted_in_itbm_xml(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        mock_rm.side_effect = [
++            mock.Mock(identifier="10.1234/abc", identifier_type="DOI", relation="Other"),
++        ]
++        related_materials_field = mock.Mock(id=103)
++        related_materials_field.name = "related_materials"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"103": {"value": [401]}},
++            schema=[related_materials_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn('relatedIdentifierType="DOI"', xml)
++        self.assertIn('relationType="Other"', xml)
++
+     # ------------------------------------------------------------------
+     # Timeline dates
+     # ------------------------------------------------------------------

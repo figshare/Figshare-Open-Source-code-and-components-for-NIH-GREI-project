@@ -1,0 +1,27 @@
+diff --git a/figshare/graphql/v2_resolvers/review_item.py b/figshare/graphql/v2_resolvers/review_item.py
+index 35dce2420..7dfe24859 100644
+--- a/figshare/graphql/v2_resolvers/review_item.py
++++ b/figshare/graphql/v2_resolvers/review_item.py
+@@ -29,7 +29,7 @@ from figcore.lib.citations import get_citation_string
+ from figcore.lib.config import config
+ from figcore.lib.data.citation_static import DEFAULT_CITATION_STYLE
+ from figcore.lib.data.file_static import VIRUS_SCAN_CODES
+-from figcore.lib.data.related_material_static import IDENTIFIER_TYPE
++from figcore.lib.data.related_material_static import IDENTIFIER_TYPE_ITBM
+ from figcore.lib.es8.client import elasticsearch_client
+ from figcore.graphql.modifiers import item as item_modifier
+ from figcore.graphql.utils import process_ndownloader_url
+@@ -689,8 +689,11 @@ def article_to_dict(info, data_dump, review):
+                                     "relation": material.relation,
+                                     "identifierType": material.identifier_type,
+                                     "isLinkout": material.is_linkout,
+-                                    "isUrl": IDENTIFIER_TYPE.get(material.identifier_type, {}).get("is_url", False),
+-                                    "resolver": IDENTIFIER_TYPE.get(material.identifier_type, {}).get("resolver"),
++                                    # ITBM superset includes RAiD/SWHID; safe for all institutions
++                                    "isUrl": IDENTIFIER_TYPE_ITBM.get(material.identifier_type, {}).get(
++                                        "is_url", False
++                                    ),
++                                    "resolver": IDENTIFIER_TYPE_ITBM.get(material.identifier_type, {}).get("resolver"),
+                                 }
+                             )
+                     elif field_name == "funding_list":

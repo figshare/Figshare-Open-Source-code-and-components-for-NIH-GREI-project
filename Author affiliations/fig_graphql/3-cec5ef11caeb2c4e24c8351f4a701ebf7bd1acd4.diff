@@ -1,0 +1,86 @@
+diff --git a/figshare/graphql/v2_resolvers/affiliations.py b/figshare/graphql/v2_resolvers/affiliations.py
+index 66c52d27b..b14a2fac8 100644
+--- a/figshare/graphql/v2_resolvers/affiliations.py
++++ b/figshare/graphql/v2_resolvers/affiliations.py
+@@ -2,8 +2,8 @@ import json
+ 
+ 
+ def resolve_affiliations(obj, info):
+-    """Resolve ror_ids from the raw DB JSON blob into a list of affiliation dicts."""
+-    raw = obj.get("_raw_db", {}).get("user_profile.ror_ids", "[]")
++    """Resolve affiliations from the raw DB JSON blob into a list of affiliation dicts."""
++    raw = obj.get("_raw_db", {}).get("user_profile.affiliations", "[]")
+     if not raw or raw == "[]" or raw == "{}":
+         return []
+     if isinstance(raw, (bytes, bytearray)):
+diff --git a/figshare/graphql/v2_schema/types/user_page.py b/figshare/graphql/v2_schema/types/user_page.py
+index 2b7c0c337..73dffccef 100644
+--- a/figshare/graphql/v2_schema/types/user_page.py
++++ b/figshare/graphql/v2_schema/types/user_page.py
+@@ -113,7 +113,7 @@ class UserPage(GqlType):
+     @classmethod
+     def affiliations(cls):
+         return {
+-            "meta": {"depends_on": [{"db_model": "user_profile", "db_column": "ror_ids"}]},
++            "meta": {"depends_on": [{"db_model": "user_profile", "db_column": "affiliations"}]},
+             "type": [RorAffiliation],
+             "resolver": resolve_affiliations,
+         }
+diff --git a/tests/unit/test_user_page_affiliations.py b/tests/unit/test_user_page_affiliations.py
+index a85f0701c..cbcbb6e5e 100644
+--- a/tests/unit/test_user_page_affiliations.py
++++ b/tests/unit/test_user_page_affiliations.py
+@@ -6,19 +6,19 @@ from figshare.graphql.v2_resolvers.affiliations import resolve_affiliations
+ class TestResolveAffiliations:
+     """Tests for the affiliations resolver"""
+ 
+-    def test_returns_empty_list_when_ror_ids_is_empty_string(self):
+-        obj = {"_raw_db": {"user_profile.ror_ids": ""}}
++    def test_returns_empty_list_when_affiliations_is_empty_string(self):
++        obj = {"_raw_db": {"user_profile.affiliations": ""}}
+         assert resolve_affiliations(obj, None) == []
+ 
+-    def test_returns_empty_list_when_ror_ids_is_empty_json_array(self):
+-        obj = {"_raw_db": {"user_profile.ror_ids": "[]"}}
++    def test_returns_empty_list_when_affiliations_is_empty_json_array(self):
++        obj = {"_raw_db": {"user_profile.affiliations": "[]"}}
+         assert resolve_affiliations(obj, None) == []
+ 
+-    def test_returns_empty_list_when_ror_ids_is_empty_json_object(self):
+-        obj = {"_raw_db": {"user_profile.ror_ids": "{}"}}
++    def test_returns_empty_list_when_affiliations_is_empty_json_object(self):
++        obj = {"_raw_db": {"user_profile.affiliations": "{}"}}
+         assert resolve_affiliations(obj, None) == []
+ 
+-    def test_returns_empty_list_when_ror_ids_key_missing(self):
++    def test_returns_empty_list_when_affiliations_key_missing(self):
+         obj = {"_raw_db": {}}
+         assert resolve_affiliations(obj, None) == []
+ 
+@@ -31,7 +31,7 @@ class TestResolveAffiliations:
+             {"ror_id": "041kmwe10", "name": "University of Oxford", "url": "https://ox.ac.uk", "order": 0},
+             {"ror_id": "01an7q238", "name": "University of Cambridge", "url": "", "order": 1},
+         ]
+-        obj = {"_raw_db": {"user_profile.ror_ids": json.dumps(affiliations)}}
++        obj = {"_raw_db": {"user_profile.affiliations": json.dumps(affiliations)}}
+ 
+         result = resolve_affiliations(obj, None)
+ 
+@@ -42,7 +42,7 @@ class TestResolveAffiliations:
+     def test_handles_already_parsed_list(self):
+         """When the DB driver returns a parsed list instead of a JSON string"""
+         affiliations = [{"ror_id": "041kmwe10", "name": "University of Oxford", "url": "", "order": 0}]
+-        obj = {"_raw_db": {"user_profile.ror_ids": affiliations}}
++        obj = {"_raw_db": {"user_profile.affiliations": affiliations}}
+ 
+         result = resolve_affiliations(obj, None)
+ 
+@@ -51,7 +51,7 @@ class TestResolveAffiliations:
+     def test_handles_bytes_input(self):
+         """When the DB driver returns bytes instead of a string"""
+         affiliations = [{"ror_id": "041kmwe10", "name": "MIT", "url": "", "order": 0}]
+-        obj = {"_raw_db": {"user_profile.ror_ids": json.dumps(affiliations).encode("utf-8")}}
++        obj = {"_raw_db": {"user_profile.affiliations": json.dumps(affiliations).encode("utf-8")}}
+ 
+         result = resolve_affiliations(obj, None)
+ 

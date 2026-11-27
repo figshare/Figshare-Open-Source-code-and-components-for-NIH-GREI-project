@@ -1,0 +1,113 @@
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx
+index 204f9821d..e3f404f99 100644
+--- a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.test.tsx
+@@ -197,6 +197,58 @@ describe("AffiliationOverlay", () => {
+     teardown();
+   });
+ 
++  it("shows an error when name exceeds 255 characters", async() => {
++    const scope = setup();
++    scope.run();
++
++    const [nameInput] = screen.getAllByRole("textbox");
++    await scope.user.type(nameInput, "A".repeat(256));
++
++    await scope.user.click(screen.getByRole("button", { name: "Add affiliation" }));
++
++    await waitFor(() => {
++      expect(screen.getByText("Affiliation name must be 255 characters or fewer")).toBeInTheDocument();
++    });
++    expect(scope.props.onSave).not.toHaveBeenCalled();
++
++    teardown();
++  });
++
++  it("shows an error when URL exceeds 255 characters", async() => {
++    const scope = setup();
++    scope.run();
++
++    const [nameInput, urlInput] = screen.getAllByRole("textbox");
++    await scope.user.type(nameInput, "My Org");
++    await scope.user.type(urlInput, `https://example.com/${"a".repeat(244)}`);
++
++    await scope.user.click(screen.getByRole("button", { name: "Add affiliation" }));
++
++    await waitFor(() => {
++      expect(screen.getByText("URL must be 255 characters or fewer")).toBeInTheDocument();
++    });
++    expect(scope.props.onSave).not.toHaveBeenCalled();
++
++    teardown();
++  });
++
++  it("allows name and URL at exactly 255 characters", async() => {
++    const scope = setup();
++    scope.run();
++
++    const [nameInput, urlInput] = screen.getAllByRole("textbox");
++    await scope.user.type(nameInput, "A".repeat(255));
++    await scope.user.type(urlInput, `https://example.com/${"a".repeat(235)}`);
++
++    await scope.user.click(screen.getByRole("button", { name: "Add affiliation" }));
++
++    await waitFor(() => {
++      expect(scope.props.onSave).toHaveBeenCalled();
++    });
++
++    teardown();
++  });
++
+   it("calls onClose when the Cancel button is clicked", async() => {
+     const scope = setup();
+     scope.run();
+diff --git a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx
+index bb2c3ea6a..3eb726d52 100644
+--- a/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx
++++ b/src/pages/account/profileEdit/components/affiliations/AffiliationOverlay/AffiliationOverlay.tsx
+@@ -22,6 +22,9 @@ interface AffiliationOverlayProps {
+   onClose: () => void;
+ }
+ 
++const MAX_NAME_LENGTH = 255;
++const MAX_URL_LENGTH = 255;
++
+ // Schema defines the form fields, their initial values, labels, and required status
+ const AFFILIATION_FORM_SCHEMA = {
+   id: "edit-affiliation",
+@@ -58,6 +61,10 @@ const AFFILIATION_FORM_VALIDATION = {
+         return { valid: false, message: "Affiliation name is required" };
+       }
+ 
++      if (value.trim().length > MAX_NAME_LENGTH) {
++        return { valid: false, message: `Affiliation name must be ${MAX_NAME_LENGTH} characters or fewer` };
++      }
++
+       return undefined;
+     },
+   }],
+@@ -68,6 +75,10 @@ const AFFILIATION_FORM_VALIDATION = {
+     fn: (value: string) => {
+       const trimmed = value?.trim();
+ 
++      if (trimmed && trimmed.length > MAX_URL_LENGTH) {
++        return { valid: false, message: `URL must be ${MAX_URL_LENGTH} characters or fewer` };
++      }
++
+       if (trimmed && !isValidUrl(trimmed)) {
+         return { valid: false, message: "Please enter a valid URL" };
+       }
+@@ -149,11 +160,13 @@ export function AffiliationOverlay({
+                 validateOnBlur={true}
+                 component={TextFieldComponent}
+                 disabled={isNameDisabled}
++                maxLength={MAX_NAME_LENGTH}
+               />
+               <Field
+                 name="url"
+                 validateOnBlur={true}
+                 component={TextFieldComponent}
++                maxLength={MAX_URL_LENGTH}
+               />
+             </div>
+           </Form>

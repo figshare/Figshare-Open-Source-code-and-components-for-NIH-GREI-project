@@ -1,0 +1,313 @@
+diff --git a/src/replication/indexers/user/user.py b/src/replication/indexers/user/user.py
+index 7e584ae..ccd5944 100644
+--- a/src/replication/indexers/user/user.py
++++ b/src/replication/indexers/user/user.py
+@@ -3,8 +3,12 @@ import json
+ from replication.indexers import Index, get_by_id
+ from replication.indexers.user.db_queries import get_account_user_id, QUERY
+ from replication.indexers.user.mappings import db_fields, es_to_db_mapping
++from replication.indexers.lib.es_api import es_api
+ from replication.indexers.lib.utils.mappings import convert_db_to_es_dict
+ 
++# ES indices to query for the user's most recent published item
++PUBLIC_ITEM_ES_INDICES = "public_item_0,public_item_itbm_0"
++
+ 
+ class User(Index):
+ 
+@@ -53,6 +57,39 @@ class User(Index):
+             db_fields=db_fields,
+         )
+ 
++    @classmethod
++    def _get_last_work(cls, user_id):
++        """Query ES public item indices for the user's most recently published item.
++
++        Returns {"title": "...", "published_date": "..."} or empty dict if none found.
++        Raises on ES failures so callers don't silently overwrite existing data.
++        """
++        # Search for the most recent published item authored by this user
++        query = {
++            "query": {"term": {"authors.user_id": user_id}},
++            "sort": [{"dates.published": {"order": "desc"}}],
++            "size": 1,
++            "_source": ["title", "dates.published"],
++        }
++
++        # ignore_unavailable=true allows the search to succeed even if one of
++        # the index families (legacy or ITBM) doesn't exist on this instance.
++        response = es_api._make_es_request(
++            f"{es_api.host}/{PUBLIC_ITEM_ES_INDICES}/_search?ignore_unavailable=true",
++            method="POST",
++            data=query,
++        )
++        result = json.loads(response)
++        hits = result.get("hits", {}).get("hits", [])
++        if hits:
++            source = hits[0]["_source"]
++            return {
++                "title": source.get("title", ""),
++                "published_date": source.get("dates", {}).get("published"),
++            }
++
++        return {}
++
+     @classmethod
+     def get_upsert_data(cls, index, entity_id, es_mapping, query, fields):
+         db_data = get_by_id(cls.DATABASE, entity_id, QUERY, fields)
+@@ -85,4 +122,7 @@ class User(Index):
+             else:
+                 es_dict["affiliations"] = []
+ 
++            # Fetch last_work from public item ES indices
++            es_dict["last_work"] = cls._get_last_work(entity_id)
++
+             super().upsert_document(index, entity_id, es_dict)
+diff --git a/tests/replication/user/data.py b/tests/replication/user/data.py
+index a9461a4..a5a8f09 100644
+--- a/tests/replication/user/data.py
++++ b/tests/replication/user/data.py
+@@ -1,3 +1,27 @@
++# Shared ES search response for _get_last_work — used by all upsert tests.
++LAST_WORK_ES_RESPONSE = {
++    "hits": {
++        "hits": [
++            {
++                "_source": {
++                    "title": "Recent Paper on Quantum Computing",
++                    "dates": {"published": "2026-09-15 10:30:00"},
++                }
++            }
++        ]
++    }
++}
++
++# Expected last_work dict in the ES document after parsing the response above.
++LAST_WORK_EXPECTED = {
++    "title": "Recent Paper on Quantum Computing",
++    "published_date": "2026-09-15 10:30:00",
++}
++
++# Empty response — no published items found for the user.
++LAST_WORK_ES_EMPTY_RESPONSE = {"hits": {"hits": []}}
++
++
+ class TestUserWithAccountUpdateData:
+     @staticmethod
+     def dispatcher():
+@@ -59,6 +83,7 @@ class TestUserWithAccountUpdateData:
+             "affiliations": [
+                 {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
+             ],
++            "last_work": LAST_WORK_EXPECTED,
+         }
+ 
+ 
+@@ -121,6 +146,7 @@ class TestUserWithoutAccountUpdateData:
+             "affiliations": [
+                 {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
+             ],
++            "last_work": LAST_WORK_EXPECTED,
+         }
+ 
+ 
+@@ -185,6 +211,7 @@ class TestUserInsertData:
+             "affiliations": [
+                 {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
+             ],
++            "last_work": LAST_WORK_EXPECTED,
+         }
+ 
+ 
+@@ -275,6 +302,7 @@ class TestUserProfileUpdateData:
+             "affiliations": [
+                 {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
+             ],
++            "last_work": LAST_WORK_EXPECTED,
+         }
+ 
+ 
+@@ -339,6 +367,7 @@ class TestUserProfileInsertData:
+             "affiliations": [
+                 {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
+             ],
++            "last_work": LAST_WORK_EXPECTED,
+         }
+ 
+ 
+@@ -429,6 +458,7 @@ class TestAccountUpdateData:
+             "affiliations": [
+                 {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
+             ],
++            "last_work": LAST_WORK_EXPECTED,
+         }
+ 
+ 
+@@ -493,6 +523,7 @@ class TestAccountInsertData:
+             "affiliations": [
+                 {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
+             ],
++            "last_work": LAST_WORK_EXPECTED,
+         }
+ 
+ 
+diff --git a/tests/replication/user/test_account.py b/tests/replication/user/test_account.py
+index ff2ce03..3109dea 100644
+--- a/tests/replication/user/test_account.py
++++ b/tests/replication/user/test_account.py
+@@ -1,9 +1,12 @@
++import json
++
+ import pytest
+ 
+ from replication.indexers.lib.db_api import DbApi
+ from replication.indexers.lib.es_api import EsApi
+ from replication.indexers.user.user import User
+ from tests.replication.user import data
++from tests.replication.user.data import LAST_WORK_ES_RESPONSE
+ 
+ 
+ def test_account_update(mocker):
+@@ -18,6 +21,8 @@ def test_account_update(mocker):
+     db_data = test_data.db_get_by_id()
+     es_api_patch = mocker.patch.object(EsApi, "upsert_document")
+     mocker.patch.object(DbApi, "get_first", side_effect=mock_db_api_get_first)
++    # Mock the ES search for last_work
++    mocker.patch.object(EsApi, "_make_es_request", return_value=json.dumps(LAST_WORK_ES_RESPONSE))
+ 
+     User.on_message_account(test_data.dispatcher())
+     es_api_patch.assert_called_once_with(index="user", es_id=db_data["user.id"], data=test_data.es_message())
+@@ -35,6 +40,8 @@ def test_account_insert(mocker):
+     db_data = test_data.db_get_by_id()
+     es_api_patch = mocker.patch.object(EsApi, "upsert_document")
+     mocker.patch.object(DbApi, "get_first", side_effect=mock_db_api_get_first)
++    # Mock the ES search for last_work
++    mocker.patch.object(EsApi, "_make_es_request", return_value=json.dumps(LAST_WORK_ES_RESPONSE))
+ 
+     User.on_message_account(test_data.dispatcher())
+     es_api_patch.assert_called_once_with(
+diff --git a/tests/replication/user/test_get_last_work.py b/tests/replication/user/test_get_last_work.py
+new file mode 100644
+index 0000000..ba149d7
+--- /dev/null
++++ b/tests/replication/user/test_get_last_work.py
+@@ -0,0 +1,42 @@
++import json
++
++import pytest
++from replication.indexers.lib.es_api import EsApi
++from replication.indexers.user.user import User
++from tests.replication.user.data import (
++    LAST_WORK_ES_RESPONSE,
++    LAST_WORK_EXPECTED,
++    LAST_WORK_ES_EMPTY_RESPONSE,
++)
++
++
++def test_get_last_work_with_published_item(mocker):
++    """Returns title and published_date when the user has published items."""
++    mocker.patch.object(EsApi, "_make_es_request", return_value=json.dumps(LAST_WORK_ES_RESPONSE))
++
++    result = User._get_last_work(user_id=42)
++
++    assert result == LAST_WORK_EXPECTED
++    # Verify the ES query targets the correct indices and searches by user_id
++    EsApi._make_es_request.assert_called_once()
++    call_args = EsApi._make_es_request.call_args
++    assert "public_item_0,public_item_itbm_0" in call_args[0][0]
++    assert "ignore_unavailable=true" in call_args[0][0]
++    assert call_args[1]["data"]["query"]["term"]["authors.user_id"] == 42
++
++
++def test_get_last_work_no_published_items(mocker):
++    """Returns empty dict when the user has no published items."""
++    mocker.patch.object(EsApi, "_make_es_request", return_value=json.dumps(LAST_WORK_ES_EMPTY_RESPONSE))
++
++    result = User._get_last_work(user_id=99)
++
++    assert result == {}
++
++
++def test_get_last_work_es_request_fails(mocker):
++    """Propagates the exception so callers don't silently overwrite existing last_work."""
++    mocker.patch.object(EsApi, "_make_es_request", side_effect=Exception("ES connection refused"))
++
++    with pytest.raises(Exception, match="ES connection refused"):
++        User._get_last_work(user_id=42)
+diff --git a/tests/replication/user/test_user.py b/tests/replication/user/test_user.py
+index 7d73b4c..3f98d68 100644
+--- a/tests/replication/user/test_user.py
++++ b/tests/replication/user/test_user.py
+@@ -1,8 +1,11 @@
++import json
++
+ import pytest
+ 
+ from replication.indexers.lib.es_api import EsApi
+ from replication.indexers.user.user import User
+ from tests.replication.user import data
++from tests.replication.user.data import LAST_WORK_ES_RESPONSE
+ 
+ 
+ def test_user_with_account_update(mocker):
+@@ -11,6 +14,8 @@ def test_user_with_account_update(mocker):
+     es_api_patch = mocker.patch.object(EsApi, "upsert_document")
+     db_patch = mocker.patch("replication.indexers.user.user.get_by_id")
+     db_patch.return_value = db_data
++    # Mock the ES search for last_work
++    mocker.patch.object(EsApi, "_make_es_request", return_value=json.dumps(LAST_WORK_ES_RESPONSE))
+ 
+     User.on_message_user(test_data.dispatcher())
+     es_api_patch.assert_called_once_with(index="user", es_id=db_data["user.id"], data=test_data.es_message())
+@@ -22,6 +27,8 @@ def test_user_without_account_update(mocker):
+     es_api_patch = mocker.patch.object(EsApi, "upsert_document")
+     db_patch = mocker.patch("replication.indexers.user.user.get_by_id")
+     db_patch.return_value = db_data
++    # Mock the ES search for last_work
++    mocker.patch.object(EsApi, "_make_es_request", return_value=json.dumps(LAST_WORK_ES_RESPONSE))
+ 
+     User.on_message_user(test_data.dispatcher())
+     es_api_patch.assert_called_once_with(index="user", es_id=db_data["user.id"], data=test_data.es_message())
+@@ -33,6 +40,8 @@ def test_user_insert(mocker):
+     es_api_patch = mocker.patch.object(EsApi, "upsert_document")
+     db_patch = mocker.patch("replication.indexers.user.user.get_by_id")
+     db_patch.return_value = db_data
++    # Mock the ES search for last_work
++    mocker.patch.object(EsApi, "_make_es_request", return_value=json.dumps(LAST_WORK_ES_RESPONSE))
+ 
+     User.on_message_user(test_data.dispatcher())
+     es_api_patch.assert_called_once_with(
+diff --git a/tests/replication/user/test_user_profile.py b/tests/replication/user/test_user_profile.py
+index deff9ec..1b16289 100644
+--- a/tests/replication/user/test_user_profile.py
++++ b/tests/replication/user/test_user_profile.py
+@@ -1,8 +1,11 @@
++import json
++
+ import pytest
+ 
+ from replication.indexers.lib.es_api import EsApi
+ from replication.indexers.user.user import User
+ from tests.replication.user import data
++from tests.replication.user.data import LAST_WORK_ES_RESPONSE
+ 
+ 
+ def test_user_profile_update(mocker):
+@@ -11,6 +14,8 @@ def test_user_profile_update(mocker):
+     es_api_patch = mocker.patch.object(EsApi, "upsert_document")
+     db_patch = mocker.patch("replication.indexers.user.user.get_by_id")
+     db_patch.return_value = db_data
++    # Mock the ES search for last_work
++    mocker.patch.object(EsApi, "_make_es_request", return_value=json.dumps(LAST_WORK_ES_RESPONSE))
+ 
+     User.on_message_user_profile(test_data.dispatcher())
+     es_api_patch.assert_called_once_with(index="user", es_id=db_data["user.id"], data=test_data.es_message())
+@@ -22,6 +27,8 @@ def test_user_profile_insert(mocker):
+     es_api_patch = mocker.patch.object(EsApi, "upsert_document")
+     db_patch = mocker.patch("replication.indexers.user.user.get_by_id")
+     db_patch.return_value = db_data
++    # Mock the ES search for last_work
++    mocker.patch.object(EsApi, "_make_es_request", return_value=json.dumps(LAST_WORK_ES_RESPONSE))
+ 
+     User.on_message_user_profile(test_data.dispatcher())
+     es_api_patch.assert_called_once_with(

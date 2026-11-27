@@ -1,0 +1,812 @@
+diff --git a/src/shared/itmb/preview/UnderlyingFields/Values/AuthorPopover/AuthorPopover.module.css b/src/shared/itmb/preview/UnderlyingFields/Values/AuthorPopover/AuthorPopover.module.css
+new file mode 100644
+index 000000000..0cc213783
+--- /dev/null
++++ b/src/shared/itmb/preview/UnderlyingFields/Values/AuthorPopover/AuthorPopover.module.css
+@@ -0,0 +1,295 @@
++/* Popover dialog that opens below the clicked author */
++.popover {
++  position: fixed;
++  z-index: 10;
++
++  display: flex;
++  flex-direction: column;
++
++  box-sizing: border-box;
++  width: 400px;
++  padding: 24px;
++
++  align-items: flex-start;
++  gap: 12px;
++
++  border: 1px solid #ddd;
++  border-radius: 6px;
++  background: #fff;
++  box-shadow: 0 0 6px 3px rgba(70, 70, 70, 0.12);
++}
++
++/* Arrow triangle pointing up from the popover towards the author button */
++.arrow {
++  position: absolute;
++  top: -7px;
++  left: 24px;
++
++  overflow: hidden;
++
++  width: 14px;
++  height: 7px;
++}
++
++.arrow::before {
++  display: block;
++
++  width: 10px;
++  height: 10px;
++  margin: 0 auto;
++
++  content: "";
++  transform: rotate(45deg) translateY(3px);
++
++  border: 1px solid #ddd;
++  background: #fff;
++  box-shadow: 0 0 6px 3px rgba(70, 70, 70, 0.12);
++}
++
++/* Header row: author name + close button */
++.header {
++  display: flex;
++  flex-direction: row;
++
++  width: 100%;
++
++  align-items: flex-start;
++  gap: 12px;
++}
++
++/* Author name + optional subtitle text */
++.headerContent {
++  display: flex;
++  flex-direction: column;
++
++  min-width: 0;
++
++  flex: 1;
++  justify-content: center;
++  gap: 3px;
++}
++
++.authorName {
++  font-family: Arial, sans-serif;
++  font-size: 20px;
++  font-weight: 400;
++  line-height: 30px;
++
++  overflow: hidden;
++
++  width: 100%;
++  margin: 0;
++
++  white-space: nowrap;
++  text-overflow: ellipsis;
++
++  color: #252525;
++}
++
++/* Close (X) button */
++.closeButton {
++  display: flex;
++
++  width: 36px;
++  height: 36px;
++  padding: 10px;
++
++  cursor: pointer;
++  align-items: center;
++  justify-content: center;
++
++  color: #8d8d8d;
++  border: none;
++  border-radius: 3px;
++  background: none;
++
++  flex-shrink: 0;
++}
++
++/* SVG fill overrides for icon paths — lower-specificity selectors first to satisfy no-descending-specificity */
++.closeButton svg path {
++  fill: #8d8d8d;
++}
++
++.institutionIcon svg path {
++  fill: #464646;
++}
++
++.externalIcon svg path {
++  fill: #a60845;
++}
++
++.profileButtonIcon svg path {
++  fill: #fff;
++}
++
++.closeButton:hover svg path,
++.closeButton:focus-visible svg path {
++  fill: #464646;
++}
++
++.closeButton:hover,
++.closeButton:focus-visible {
++  background: #f5f5f5;
++}
++
++/* Horizontal separator between header and detail list */
++.separator {
++  width: 100%;
++  height: 1px;
++
++  background: #ddd;
++
++  flex-shrink: 0;
++}
++
++/* Vertical list of detail items (affiliations, orcid) */
++.detailList {
++  display: flex;
++  flex-direction: column;
++
++  width: 100%;
++  margin: 0;
++  padding: 0;
++
++  list-style: none;
++  gap: 6px;
++}
++
++/* A single detail row: icon + text/link + optional external-link icon */
++.detailItem {
++  display: flex;
++  flex-direction: row;
++
++  align-items: center;
++  gap: 8px;
++}
++
++.detailIcon {
++  display: flex;
++
++  width: 18px;
++  height: 18px;
++
++  align-items: center;
++  justify-content: center;
++
++  flex-shrink: 0;
++}
++
++/* Institution icon SVG has a tall non-square viewBox (10×36) — scale width to fill, let height auto-adjust */
++.institutionIcon svg {
++  width: 14px;
++  height: auto;
++}
++
++/* Plain text styling for affiliations (no link for now) */
++.detailText {
++  font-family: Arial, sans-serif;
++  font-size: 14px;
++  font-weight: 400;
++  line-height: 24px;
++
++  color: #464646;
++}
++
++/* Link styling for orcid */
++.detailLink {
++  font-family: Arial, sans-serif;
++  font-size: 14px;
++  font-weight: 400;
++  line-height: 24px;
++
++  overflow: hidden;
++
++  white-space: nowrap;
++  text-decoration: underline;
++  text-overflow: ellipsis;
++
++  color: #a60845;
++}
++
++.detailLink:hover,
++.detailLink:focus-visible {
++  text-decoration: none;
++}
++
++.externalIcon {
++  display: flex;
++
++  width: 12px;
++  height: 12px;
++
++  align-items: center;
++  justify-content: center;
++
++  flex-shrink: 0;
++}
++
++/* GoToLink icon has a tall viewBox (8×36) — scale width to fit, height auto */
++.externalIcon svg {
++  width: 12px;
++  height: auto;
++}
++
++/* "Individual contributors: ..." text for organization-type authors */
++.contributorsText {
++  font-family: Arial, sans-serif;
++  font-size: 16px;
++  font-weight: 400;
++  line-height: 24px;
++
++  width: 100%;
++  margin: 0;
++
++  color: #464646;
++}
++
++/* Primary "View author profile" button at the bottom */
++.profileButton {
++  display: flex;
++  flex-direction: row;
++
++  width: 100%;
++  padding: 6px 12px;
++
++  cursor: pointer;
++  text-decoration: none;
++  align-items: center;
++  justify-content: center;
++  gap: 12px;
++
++  border: none;
++  border-radius: 3px;
++  background: #a60845;
++}
++
++.profileButton:hover,
++.profileButton:focus-visible {
++  background: #8a0639;
++}
++
++.profileButtonLabel {
++  font-family: Arial, sans-serif;
++  font-size: 16px;
++  font-weight: 400;
++  line-height: 24px;
++
++  color: #fff;
++}
++
++.profileButtonIcon {
++  display: flex;
++
++  width: 16px;
++  height: 16px;
++
++  align-items: center;
++  justify-content: center;
++}
++
++/* GoToLink icon — scale width to fit, height auto */
++.profileButtonIcon svg {
++  width: 16px;
++  height: auto;
++}
+diff --git a/src/shared/itmb/preview/UnderlyingFields/Values/AuthorPopover/AuthorPopover.tsx b/src/shared/itmb/preview/UnderlyingFields/Values/AuthorPopover/AuthorPopover.tsx
+new file mode 100644
+index 000000000..159053899
+--- /dev/null
++++ b/src/shared/itmb/preview/UnderlyingFields/Values/AuthorPopover/AuthorPopover.tsx
+@@ -0,0 +1,184 @@
++import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
++import CancelIcon from "@digital-science/figshare-fcl/icons/cancel/medium";
++import GoToLinkIcon from "@digital-science/figshare-fcl/icons/goToLink/small";
++import InstitutionIcon from "@digital-science/figshare-fcl/icons/institution/small";
++import OrcidIcon from "@digital-science/figshare-fcl/icons/orcid/small";
++import { PERSON_TYPE_ORGANIZATIONAL } from "shared/itmb/personList";
++
++import styles from "./AuthorPopover.module.css";
++
++
++const ORCID_URL_PREFIX = "https://orcid.org/";
++
++
++interface Affiliation {
++  rorId?: string;
++  name?: string;
++}
++
++export interface AuthorPopoverData {
++  type?: number;
++  name: string;
++  orcidId?: string | null;
++  affiliations?: Affiliation[];
++  contributors?: string | null;
++  isActive?: boolean;
++  isPublic?: boolean;
++  publicUrl?: string | null;
++}
++
++interface AuthorPopoverProps {
++  author: AuthorPopoverData;
++  onClose: () => void;
++}
++
++
++export function AuthorPopover({ author, onClose }: AuthorPopoverProps) {
++  const popoverRef = useRef<HTMLDivElement>(null);
++  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
++
++  // Compute fixed position relative to the trigger button (parent wrapper element).
++  // Uses fixed positioning to avoid issues with CSS containing blocks in ancestor elements.
++  useLayoutEffect(() => {
++    function updatePosition() {
++      const wrapper = popoverRef.current?.parentElement;
++      if (!wrapper) {
++        return;
++      }
++      const rect = wrapper.getBoundingClientRect();
++      setPosition({ top: rect.bottom + 8, left: rect.left });
++    }
++
++    updatePosition();
++    window.addEventListener("scroll", updatePosition, true);
++    window.addEventListener("resize", updatePosition);
++
++    return () => {
++      window.removeEventListener("scroll", updatePosition, true);
++      window.removeEventListener("resize", updatePosition);
++    };
++  }, []);
++
++  // Close on click outside or Escape key.
++  // Skip the first frame so the mousedown that opened the popover doesn't immediately close it.
++  useEffect(() => {
++    let active = false;
++    const frameId = requestAnimationFrame(() => {
++      active = true;
++    });
++
++    function handleClickOutside(event: MouseEvent) {
++      // Check against the wrapper (parent) so clicking the trigger button doesn't count as "outside"
++      const wrapper = popoverRef.current?.parentNode;
++      if (active && wrapper && !wrapper.contains(event.target as Node)) {
++        onClose();
++      }
++    }
++
++    function handleKeyDown(event: KeyboardEvent) {
++      if (event.key === "Escape") {
++        onClose();
++      }
++    }
++
++    document.addEventListener("mousedown", handleClickOutside);
++    document.addEventListener("keydown", handleKeyDown);
++
++    return () => {
++      cancelAnimationFrame(frameId);
++      document.removeEventListener("mousedown", handleClickOutside);
++      document.removeEventListener("keydown", handleKeyDown);
++    };
++  }, [onClose]);
++
++  const handleCloseClick = useCallback((e: React.MouseEvent) => {
++    e.stopPropagation();
++    onClose();
++  }, [onClose]);
++
++  const isOrganization = author.type === PERSON_TYPE_ORGANIZATIONAL;
++  const hasAffiliations = author.affiliations && author.affiliations.length > 0;
++  const hasOrcid = Boolean(author.orcidId);
++  const hasProfileUrl = author.isActive && author.isPublic && author.publicUrl;
++  const hasDetails = hasAffiliations || hasOrcid;
++
++  return (
++    <div
++      ref={popoverRef}
++      aria-label={`Details for ${author.name}`}
++      className={styles.popover}
++      role="dialog"
++      style={position ? { top: position.top, left: position.left } : undefined}
++    >
++      <div className={styles.arrow} />
++
++      {/* Header: author name + close */}
++      <div className={styles.header}>
++        <div className={styles.headerContent}>
++          <h3 className={styles.authorName}>{author.name}</h3>
++        </div>
++        <button
++          aria-label="Close"
++          className={styles.closeButton}
++          type="button"
++          onClick={handleCloseClick}
++        >
++          <CancelIcon />
++        </button>
++      </div>
++
++      {/* Organization: separator + individual contributors text */}
++      {isOrganization && author.contributors && (
++        <>
++          <div className={styles.separator} />
++          <p className={styles.contributorsText}>Individual contributors: {author.contributors}</p>
++        </>
++      )}
++
++      {/* Individual: separator + detail list (affiliations, ORCID) */}
++      {!isOrganization && hasDetails && (
++        <>
++          <div className={styles.separator} />
++          <ul className={styles.detailList}>
++            {/* Affiliations */}
++            {(author.affiliations || []).map((aff) => (
++              <li key={aff.rorId || aff.name} className={styles.detailItem}>
++                <span className={`${styles.detailIcon} ${styles.institutionIcon}`}><InstitutionIcon /></span>
++                <span className={styles.detailText}>{aff.name}</span>
++              </li>
++            ))}
++
++            {/* ORCID */}
++            {hasOrcid && (
++              <li className={styles.detailItem}>
++                <span className={styles.detailIcon}><OrcidIcon /></span>
++                <a
++                  className={styles.detailLink}
++                  href={`${ORCID_URL_PREFIX}${author.orcidId}`}
++                  rel="noopener noreferrer"
++                  target="_blank"
++                >
++                  {author.orcidId}
++                </a>
++                <span className={styles.externalIcon}><GoToLinkIcon /></span>
++              </li>
++            )}
++          </ul>
++        </>
++      )}
++
++      {/* View author profile button — individuals only */}
++      {!isOrganization && hasProfileUrl && (
++        <a
++          className={styles.profileButton}
++          href={author.publicUrl!}
++          rel="noopener noreferrer"
++          target="_blank"
++        >
++          <span className={styles.profileButtonLabel}>View author profile</span>
++          <span className={styles.profileButtonIcon}><GoToLinkIcon /></span>
++        </a>
++      )}
++    </div>
++  );
++}
+diff --git a/src/shared/itmb/preview/UnderlyingFields/Values/AuthorPopover/index.tsx b/src/shared/itmb/preview/UnderlyingFields/Values/AuthorPopover/index.tsx
+new file mode 100644
+index 000000000..005a48022
+--- /dev/null
++++ b/src/shared/itmb/preview/UnderlyingFields/Values/AuthorPopover/index.tsx
+@@ -0,0 +1,2 @@
++export { AuthorPopover } from "./AuthorPopover";
++export type { AuthorPopoverData } from "./AuthorPopover";
+diff --git a/src/shared/itmb/preview/UnderlyingFields/Values/PersonListValue.jsx b/src/shared/itmb/preview/UnderlyingFields/Values/PersonListValue.jsx
+index 184598436..06e0755f6 100644
+--- a/src/shared/itmb/preview/UnderlyingFields/Values/PersonListValue.jsx
++++ b/src/shared/itmb/preview/UnderlyingFields/Values/PersonListValue.jsx
+@@ -1,11 +1,107 @@
+-import React from "react";
++import React, { useCallback, useState } from "react";
++import { Button } from "@digital-science/figshare-fcl/latest/Button";
++import { Block } from "@digital-science/figshare-fcl/latest/Block";
++import { compact } from "utils/compact";
++import { useIsClient } from "utils/hooks/useIsClient";
++import { useLimitedList, LimitedListShowMoreControls } from "utils/hooks/useLimitedList";
++import { NodeWithHighlights } from "shared/ui/highlights";
+ 
++import { FieldValuePropTypes } from "../constantsAndUtils";
+ 
+-import { authorLinkParser } from "../constantsAndUtils";
++import { AuthorPopover } from "./AuthorPopover";
++import styles from "./PersonListValue.module.css";
+ 
+-import { LinkOrLinkListValue } from "./LinkOrLinkListValue";
+ 
++/**
++ * Renders a person_list field value as a comma-separated list of clickable author buttons.
++ * Clicking an author opens a popover with their details (affiliations, ORCID, profile link).
++ */
++export function PersonListValue({ value, field, entity }) {
++  const [openIndex, setOpenIndex] = useState(null);
++  const isClient = useIsClient();
+ 
+-export function PersonListValue(props) {
+-  return <LinkOrLinkListValue {...props} listType="inline" parse={authorLinkParser} />;
++  const list = React.useMemo(() => {
++    if (Array.isArray(value)) {
++      return value;
++    }
++
++    return compact([value], compact.filters.nullish);
++  }, [value]);
++
++  const limitedValues = useLimitedList(list, 10, field.displayName || field.name);
++  const { limitedList, remainingList } = limitedValues;
++
++  const handleOpen = useCallback((index) => {
++    setOpenIndex((prev) => (prev === index ? null : index)); // eslint-disable-line no-confusing-arrow
++  }, []);
++
++  const handleClose = useCallback(() => {
++    setOpenIndex(null);
++  }, []);
++
++  if (!limitedList.length) {
++    return null;
++  }
++
++  const entityId = entity?.id;
++
++  return (
++    <Block
++      data-field-value-for-id={field.id}
++      data-field-value-for-name={field.name}
++      kind="layout-rows gap-1 span-full flex-wrap"
++      tag="dd"
++    >
++      <Block data-part="inline-list" kind="inline-block" style={ { listStyle: "none", padding: 0, margin: 0 } } tag="ul">
++        {limitedList.map((author, index, arr) => {
++          const authorName = author?.name || "Unknown Author";
++          const hasSeparator = arr.length > 1 && index < arr.length - 1;
++
++          return (
++            // eslint-disable-next-line react/no-array-index-key
++            <Block key={`${authorName}-${index}`} data-part="list-element" kind="inline" tag="li">
++              <span className={styles.authorWrapper}>
++                <Button
++                  aria-expanded={openIndex === index}
++                  aria-haspopup="dialog"
++                  aria-label={authorName}
++                  className={`${styles.authorButton} ${openIndex === index ? styles.authorButtonOpen : ""}`}
++                  em="high"
++                  inline="text"
++                  kind="tertiary"
++                  onClick={() => handleOpen(index)}
++                >
++                  <Button.Label><NodeWithHighlights itemId={entityId} text={authorName} /></Button.Label>
++                </Button>
++                {isClient && openIndex === index && (
++                  <AuthorPopover author={author} onClose={handleClose} />
++                )}
++              </span>
++              {hasSeparator && (<span aria-hidden="true">,&nbsp;</span>)}
++            </Block>
++          );
++        })}
++      </Block>
++      {/* SSR: render remaining authors hidden for search indexing */}
++      {!isClient && remainingList.length > 0 && (
++        <Block data-part="inline-list" kind="inline-block" style={ { listStyle: "none", padding: 0, margin: 0 } } tag="ul">
++          {remainingList.map((author, index) => {
++            const authorName = author?.name || "Unknown Author";
++
++            return (
++              // eslint-disable-next-line react/no-array-index-key
++              <Block key={`hidden-${authorName}-${index}`} data-part="list-element" data-visually-hidden={true} kind="inline" tag="li">
++                <span>{authorName}</span>
++                {index < remainingList.length - 1 && (<span aria-hidden="true">,&nbsp;</span>)}
++              </Block>
++            );
++          })}
++        </Block>
++      )}
++      <LimitedListShowMoreControls {...limitedValues} />
++    </Block>
++  );
+ }
++
++
++PersonListValue.propTypes = { ...FieldValuePropTypes };
+diff --git a/src/shared/itmb/preview/UnderlyingFields/Values/PersonListValue.module.css b/src/shared/itmb/preview/UnderlyingFields/Values/PersonListValue.module.css
+new file mode 100644
+index 000000000..cb2e0328e
+--- /dev/null
++++ b/src/shared/itmb/preview/UnderlyingFields/Values/PersonListValue.module.css
+@@ -0,0 +1,26 @@
++/* Wrapper for the author button + popover — keeps popover anchored to the button */
++.authorWrapper {
++  position: relative;
++
++  display: inline;
++}
++
++/* Dashed underline matching the item type trigger style (e.g. "Thesis") */
++.authorButton [data-part="button-label"] {
++  border-bottom: 1px dashed var(--color-border-tertiary);
++}
++
++/* Prevent the tertiary button's default text-decoration: underline on all states */
++.authorButton,
++.authorButton:hover,
++.authorButton:focus,
++.authorButton:focus-visible,
++.authorButton:active {
++  text-decoration: none !important;
++}
++
++/* When the popover is open, mimic the Tab focus-visible ring around the author button */
++.authorButtonOpen {
++  outline: none !important;
++  box-shadow: 0 0 0 2px #1e1e1e, 0 0 4px 2px #1e1e1e !important;
++}
+diff --git a/src/shared/itmb/preview/UnderlyingFields/Values/Values.test.tsx b/src/shared/itmb/preview/UnderlyingFields/Values/Values.test.tsx
+index f3671ad14..3bcbe5f2f 100644
+--- a/src/shared/itmb/preview/UnderlyingFields/Values/Values.test.tsx
++++ b/src/shared/itmb/preview/UnderlyingFields/Values/Values.test.tsx
+@@ -594,7 +594,16 @@ describe("Values", () => {
+         props: {
+           field: mockField,
+           metadata: mockMetadata,
+-          value: [{ name: "John Doe", isActive: true, isPublic: true, publicUrl: "https://example.com/john" }],
++          value: [
++            {
++              name: "John Doe",
++              isActive: true,
++              isPublic: true,
++              publicUrl: "https://example.com/john",
++              orcidId: "0000-0002-1825-0097",
++              affiliations: [{ rorId: "03vek6s52", name: "King's College London" }],
++            },
++          ],
+           ...props,
+         },
+       };
+@@ -610,22 +619,135 @@ describe("Values", () => {
+       cleanup();
+     }
+ 
+-    it("renders a link for an active and public author", () => {
++    it("renders a clickable button for each author", () => {
+       const scope = setup();
+       scope.run();
+ 
+-      const link = screen.getByRole("button", { name: "John Doe" });
+-      expect(link).toHaveAttribute("href", "https://example.com/john");
++      const button = screen.getByRole("button", { name: "John Doe" });
++      expect(button).toBeInTheDocument();
++      expect(button.tagName).toBe("BUTTON");
+ 
+       teardown();
+     });
+ 
+-    it("renders plain text (no link) for an inactive or private author", () => {
++    it("opens a popover with author details when clicked", () => {
++      const scope = setup();
++      scope.run();
++
++      const button = screen.getByRole("button", { name: "John Doe" });
++      fireEvent.click(button);
++
++      // Popover should show author name, affiliation, and ORCID
++      const dialog = screen.getByRole("dialog");
++      expect(dialog).toBeInTheDocument();
++      expect(screen.getByText("King's College London")).toBeInTheDocument();
++      expect(screen.getByText("0000-0002-1825-0097")).toBeInTheDocument();
++
++      // Affiliation is plain text (no link)
++      const affText = screen.getByText("King's College London");
++      expect(affText.closest("a")).toBeNull();
++
++      // ORCID links to orcid.org
++      const orcidLink = screen.getByText("0000-0002-1825-0097").closest("a");
++      expect(orcidLink).toHaveAttribute("href", "https://orcid.org/0000-0002-1825-0097");
++
++      // View profile button links to public URL
++      const profileLink = screen.getByText("View author profile").closest("a");
++      expect(profileLink).toHaveAttribute("href", "https://example.com/john");
++
++      teardown();
++    });
++
++    it("closes the popover when the close button is clicked", () => {
++      const scope = setup();
++      scope.run();
++
++      fireEvent.click(screen.getByRole("button", { name: "John Doe" }));
++      expect(screen.getByRole("dialog")).toBeInTheDocument();
++
++      fireEvent.click(screen.getByRole("button", { name: "Close" }));
++      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
++
++      teardown();
++    });
++
++    it("renders a button even for inactive or private authors", () => {
+       const scope = setup({ value: [{ name: "Jane Doe", isActive: false, isPublic: false }] });
+       scope.run();
+ 
+-      expect(screen.getByText("Jane Doe")).toBeInTheDocument();
+-      expect(scope.wrapper.container.querySelector("a[data-part=\"button\"]")).not.toBeInTheDocument();
++      const button = screen.getByRole("button", { name: "Jane Doe" });
++      expect(button).toBeInTheDocument();
++
++      teardown();
++    });
++
++    it("does not show 'View author profile' for private authors", () => {
++      const scope = setup({ value: [{ name: "Jane Doe", isActive: false, isPublic: false }] });
++      scope.run();
++
++      fireEvent.click(screen.getByRole("button", { name: "Jane Doe" }));
++      expect(screen.queryByText("View author profile")).not.toBeInTheDocument();
++
++      teardown();
++    });
++
++    it("opens a popover with only the header for authors without details", () => {
++      const scope = setup({ value: [{ name: "Ghost Author", isActive: false, isPublic: false }] });
++      scope.run();
++
++      fireEvent.click(screen.getByRole("button", { name: "Ghost Author" }));
++
++      const dialog = screen.getByRole("dialog");
++      expect(dialog).toBeInTheDocument();
++      // Popover heading shows the author name
++      expect(dialog.querySelector("h3")).toHaveTextContent("Ghost Author");
++      // No detail list, no profile button
++      expect(dialog.querySelector("ul")).toBeNull();
++      expect(screen.queryByText("View author profile")).not.toBeInTheDocument();
++
++      teardown();
++    });
++
++    it("renders organization popover with contributors text", () => {
++      const scope = setup({
++        value: [{
++          type: 2,
++          name: "The IMMUcan Consortium",
++          contributors: "Marie Dubois, Lars Andersson, Wei Chen",
++        }],
++      });
++      scope.run();
++
++      fireEvent.click(screen.getByRole("button", { name: "The IMMUcan Consortium" }));
++
++      const dialog = screen.getByRole("dialog");
++      expect(dialog).toBeInTheDocument();
++      expect(dialog.querySelector("h3")).toHaveTextContent("The IMMUcan Consortium");
++      expect(screen.getByText(/Individual contributors: Marie Dubois, Lars Andersson, Wei Chen/)).toBeInTheDocument();
++
++      // No affiliations, ORCID, or profile button for organizations
++      expect(dialog.querySelector("ul")).toBeNull();
++      expect(screen.queryByText("View author profile")).not.toBeInTheDocument();
++
++      teardown();
++    });
++
++    it("renders organization popover without contributors when contributors is null", () => {
++      const scope = setup({
++        value: [{
++          type: 2,
++          name: "ACME Corp",
++          contributors: null,
++        }],
++      });
++      scope.run();
++
++      fireEvent.click(screen.getByRole("button", { name: "ACME Corp" }));
++
++      const dialog = screen.getByRole("dialog");
++      expect(dialog).toBeInTheDocument();
++      expect(dialog.querySelector("h3")).toHaveTextContent("ACME Corp");
++      expect(screen.queryByText(/Individual contributors/)).not.toBeInTheDocument();
+ 
+       teardown();
+     });

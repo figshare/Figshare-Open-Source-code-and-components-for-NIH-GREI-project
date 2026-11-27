@@ -1,0 +1,42 @@
+diff --git a/scripts/sql_migrations/2026-10.sql b/scripts/sql_migrations/2026-10.sql
+new file mode 100644
+index 000000000..738046d7c
+--- /dev/null
++++ b/scripts/sql_migrations/2026-10.sql
+@@ -0,0 +1,3 @@
++-- FIG-47075: Add ROR ID columns for GRID-to-ROR migration
++ALTER TABLE `institution_config` ADD COLUMN `ror_id` varchar(255) NOT NULL DEFAULT '' AFTER `grid_id`;
++ALTER TABLE `user_profile` ADD COLUMN `ror_ids` varbinary(10000) NOT NULL DEFAULT '[]' AFTER `grid_ids`;
+diff --git a/src/figcore/lib/data/institution_static.py b/src/figcore/lib/data/institution_static.py
+index 35a2cdfe1..9985ce8fc 100644
+--- a/src/figcore/lib/data/institution_static.py
++++ b/src/figcore/lib/data/institution_static.py
+@@ -29,3 +29,6 @@ class InstitutionStatic(object):
+     }
+ 
+     PURE_MAIN_STREAM_NAME = "pure_main_stream_name"
++
++    # ROR (Research Organization Registry) status values stored as bytes in ES
++    ROR_STATUS_MAP = {"active": 1, "inactive": 2, "withdrawn": 3}
+diff --git a/src/figcore/models/dao/institution_config.py b/src/figcore/models/dao/institution_config.py
+index e12506ab7..112157913 100644
+--- a/src/figcore/models/dao/institution_config.py
++++ b/src/figcore/models/dao/institution_config.py
+@@ -15,6 +15,7 @@ class InstitutionConfig(Base, ExtendedBase):
+ 
+     institution_id = Column(INTEGER(unsigned=True), primary_key=True)
+     grid_id = Column(VARCHAR(255), nullable=False, server_default="", default="")
++    ror_id = Column(VARCHAR(255), nullable=False, server_default="", default="")
+     storage_info = Column(JsonDictBlob(), nullable=False, default={}, server_default="{}")
+     temp_storage_info = Column(JsonDictBlob(), nullable=False, default={}, server_default="{}")
+     previews_storage_info = Column(JsonDictBlob(), nullable=False, default={}, server_default="{}")
+diff --git a/src/figcore/models/dao/user_profile.py b/src/figcore/models/dao/user_profile.py
+index 6fbc1f3e3..9a3ecd811 100644
+--- a/src/figcore/models/dao/user_profile.py
++++ b/src/figcore/models/dao/user_profile.py
+@@ -26,4 +26,5 @@ class UserProfile(Base, ExtendedBase):
+     is_advisor = Column(SMALLINT(unsigned=True), nullable=False, server_default="0", default=0)
+     publications = Column(JsonMediumListBlob(), nullable=False, default=[])
+     grid_ids = Column(JsonDictBlob(), nullable=False, default={}, server_default="{}")
++    ror_ids = Column(JsonListBlob(length=10000), nullable=False, default=[], server_default="[]")
+     personal_profiles = Column(JsonListBlob(length=10000), nullable=False, default=[], server_default="[]")

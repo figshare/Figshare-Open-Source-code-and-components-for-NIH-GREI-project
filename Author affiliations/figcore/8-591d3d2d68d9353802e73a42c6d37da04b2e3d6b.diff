@@ -1,0 +1,128 @@
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index 0d5b066f0..a7b8482f9 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -2430,6 +2430,7 @@ class Article(UnderlyingFieldValueMixin, BrandedAPIEntity, ArticleStatic):
+         """
+         data = copy.deepcopy(data)
+         self._filter_uneditable_fields(data)
++        self._drop_legacy_itbm_keys(data, article_id=self.id, account_id=self.account_id)
+         group, item_type = self._ensure_group_and_item_type(data, self.institution_id, self.group, self.item_type)
+ 
+         _fields = {}
+@@ -2991,6 +2992,7 @@ class Article(UnderlyingFieldValueMixin, BrandedAPIEntity, ArticleStatic):
+         input_data = data
+         data = copy.deepcopy(input_data)
+         cls._filter_uneditable_fields(data)
++        cls._drop_legacy_itbm_keys(data)
+ 
+         group, item_type = cls._ensure_group_and_item_type(data)
+         if data.get("group_id"):
+@@ -3667,6 +3669,23 @@ class Article(UnderlyingFieldValueMixin, BrandedAPIEntity, ArticleStatic):
+             if field in form_data:
+                 del form_data[field]
+ 
++    @classmethod
++    def _drop_legacy_itbm_keys(cls, form_data, article_id=None, account_id=None):
++        """Drop legacy keys that have no meaning for ITBM items.
++
++        ITBM items keep their authors only in the authors underlying field (`fields`), never in the legacy
++        `authors` column / article_user table. Legacy payloads (API v2, the ORCID import task, ...) still send a
++        top-level `authors` list ({"name": ...} / {"id": ...} entries, without `user_id`); left in, it reaches the
++        legacy author writes in `ArticleInternals` and fails there (FIG-47778). Translating these payloads into
++        ITBM fields is tracked in FIG-47813.
++        """
++        if form_data.pop("authors", None) is not None:
++            # logged (ids only, no author names) so FIG-47813 can measure how many legacy callers still send it
++            FigcoreLogger.info(
++                f"Ignoring legacy `authors` key for ITBM item (account {account_id or form_data.get('account_id')}, "
++                f"article {article_id})"
++            )
++
+     def get_published_date(self):
+         """Return the published date - or the posted one, if published is not available."""
+         if self.has_itbm:
+diff --git a/tests/api/article/itbm/test_authors.py b/tests/api/article/itbm/test_authors.py
+index aa5289271..80981524b 100644
+--- a/tests/api/article/itbm/test_authors.py
++++ b/tests/api/article/itbm/test_authors.py
+@@ -1,7 +1,7 @@
+ from mock import Mock
+ 
+ import figcore.exc as fig_exc
+-from figcore.api import Account, Article, UnderlyingField, User
++from figcore.api import Account, Article, Project, UnderlyingField, User
+ from figcore.api.underlying_field.person_list import resolve_person_list
+ from figcore.lib import citations
+ from figcore.lib.data.user_static import UserStatic
+@@ -202,6 +202,36 @@ class TestCreateItbmAuthors(ItbmAuthorsTestBase):
+         with self.assertRaises(fig_exc.InvalidFormat):
+             Article.create_itbm_article(self.data)
+ 
++    def test_legacy_authors_key_ignored(self):
++        # API v2 legacy payloads send a top-level `authors` list ({"name": ...} / {"id": ...} entries, no user_id);
++        # ITBM items read their authors only from the authors underlying field, so that key must not reach the
++        # legacy article_user writes (it used to raise KeyError: 'user_id' -> HTTP 500, FIG-47778)
++        for legacy_authors in ([{"name": "John Doe M001"}], [{"id": self.owner.id}]):
++            for owner_is_author in (True, False):
++                with self.subTest(legacy_authors=legacy_authors, owner_is_author=owner_is_author):
++                    data = dict(self.data, authors=legacy_authors)
++                    article = Article.find(Article.create_itbm_article(data, owner_is_author=owner_is_author).id)
++
++                    expected_names = ["Jane Doe", "John Doe"]
++                    if owner_is_author:
++                        expected_names.insert(0, self.owner.name)
++                    self.assertEqual(self.names(article), expected_names)
++                    self.assertEqual(article.authors, [])
++                    self.assertFalse(article.metadata.authors)
++
++    def test_legacy_authors_key_ignored_through_project_actions(self):
++        # the route from the bug report: POST /v2/account/projects/{id}/articles -> ProjectActions.create_article
++        project = Project.create_project({"account_id": 1, "institution_id": 1, "group_id": 1, "title": "project"})
++        data = dict(self.data, authors=[{"name": "John Doe M001"}])
++        del data["account_id"], data["institution_id"], data["group_id"]
++
++        article = Account.find(1).actions_for(project).create_article(data)
++
++        article = Article.find(article.id)
++        self.assertEqual(article.project_id, project.id)
++        self.assertEqual(self.names(article), [self.owner.name, "Jane Doe", "John Doe"])
++        self.assertEqual(article.authors, [])
++
+ 
+ class TestUpdateItbmAuthors(ItbmAuthorsTestBase):
+     def setUp(self):
+@@ -226,6 +256,33 @@ class TestUpdateItbmAuthors(ItbmAuthorsTestBase):
+         self.assertEqual(article.authors, [])
+         self.assertFalse(article.metadata.authors)
+ 
++    def test_legacy_authors_key_ignored_on_update(self):
++        # same API v2 legacy `authors` key as on create (FIG-47778): ignored, the stored person_list is untouched
++        self.article.update_article(self.authors_update([JOHN]))
++        for legacy_authors in ([{"name": "John Doe M001"}], [{"id": self.owner.id}]):
++            with self.subTest(legacy_authors=legacy_authors):
++                self.article.update_article(
++                    {"authors": legacy_authors, "underlying_fields": {self.underlying_fields["title"]: "new title"}}
++                )
++                article = Article.find(self.article.id)
++
++                self.assertEqual(self.names(article), ["John Doe"])
++                self.assertEqual(article.title, "new title")
++                self.assertEqual(article.authors, [])
++                self.assertFalse(article.metadata.authors)
++
++    def test_legacy_authors_key_ignored_through_article_actions(self):
++        # the route used by PUT /v2/account/articles/{id}: ArticleActions.update (limits extractor + update_article)
++        self.article.update_article(self.authors_update([JOHN]))
++        Account.find(1).actions_for(self.article).update(
++            {"authors": [{"name": "John Doe M001"}], "underlying_fields": {self.underlying_fields["title"]: "new"}}
++        )
++
++        article = Article.find(self.article.id)
++        self.assertEqual(self.names(article), ["John Doe"])
++        self.assertEqual(article.title, "new")
++        self.assertEqual(article.authors, [])
++
+     def test_skip_validation_still_processes_authors(self):
+         with self.assertRaises(fig_exc.InvalidFormat):
+             self.article.update_article(self.authors_update([{"name": "Old shape"}]), skip_validation=True)

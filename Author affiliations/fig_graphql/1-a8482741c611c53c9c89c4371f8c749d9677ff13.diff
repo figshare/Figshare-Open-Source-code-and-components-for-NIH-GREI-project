@@ -1,0 +1,305 @@
+diff --git a/figshare/graphql/v2_resolvers/es_search/ror.py b/figshare/graphql/v2_resolvers/es_search/ror.py
+new file mode 100644
+index 000000000..6ff780a85
+--- /dev/null
++++ b/figshare/graphql/v2_resolvers/es_search/ror.py
+@@ -0,0 +1,64 @@
++from typing import Dict
++from elasticsearch_dsl import Search, Q
++
++from figcore.lib.es8.client import elasticsearch_client
++
++# Only return active organizations (matching InstitutionStatic.ROR_STATUS_MAP)
++ROR_STATUS_ACTIVE = 1
++ROR_URL_PREFIX = "https://ror.org/"
++
++
++def search_ror_organizations(
++    obj,
++    info,
++    search_term: str,
++    page_size: int = 10,
++    cursor: str = None,
++) -> Dict[str, any]:
++    """Search ROR organizations for affiliation autocomplete.
++
++    Matches on org name (search-as-you-type), exact ror_id, and parent_ror_id
++    so a ROR ID returns both the org and its children.
++    Accepts full ROR URLs (https://ror.org/...) or stripped IDs.
++    """
++    index = "ror"
++
++    # Strip ROR URL prefix if user pastes a full URL
++    stripped_term = search_term.replace(ROR_URL_PREFIX, "") if search_term.startswith(ROR_URL_PREFIX) else search_term
++
++    search = Search()
++    search = search.filter("term", status=ROR_STATUS_ACTIVE)
++    search = search.query(
++        Q(
++            "bool",
++            should=[
++                Q(
++                    "multi_match",
++                    query=stripped_term,
++                    fields=["name.search", "name.search._2gram", "name.search._3gram"],
++                    type="bool_prefix",
++                    operator="and",
++                ),
++                Q("term", ror_id=stripped_term),
++                Q("term", parent_ror_id=stripped_term),
++            ],
++            minimum_should_match=1,
++        )
++    )
++
++    sort = [{"by": "_score", "type": "desc"}]
++    result = elasticsearch_client.execute(
++        index=index, search=search, page_size=page_size, cursor=cursor, sort=sort, cursor_sorting="ror_id"
++    )
++
++    organizations = []
++    for hit in result["hits"]:
++        org = hit["_source"]
++        organizations.append(
++            {
++                "ror_id": org["ror_id"],
++                "name": org["name"],
++            }
++        )
++
++    return {"cursor": result.get("cursor"), "count": result.get("total"), "elements": organizations}
+diff --git a/figshare/graphql/v2_schema/queries.py b/figshare/graphql/v2_schema/queries.py
+index 5ff0bbebb..ba7a19838 100644
+--- a/figshare/graphql/v2_schema/queries.py
++++ b/figshare/graphql/v2_schema/queries.py
+@@ -54,6 +54,7 @@ from figshare.graphql.v2_resolvers.es_search import (
+ from figshare.graphql.v2_resolvers.es_search import private_projects_search as private_projects_search_resolver
+ 
+ from figshare.graphql.v2_resolvers import integrations as integrations_resolver
++from figshare.graphql.v2_resolvers.es_search import ror as ror_resolvers
+ from figshare.graphql.v2_resolvers.es_search import sherpa as sherpa_resolvers
+ from figshare.graphql.v2_resolvers.es_search import user as users_resolver
+ from figshare.graphql.v2_resolvers.account import verify_reset_password_token
+@@ -676,6 +677,22 @@ class Queries(GqlRootType):
+             "resolver": new_search_resolvers.search_large_list_field_values,
+         }
+ 
++    @classmethod
++    def search_ror_organizations(cls):
++        return {
++            "params": [
++                {"name": "search_term", "type": "String", "mandatory": True},
++                {"name": "page_size", "type": "Int", "mandatory": False},
++                {"name": "cursor", "type": "String", "mandatory": False},
++            ],
++            "type": {
++                "implements": "cursorCountPagination",
++                "name": "RorAffiliationList",
++                "type": "RorAffiliation",
++            },
++            "resolver": ror_resolvers.search_ror_organizations,
++        }
++
+     @classmethod
+     def search_sherpa_publishers(cls):
+         return {
+diff --git a/tests/functional/graphql/new_search/test_search_ror_organizations.py b/tests/functional/graphql/new_search/test_search_ror_organizations.py
+new file mode 100644
+index 000000000..71082f8bf
+--- /dev/null
++++ b/tests/functional/graphql/new_search/test_search_ror_organizations.py
+@@ -0,0 +1,194 @@
++import pytest
++
++from figcore.lib.es8.client import elasticsearch_client
++
++from tests.functional.graphql import send_graphql_request
++from tests.helpers import factory
++
++es_ror_response = {
++    "total": 2,
++    "cursor": "next-cursor",
++    "hits": [
++        {
++            "_index": "ror",
++            "_id": "1",
++            "_score": 10.5,
++            "_source": {
++                "ror_id": "041kmwe10",
++                "name": "University of Oxford",
++                "status": 1,
++            },
++            "sort": ["041kmwe10"],
++        },
++        {
++            "_index": "ror",
++            "_id": "2",
++            "_score": 8.2,
++            "_source": {
++                "ror_id": "01an7q238",
++                "name": "University of Cambridge",
++                "status": 1,
++            },
++            "sort": ["01an7q238"],
++        },
++    ],
++}
++
++es_ror_empty_response = {
++    "total": 0,
++    "cursor": None,
++    "hits": [],
++}
++
++
++SEARCH_QUERY = """
++    query SearchRorOrganizations($searchTerm: String!, $pageSize: Int, $cursor: String) {
++        searchRorOrganizations(searchTerm: $searchTerm, pageSize: $pageSize, cursor: $cursor) {
++            cursor
++            count
++            elements {
++                rorId
++                name
++            }
++        }
++    }
++"""
++
++
++@pytest.fixture
++def mock_es_client(patcher):
++    obj = patcher.object(elasticsearch_client, "execute")
++    obj.return_value = es_ror_response
++
++    return obj
++
++
++@pytest.fixture
++def mock_es_client_empty(patcher):
++    obj = patcher.object(elasticsearch_client, "execute")
++    obj.return_value = es_ror_empty_response
++
++    return obj
++
++
++@pytest.fixture
++def institution():
++    inst = factory.institution()
++    inst.id = 1
++
++    return inst
++
++
++@pytest.fixture
++def account(institution):
++    account = factory.account()
++    account.institution_id = 1
++    account.institution = institution
++
++    return account
++
++
++def test_search_ror_organizations(testapp, mock_es_client, login, account):
++    """Search returns organizations with rorId and name"""
++    login(account)
++
++    response = send_graphql_request(
++        testapp,
++        SEARCH_QUERY,
++        variables={"searchTerm": "Oxford", "pageSize": 10},
++    )
++
++    data = response.json["data"]["searchRorOrganizations"]
++    assert data["count"] == 2
++    assert data["cursor"] == "next-cursor"
++    assert len(data["elements"]) == 2
++    assert data["elements"][0]["rorId"] == "041kmwe10"
++    assert data["elements"][0]["name"] == "University of Oxford"
++    assert data["elements"][1]["rorId"] == "01an7q238"
++    assert data["elements"][1]["name"] == "University of Cambridge"
++
++
++def test_search_ror_organizations_returns_stripped_ror_id(testapp, mock_es_client, login, account):
++    """rorId should be the stripped ID, not the full URL"""
++    login(account)
++
++    response = send_graphql_request(
++        testapp,
++        SEARCH_QUERY,
++        variables={"searchTerm": "Oxford"},
++    )
++
++    data = response.json["data"]["searchRorOrganizations"]
++    # Should NOT contain the URL prefix
++    assert not data["elements"][0]["rorId"].startswith("https://ror.org/")
++
++
++def test_search_ror_organizations_empty_results(testapp, mock_es_client_empty, login, account):
++    """Search with no matches returns empty elements and no cursor"""
++    login(account)
++
++    response = send_graphql_request(
++        testapp,
++        SEARCH_QUERY,
++        variables={"searchTerm": "nonexistent"},
++    )
++
++    data = response.json["data"]["searchRorOrganizations"]
++    assert data["count"] == 0
++    assert data["cursor"] is None
++    assert data["elements"] == []
++
++
++def test_search_ror_organizations_strips_url_prefix(testapp, mock_es_client, login, account):
++    """When user pastes a full ROR URL, the prefix should be stripped before searching"""
++    login(account)
++
++    response = send_graphql_request(
++        testapp,
++        SEARCH_QUERY,
++        variables={"searchTerm": "https://ror.org/041kmwe10"},
++    )
++
++    # Verify the ES client was called with stripped term
++    call_kwargs = mock_es_client.call_args
++    search_body = call_kwargs.kwargs.get("search") or call_kwargs[1].get("search")
++    search_dict = search_body.to_dict()
++
++    # Active-status filter must be present
++    assert {"term": {"status": 1}} in search_dict["query"]["bool"]["filter"]
++
++    # The bool query should require at least one should clause to match
++    bool_query = search_dict["query"]["bool"]
++    assert bool_query["minimum_should_match"] == 1
++
++    should_clauses = bool_query["should"]
++
++    # The term query on ror_id should use the stripped value
++    term_clause = [c for c in should_clauses if "term" in c and "ror_id" in c["term"]][0]
++    assert term_clause["term"]["ror_id"] == "041kmwe10"
++
++    # The parent_ror_id clause should also use the stripped value
++    parent_clause = [c for c in should_clauses if "term" in c and "parent_ror_id" in c["term"]][0]
++    assert parent_clause["term"]["parent_ror_id"] == "041kmwe10"
++
++    # The multi_match clause should be present for name search
++    multi_match_clause = [c for c in should_clauses if "multi_match" in c][0]
++    assert multi_match_clause["multi_match"]["query"] == "041kmwe10"
++    assert multi_match_clause["multi_match"]["operator"] == "and"
++
++
++def test_search_ror_organizations_with_pagination(testapp, mock_es_client, login, account):
++    """Cursor and pageSize are forwarded to ES"""
++    login(account)
++
++    response = send_graphql_request(
++        testapp,
++        SEARCH_QUERY,
++        variables={"searchTerm": "University", "pageSize": 5, "cursor": "prev-cursor"},
++    )
++
++    call_kwargs = mock_es_client.call_args
++    kwargs = call_kwargs.kwargs if call_kwargs.kwargs else call_kwargs[1]
++    assert kwargs["page_size"] == 5
++    assert kwargs["cursor"] == "prev-cursor"
++    assert kwargs["index"] == "ror"

@@ -1,0 +1,2933 @@
+diff --git a/figshare_api2/api_docs b/figshare_api2/api_docs
+index aa771710..6e6e8afb 160000
+--- a/figshare_api2/api_docs
++++ b/figshare_api2/api_docs
+@@ -1 +1 @@
+-Subproject commit aa771710cf2c0a3263ac61543f1662357f95c75f
++Subproject commit 6e6e8afb4b140bb6bea21d5405530be771824761
+diff --git a/figshare_api2/app/parsers/oai.py b/figshare_api2/app/parsers/oai.py
+index c2c00891..c4255d79 100644
+--- a/figshare_api2/app/parsers/oai.py
++++ b/figshare_api2/app/parsers/oai.py
+@@ -9,15 +9,24 @@ from ..presenters.oai.set import oai_supplier_find
+ import six
+ 
+ KNOWN_PREFIXES = list(METADATA_PRESENTERS.keys())
++V3_ONLY_PREFIXES = {"oai_openaire"}
+ RESUMABLE_VERBS = ["ListSets", "ListIdentifiers", "ListRecords"]
+ KNOWN_VERBS = ["Identify", "ListMetadataFormats", "GetRecord"] + RESUMABLE_VERBS
+ 
+ 
+ class BaseOAIRequest(dict):
+-    def __init__(self, http_request_params):
++    def __init__(self, http_request_params, is_v3=False):
+         self._valid_keys = []
++        self.is_v3 = is_v3
+         self.smart_set_update(http_request_params)
+ 
++    def allowed_metadata_prefixes(self):
++        """Metadata prefixes valid for this request's API version -- excludes
++        V3_ONLY_PREFIXES on v2."""
++        if self.is_v3:
++            return KNOWN_PREFIXES
++        return [prefix for prefix in KNOWN_PREFIXES if prefix not in V3_ONLY_PREFIXES]
++
+     def smart_set_update(self, dictable):
+         for key, value in six.iteritems(dictable):
+             if key == "set" and not isinstance(value, (list, tuple)):
+@@ -102,7 +111,7 @@ class GetRecordRequest(BaseOAIRequest):
+         invMess = "Metadata prefix not supported by the item or by the repository."
+         self.must_have(
+             "metadataPrefix",
+-            in_=KNOWN_PREFIXES,
++            in_=self.allowed_metadata_prefixes(),
+             invalid=CannotDiseminateFormat,
+             message="Missing argument: metadataPrefix",
+             invalidMessage=invMess,
+@@ -118,7 +127,12 @@ class ResumableRequest(BaseOAIRequest):
+ 
+ class ListRecordsRequest(BaseOAIRequest):
+     def validate_args(self):
+-        self.must_have("metadataPrefix", in_=KNOWN_PREFIXES, otherwise=BadArgument, invalid=CannotDiseminateFormat)
++        self.must_have(
++            "metadataPrefix",
++            in_=self.allowed_metadata_prefixes(),
++            otherwise=BadArgument,
++            invalid=CannotDiseminateFormat,
++        )
+         self.might_have("from", validation=is_valid_datetime)
+         self.might_have("until", validation=is_valid_datetime)
+         self.might_have("set", validation=is_valid_list_of_set, message="No value for argument: set")
+diff --git a/figshare_api2/app/presenters/oai/metadataformat.py b/figshare_api2/app/presenters/oai/metadataformat.py
+index f665503e..e5894293 100644
+--- a/figshare_api2/app/presenters/oai/metadataformat.py
++++ b/figshare_api2/app/presenters/oai/metadataformat.py
+@@ -93,6 +93,18 @@ class OAICERIFOpenAireFormatPresenter(OAIBasePresenter):
+         self["metadataNamespace"] = "https://www.openaire.eu/cerif-profile/1.1/"
+ 
+ 
++class OAIREFormatPresenter(OAIBasePresenter):
++
++    element_name = "metadataFormat"
++
++    def __init__(self, *args, **kwargs):
++        super(OAIREFormatPresenter, self).__init__(*args, **kwargs)
++
++        self["metadataPrefix"] = "oai_openaire"
++        self["schema"] = "https://www.openaire.eu/schema/repo-lit/4.0/openaire.xsd"
++        self["metadataNamespace"] = "http://namespace.openaire.eu/schema/oaire/"
++
++
+ class OAIMetadataFormatPresenter(OAIBasePresenter):
+     element_name = "ListMetadataFormats"
+     known_format_types = [
+@@ -106,9 +118,18 @@ class OAIMetadataFormatPresenter(OAIBasePresenter):
+         OAICERIFOpenAireFormatPresenter,
+     ]
+ 
++    v3_only_format_types = [
++        OAIREFormatPresenter,
++    ]
++
++    def __init__(self, is_v3=False, *args, **kwargs):
++        super(OAIMetadataFormatPresenter, self).__init__(*args, **kwargs)
++        self.is_v3 = is_v3
++
+     @property
+     def known_formats(self):
+-        return [item() for item in self.known_format_types]
++        format_types = self.known_format_types + (self.v3_only_format_types if self.is_v3 else [])
++        return [item() for item in format_types]
+ 
+     def to_xml(self):
+         return self.list(self.known_formats, parent_name=self.element_name)
+diff --git a/figshare_api2/app/presenters/oai/record.py b/figshare_api2/app/presenters/oai/record.py
+index 20b04d54..0da2bb30 100644
+--- a/figshare_api2/app/presenters/oai/record.py
++++ b/figshare_api2/app/presenters/oai/record.py
+@@ -73,6 +73,155 @@ CERIF = "urn:xmlns:org:eurocris:cerif-1.6-2"
+ CERIF_OPENAIRE = "https://www.openaire.eu/cerif-profile/1.1/"
+ RIFCIS = "http://ands.org.au/standards/rif-cs/registryObjects"
+ 
++NS_OAIRE = "http://namespace.openaire.eu/schema/oaire/"
++NS_OAIRE_XSD = "https://www.openaire.eu/schema/repo-lit/4.0/openaire.xsd"
++NS_VC = "http://www.w3.org/2007/XMLSchema-versioning"
++NS_XML = "http://www.w3.org/XML/1998/namespace"
++
++OAIRE_RESOURCE_TYPE_GENERAL = {
++    "Product": "dataset",
++    "Publication": "literature",
++}
++
++OAIRE_RESOURCE_TYPE_URI = {
++    "dataset": "http://purl.org/coar/resource_type/c_ddb1",
++    "literature": "http://purl.org/coar/resource_type/c_18cf",
++}
++
++OAIRE_RESOURCE_TYPE_GENERAL_BY_COAR_CODE = {
++    "c_ddb1": "dataset",
++    "c_5ce6": "software",
++    "c_1162": "literature",
++    "c_0640": "literature",
++    "c_6501": "literature",
++    "c_b239": "literature",
++    "c_7a1f": "literature",
++    "c_86bc": "literature",
++    "c_2f33": "literature",
++    "c_3248": "literature",
++    "c_ba08": "literature",
++    "c_f744": "literature",
++    "c_c94f": "literature",
++    "c_5794": "literature",
++    "c_6670": "literature",
++    "c_3e5a": "literature",
++    "c_beb9": "literature",
++    "c_db06": "literature",
++    "c_8544": "literature",
++    "c_0857": "literature",
++    "c_bdcc": "literature",
++    "c_2659": "literature",
++    "c_545b": "literature",
++    "c_816b": "literature",
++    "c_93fc": "literature",
++    "c_ba1f": "literature",
++    "c_baaf": "literature",
++    "c_efa0": "literature",
++    "c_71bd": "literature",
++    "c_8042": "literature",
++    "c_46ec": "literature",
++    "c_18cf": "literature",
++    "c_18cp": "literature",
++    "c_18co": "literature",
++    "c_18ww": "literature",
++    "c_18wz": "literature",
++    "c_18wq": "literature",
++    "c_186u": "literature",
++    "c_18op": "literature",
++    "c_18hj": "literature",
++    "c_18ws": "literature",
++    "c_18gh": "literature",
++    "c_dcae04bc": "literature",
++    "c_2df8fbb1": "literature",
++    "c_15cd": "literature",
++    "c_18cw": "literature",
++    "c_7ad9": "other research product",
++    "c_e9a0": "other research product",
++    "c_c513": "other research product",
++    "c_8a7e": "other research product",
++    "c_1843": "other research product",
++    "c_ecc8": "other research product",
++    "c_393c": "other research product",
++    "c_12cc": "other research product",
++    "c_12cd": "other research product",
++    "c_12ce": "other research product",
++    "c_18cc": "other research product",
++    "c_18cd": "other research product",
++}
++
++OAIRE_RESOURCE_TYPE_LABEL_BY_COAR_CODE = {
++    "c_ddb1": "dataset",
++    "c_5ce6": "software",
++    "c_1162": "annotation",
++    "c_0640": "journal",
++    "c_6501": "journal article",
++    "c_b239": "editorial",
++    "c_7a1f": "bachelor thesis",
++    "c_86bc": "bibliography",
++    "c_2f33": "book",
++    "c_3248": "book part",
++    "c_ba08": "book review",
++    "c_f744": "conference proceedings",
++    "c_c94f": "conference object",
++    "c_5794": "conference paper",
++    "c_6670": "conference poster",
++    "c_3e5a": "contribution to journal",
++    "c_beb9": "data paper",
++    "c_db06": "doctoral thesis",
++    "c_8544": "lecture",
++    "c_0857": "letter",
++    "c_bdcc": "master thesis",
++    "c_2659": "periodical",
++    "c_545b": "letter to the editor",
++    "c_816b": "preprint",
++    "c_93fc": "report",
++    "c_ba1f": "report part",
++    "c_baaf": "research proposal",
++    "c_efa0": "review",
++    "c_71bd": "technical documentation",
++    "c_8042": "working paper",
++    "c_46ec": "thesis",
++    "c_18cf": "text",
++    "c_18cp": "conference paper not in proceedings",
++    "c_18co": "conference poster not in proceedings",
++    "c_18ww": "internal report",
++    "c_18wz": "memorandum",
++    "c_18wq": "other type of report",
++    "c_186u": "policy report",
++    "c_18op": "project deliverable",
++    "c_18hj": "report to funding agency",
++    "c_18ws": "research report",
++    "c_18gh": "technical report",
++    "c_dcae04bc": "review article",
++    "c_2df8fbb1": "research article",
++    "c_15cd": "patent",
++    "c_18cw": "musical notation",
++    "c_7ad9": "website",
++    "c_e9a0": "interactive resource",
++    "c_c513": "image",
++    "c_8a7e": "moving image",
++    "c_1843": "other",
++    "c_ecc8": "still image",
++    "c_393c": "workflow",
++    "c_12cc": "cartographic material",
++    "c_12cd": "map",
++    "c_12ce": "video",
++    "c_18cc": "sound",
++    "c_18cd": "musical composition",
++}
++
++OAIRE_RESOURCE_TYPE_LABEL_FALLBACK = {
++    "dataset": "dataset",
++    "literature": "text",
++}
++
++OAIRE_FILE_OBJECT_TYPE = {
++    "literature": "fulltext",
++    "dataset": "dataset",
++    "software": "software",
++    "other research product": "other",
++}
++
+ DOI_PREFIX = "https://doi.org/"
+ HANDLE_PREFIX = "https://hdl.handle.net/"
+ 
+@@ -157,6 +306,12 @@ def nsopenaire(name):
+     return nsapply(CERIF_OPENAIRE, name)
+ 
+ 
++def nsoaire(name):
++    """Namespace helper for the OAIRE v4 (oai_openaire) format -- distinct from nsopenaire(),
++    which is the older CERIF-OpenAire profile's namespace (oai_cerif_openaire)."""
++    return nsapply(NS_OAIRE, name)
++
++
+ def nsqdc(name):
+     return nsapply(NS_QDC, name)
+ 
+@@ -331,15 +486,20 @@ def is_itbm_article(article):
+     return getattr(article, "has_itbm", False)
+ 
+ 
++def _public_files(article):
++    """Public (not private, not link-only) files as PublicFile presenter dicts, for the ORM
++    and the ES-dict shape alike."""
++    all_files = get_attribute(article, "files", []) if isinstance(article, dict) else article.files
++    presenter_files = [
++        f for f in all_files if not (get_attribute(f, "is_private", False) or get_attribute(f, "is_link_only", False))
++    ]
++    return FilePresenter.PublicFile.list(presenter_files)
++
++
+ def _qdc_download_urls(article):
+     """Public download URLs for QDC's dc:hasPart, for the ORM and the ES-dict shape alike."""
+-    if isinstance(article, dict):
+-        presenter_files = get_attribute(article, "files", [])
+-    else:
+-        presenter_files = [f for f in article.files if not (f.is_private or f.is_link_only)]
+-
+     urls = []
+-    for item in FilePresenter.PublicFile.list(presenter_files):
++    for item in _public_files(article):
+         value = item.get("download_url", "")
+         if value:
+             urls.append(value)
+@@ -1707,6 +1867,162 @@ class CERIFOpenAirePresenter(OAIMetadataPresenter):
+         return root
+ 
+ 
++class OAIREPresenter(OAIMetadataPresenter):
++    """oai_openaire -- OpenAIRE Guidelines for Literature Repositories v4 (OAIRE v4).
++
++    v3-only: gated at the request-validation layer (parsers/oai.py::V3_ONLY_PREFIXES) and in
++    ListMetadataFormats (metadataformat.py)
++    """
++
++    element_name = "metadata"
++
++    def __init__(self, article, is_v3=False):
++        super(OAIREPresenter, self).__init__(is_v3)
++
++        self["title"] = remove_control_chars(get_attribute(article, "title"))
++        self["authors"] = get_attribute(article, "authors", [])
++        self["identifier"] = self.get_identifier(article)
++        self["identifier_type"] = self.get_identifier_type(article)
++        self["relation"] = self.entity_url(article)
++        self["abstract"] = remove_control_chars(get_attribute(article, "description"))
++        self["subject"] = get_article_categories(article)
++        self["tags"] = [remove_control_chars(tag) for tag in get_article_tags(article)]
++        self["access_details"] = get_coar_access_right_details(article)
++        self["files"] = _public_files(article)
++        self["language"] = get_language_codes(get_stock_field_values(article, "language"))
++        self["journal"] = get_stock_field_value(article, "journal")
++        self["medium"] = get_stock_field_value(article, "medium")
++        self["first_online"] = get_date(article, "first_online", just_date=True)
++        self["publisher_accepted"] = get_date(article, "publisher_accepted", just_date=True)
++        self["publisher_published"] = get_date(article, "publisher_published", just_date=True)
++        self["funding"] = get_article_funding(article)
++
++        defined_type_api = get_attribute(article, "item_type", None, "defined_type_api")
++
++        item_type = get_item_type(article, defined_type_api, "openaire")
++        output_type = item_type.split("/")[0] if item_type else "Product"
++        _, _, coar_code = (item_type or "").rpartition("/")
++        resource_type_general = OAIRE_RESOURCE_TYPE_GENERAL_BY_COAR_CODE.get(coar_code)
++        if resource_type_general:
++            self["resource_type_general"] = resource_type_general
++            self["resource_type_uri"] = "http://purl.org/coar/resource_type/{}".format(coar_code)
++            self["resource_type_label"] = OAIRE_RESOURCE_TYPE_LABEL_BY_COAR_CODE[coar_code]
++        else:
++            self["resource_type_general"] = OAIRE_RESOURCE_TYPE_GENERAL.get(output_type, "dataset")
++            self["resource_type_uri"] = OAIRE_RESOURCE_TYPE_URI[self["resource_type_general"]]
++            self["resource_type_label"] = OAIRE_RESOURCE_TYPE_LABEL_FALLBACK[self["resource_type_general"]]
++
++        _article_id = get_attribute(article, "id")
++        _institution_id = (
++            get_attribute(article, "institution", {}).get("id") if isinstance(article, dict) else article.institution_id
++        )
++        citation_data = get_citation_data(_article_id, _institution_id)
++        self["publisher"] = citation_data.get("publisher", FIGSHARE_BRANDING)
++
++    def to_xml(self):
++        root = etree.Element(self.element_name)
++        e_resource = etree.SubElement(
++            root,
++            nsoaire("resource"),
++            nsmap={None: NS_OAIRE, "datacite": NS_DATACITE, "dc": NS_DC, "xsi": NS_XSI},
++        )
++        e_resource.set("{%s}schemaLocation" % NS_XSI, "%s %s" % (NS_OAIRE, NS_OAIRE_XSD))
++
++        if self["authors"]:
++            creators = etree.SubElement(e_resource, nsdatacite("creators"))
++            for author in self["authors"]:
++                creator = etree.SubElement(creators, nsdatacite("creator"))
++                name = etree.SubElement(creator, nsdatacite("creatorName"))
++                first_name = get_attribute(author, "first_name")
++                last_name = get_attribute(author, "last_name")
++                name.text = "{}, {}".format(remove_control_chars(last_name), remove_control_chars(first_name))
++                if first_name:
++                    etree.SubElement(creator, nsdatacite("givenName")).text = remove_control_chars(first_name)
++                if last_name:
++                    etree.SubElement(creator, nsdatacite("familyName")).text = remove_control_chars(last_name)
++
++        titles = etree.SubElement(e_resource, nsdatacite("titles"))
++        etree.SubElement(titles, nsdatacite("title")).text = self["title"]
++
++        etree.SubElement(e_resource, nsdc("publisher")).text = remove_control_chars(self["publisher"])
++
++        resource_type = etree.SubElement(e_resource, nsoaire("resourceType"))
++        resource_type.set("resourceTypeGeneral", self["resource_type_general"])
++        resource_type.set("uri", self["resource_type_uri"])
++        resource_type.text = self["resource_type_label"]
++
++        identifier_element = etree.SubElement(e_resource, nsdatacite("identifier"))
++        if self["identifier"]:
++            identifier_element.set("identifierType", "DOI" if self["identifier_type"] == "doi" else "HANDLE")
++            identifier_element.text = self["identifier"]
++        else:
++            identifier_element.set("identifierType", "URL")
++            identifier_element.text = self["relation"]
++
++        if self["abstract"]:
++            etree.SubElement(e_resource, nsdc("description")).text = self["abstract"]
++
++        etree.SubElement(e_resource, nsdc("language")).text = self["language"][0] if self["language"] else "und"
++
++        if self["identifier"]:
++            alt_identifiers = etree.SubElement(e_resource, nsdatacite("alternateIdentifiers"))
++            id_element = etree.SubElement(alt_identifiers, nsdatacite("alternateIdentifier"))
++            id_element.set("alternateIdentifierType", "DOI" if self["identifier_type"] == "doi" else "Handle")
++            id_element.text = self["identifier"]
++            url_element = etree.SubElement(alt_identifiers, nsdatacite("alternateIdentifier"))
++            url_element.set("alternateIdentifierType", "URL")
++            url_element.text = self["relation"]
++
++        issued_date = self["publisher_published"] or self["first_online"]
++        if issued_date or self["publisher_accepted"]:
++            dates = etree.SubElement(e_resource, nsdatacite("dates"))
++            if issued_date:
++                etree.SubElement(dates, nsdatacite("date"), attrib={"dateType": "Issued"}).text = issued_date
++            if self["publisher_accepted"]:
++                etree.SubElement(dates, nsdatacite("date"), attrib={"dateType": "Accepted"}).text = self[
++                    "publisher_accepted"
++                ]
++
++        if self["journal"]:
++            etree.SubElement(e_resource, nsdc("source")).text = remove_control_chars(self["journal"])
++
++        if self["medium"]:
++            etree.SubElement(e_resource, nsdc("format")).text = self["medium"]
++
++        access_details = self["access_details"]
++        access_element = etree.SubElement(e_resource, nsdatacite("rights"))
++        access_element.set("rightsURI", access_details["uri"])
++        access_element.text = access_details["name"]
++
++        for file_ in self["files"]:
++            file_element = etree.SubElement(e_resource, nsoaire("file"))
++            file_element.set("accessRightsURI", access_details["uri"])
++            file_element.set("objectType", OAIRE_FILE_OBJECT_TYPE[self["resource_type_general"]])
++            mimetype = file_.get("mimetype")
++            if mimetype and mimetype != "undefined":
++                file_element.set("mimeType", mimetype)
++            file_element.text = file_.get("download_url", "")
++
++        if self["subject"] or self["tags"]:
++            subjects = etree.SubElement(e_resource, nsdatacite("subjects"))
++            for category in self["subject"]:
++                etree.SubElement(subjects, nsdatacite("subject")).text = remove_control_chars(
++                    get_attribute(category, "title")
++                )
++            for tag in self["tags"]:
++                etree.SubElement(subjects, nsdatacite("subject")).text = tag
++
++        funder_names = [get_attribute(funder, "funder_title") for funder in self["funding"]]
++        funder_names = [remove_control_chars(name) for name in funder_names if name]
++        if funder_names:
++            funding_references = etree.SubElement(e_resource, nsoaire("fundingReferences"))
++            for funder_name in funder_names:
++                funding_reference = etree.SubElement(funding_references, nsoaire("fundingReference"))
++                etree.SubElement(funding_reference, nsoaire("funderName")).text = funder_name
++
++        return root
++
++
+ class QualifiedDublinCorePresenter(DublinCorePresenter):
+     DCTERMS_FIELDS = [
+         "hasPart",
+@@ -2275,4 +2591,9 @@ METADATA_PRESENTERS = {
+     "mets": MetsPresenter,
+     "uketd_dc": EthosPresenter,
+     "oai_cerif_openaire": CERIFOpenAirePresenter,
++    # v3-only -- see parsers/oai.py::V3_ONLY_PREFIXES and
++    # metadataformat.py::OAIMetadataFormatPresenter.v3_only_format_types for the gating that
++    # keeps this off /v2/oai; it's still registered here since dispatch for a request that
++    # already passed validation doesn't need its own version check.
++    "oai_openaire": OAIREPresenter,
+ }
+diff --git a/figshare_api2/app/views/oai/__init__.py b/figshare_api2/app/views/oai/__init__.py
+index 1ea7ab94..14b25f40 100644
+--- a/figshare_api2/app/views/oai/__init__.py
++++ b/figshare_api2/app/views/oai/__init__.py
+@@ -134,7 +134,10 @@ class OAIPMHView(object):
+         if "resumptionToken" in params:
+             request_type = OAIRequest.Resumable
+ 
+-        self.oai_request = request_type(params)
++        settings = getattr(self.request.registry, "settings", None) or {}
++        is_v3 = normalize_version(settings.get("api_default_revision")) == "3.0"
++
++        self.oai_request = request_type(params, is_v3)
+         raw_qs = self.request.environ.get("QUERY_STRING", "")
+ 
+         other_sources = [
+@@ -150,15 +153,6 @@ class OAIPMHView(object):
+         if "set=" in combined and "set" not in self.oai_request:
+             self.oai_request["set"] = ""
+ 
+-        # /v2/oai and /v3/oai share this exact view/presenter code across two separate
+-        # Pyramid registries with the same route name/pattern -- request.matched_route and
+-        # request.path can't tell them apart. api_default_revision is fixed per-registry
+-        # ("2.0"/"3.0", set in figshare_api2/__init__.py) and, unlike request.version, isn't
+-        # overridable by a client-supplied ?revision=/header, so it's the only reliable signal
+-        # for which mount actually served the request.
+-        settings = getattr(self.request.registry, "settings", None) or {}
+-        is_v3 = normalize_version(settings.get("api_default_revision")) == "3.0"
+-
+         self.oai_action = handler_type(self.oai_request, is_v3).get_result
+ 
+ 
+diff --git a/figshare_api2/app/views/oai/handler.py b/figshare_api2/app/views/oai/handler.py
+index d44c2d4a..8a35b27f 100644
+--- a/figshare_api2/app/views/oai/handler.py
++++ b/figshare_api2/app/views/oai/handler.py
+@@ -7,6 +7,7 @@ from figshare_api.config import config
+ from figshare_api2.app import oai_exceptions
+ from figshare_api2.app.exceptions import BadRequest
+ from figshare_api2.app.presenters import OAIResponse
++from figshare_api2.app.parsers.oai import V3_ONLY_PREFIXES
+ from figshare_api2.app.presenters.oai.set import LISTING_LISTSETS, OAISupplierException, oai_supplier_find
+ from figshare_api2.app.services.new_search.articles import articles_browse_public
+ from figshare_api2.lib.logger import logger as api_logger
+@@ -65,6 +66,9 @@ class OAIBaseHandler(object):
+                 raise oai_exceptions.BadResumptionToken()
+ 
+             self.params = token.params_dict
++
++            if self.params.get("metadataPrefix") in V3_ONLY_PREFIXES and not self.is_v3:
++                raise oai_exceptions.CannotDiseminateFormat()
+         else:
+             self.params.update(self.oai_request)
+ 
+@@ -102,7 +106,7 @@ class ListMetadataFormatsHandler(OAIBaseHandler):
+         if identifier:
+             self._validate_identifier()
+ 
+-        return OAIResponse.MetadataFormats()
++        return OAIResponse.MetadataFormats(self.is_v3)
+ 
+     def _validate_identifier(self):
+         article_id = OAIUtil.article_id(self.params["identifier"])
+diff --git a/figshare_api2/tests/app/parsers/oai_test.py b/figshare_api2/tests/app/parsers/oai_test.py
+index f93febdf..34664fc9 100644
+--- a/figshare_api2/tests/app/parsers/oai_test.py
++++ b/figshare_api2/tests/app/parsers/oai_test.py
+@@ -1,5 +1,6 @@
+ import pytest
+ 
++from figshare_api2.app.oai_exceptions import CannotDiseminateFormat
+ from figshare_api2.app.parsers import OAIRequest
+ 
+ 
+@@ -135,3 +136,29 @@ def test_list_records_month_year(list_records_month_year_params):
+     result.validate()
+ 
+     assert result == {"metadataPrefix": "oai_dc", "verb": "ListRecords", "set": ["month_year_10_2016"]}
++
++
++def test_get_record_parser_rejects_v3_only_prefix_on_v2():
++    params = {"verb": "GetRecord", "metadataPrefix": "oai_openaire", "identifier": "oai:figshare.com:article/1"}
++
++    with pytest.raises(CannotDiseminateFormat):
++        OAIRequest.GetRecord(params, is_v3=False).validate()
++
++
++def test_get_record_parser_accepts_v3_only_prefix_on_v3():
++    params = {"verb": "GetRecord", "metadataPrefix": "oai_openaire", "identifier": "oai:figshare.com:article/1"}
++
++    OAIRequest.GetRecord(params, is_v3=True).validate()
++
++
++def test_list_records_parser_rejects_v3_only_prefix_on_v2():
++    params = {"verb": "ListRecords", "metadataPrefix": "oai_openaire"}
++
++    with pytest.raises(CannotDiseminateFormat):
++        OAIRequest.ListRecords(params, is_v3=False).validate()
++
++
++def test_list_records_parser_accepts_v3_only_prefix_on_v3():
++    params = {"verb": "ListRecords", "metadataPrefix": "oai_openaire"}
++
++    OAIRequest.ListRecords(params, is_v3=True).validate()
+diff --git a/figshare_api2/tests/app/presenters/oai/list_metadata_formats_test.py b/figshare_api2/tests/app/presenters/oai/list_metadata_formats_test.py
+index 77657647..28488c54 100644
+--- a/figshare_api2/tests/app/presenters/oai/list_metadata_formats_test.py
++++ b/figshare_api2/tests/app/presenters/oai/list_metadata_formats_test.py
+@@ -61,6 +61,27 @@ def test_list_metadata_formats():
+     assert result_str.strip() == metadata_format_xml
+ 
+ 
++def test_list_metadata_formats_v3_adds_oai_openaire():
++    result_xml = OAIResponse.MetadataFormats(is_v3=True).to_xml()
++
++    prefixes = [e.text for e in result_xml.findall(".//metadataPrefix")]
++
++    assert prefixes == [
++        "oai_dc",
++        "oai_datacite",
++        "rdf",
++        "cerif",
++        "qdc",
++        "mets",
++        "uketd_dc",
++        "oai_cerif_openaire",
++        "oai_openaire",
++    ]
++    oaire_format = result_xml.find(".//metadataFormat[metadataPrefix='oai_openaire']")
++    assert oaire_format.find("schema").text == "https://www.openaire.eu/schema/repo-lit/4.0/openaire.xsd"
++    assert oaire_format.find("metadataNamespace").text == "http://namespace.openaire.eu/schema/oaire/"
++
++
+ def test_list_metadata_formats_qdc_schema_reflects_v3_mount(pyramid_request):
+     # OAI-PMH's presenters are shared verbatim between the v2 and v3 registries -- the qdc
+     # schema URL must follow request.version rather than hardcoding /v2.
+diff --git a/figshare_api2/tests/app/presenters/oai/oaire_schema_test.py b/figshare_api2/tests/app/presenters/oai/oaire_schema_test.py
+new file mode 100644
+index 00000000..9b2a7f56
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/oaire_schema_test.py
+@@ -0,0 +1,126 @@
++"""Validates OAIREPresenter's rendered output against the real, published OAIRE v4 XSD.
++
++No format in this suite is validated against its actual schema (see the FIG-45329 investigation)
++-- ordering/structure mistakes are normally only caught by a real harvester. Added here
++specifically because building this presenter surfaced several mismatches between the ticket's
++own spec and the real schema (e.g. resourceType/@uri being required, rights having no rightsList
++wrapper) that only an actual schema validation would catch.
++
++The schema chain (openaire.xsd and its full transitive imports, including the W3C xml.xsd) is
++vendored under schemas/oaire/ so this test needs no network access -- see that directory's
++files, fetched from https://www.openaire.eu/schema/repo-lit/4.0/.
++"""
++
++import os
++
++from lxml import etree
++from mock import Mock, patch
++
++from figcore.lib.db import DBConnection
++from figshare_api2.app.presenters.oai import record
++
++SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schemas", "oaire", "openaire.xsd")
++
++# resolve_entities=False/no_network=True: nothing here needs the network, the whole schema
++# chain is vendored locally -- see the module docstring.
++_SCHEMA = etree.XMLSchema(etree.parse(SCHEMA_PATH, etree.XMLParser(resolve_entities=False, no_network=True)))
++
++
++def _es_openaire_doc(**overrides):
++    """A minimal ES-dict article, in the shape ListRecords/ListIdentifiers hand to presenters
++    (figshare_api2.app.views.oai.handler.ListingBaseHandler.load_articles). Kept local to this
++    file (rather than reusing record_test.py's builders) since this directory has no
++    __init__.py for a cross-test-file import to resolve against.
++    """
++    doc = {
++        "id": 32061423,
++        "title": "A test article",
++        "description": "Description",
++        "doi": "10.7274/32061423",
++        "url_name": "A_test_article",
++        "version": 1,
++        "item_type": {"id": 8, "name": "thesis"},
++        "authors": [
++            {"first_name": "Jane", "last_name": "Doe", "user_id": 23760399},
++        ],
++        "dates": {
++            "created": "2026-05-05 15:01:32",
++            "modified": "2026-05-05 15:01:40",
++            "published": "2026-05-05 15:01:32",
++        },
++        "restrictions": {"active": 0, "rules": {}},
++        "categories": [],
++        "tags": [],
++        "files": [],
++        "funding": [],
++        "funding_list": [],
++        "references": [],
++        "license": {"name": "CC BY 4.0", "url": "https://creativecommons.org/licenses/by/4.0/"},
++        "institution": {"id": 1056, "name": "University of Notre Dame"},
++        "group": {"id": 50931, "name": "University of Notre Dame"},
++        "stock_fields_display": {"text": {}, "date": {}},
++    }
++    doc.update(overrides)
++    return doc
++
++
++def _resource_element(metadata_xml):
++    # OAIREPresenter.to_xml() returns <metadata><resource>...</resource></metadata> --
++    # the schema validates the inner <resource>, "metadata" is this codebase's own envelope.
++    return metadata_xml[0]
++
++
++def test_oaire_presenter_es_dict_output_is_schema_valid(patcher):
++    # get_item_type() goes through SQLDataCache's shared, process-wide CACHE -- patched
++    # directly here instead, so this test doesn't depend on some earlier test in the run
++    # having already warmed that cache (see the resource_type_general assignment in
++    # OAIREPresenter.__init__).
++    patcher.object(record, "get_item_type", return_value=None)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    doc = _es_openaire_doc(
++        stock_fields_display={
++            "text": {"language": ["English"], "journal": "Journal of Cryo Studies", "medium": "PDF"},
++            "date": {},
++        },
++        funding_list=[{"funder_title": "NIH", "grant_code": "R01"}],
++        categories=[{"id": 1, "title": "Chemistry"}],
++        tags=["cryogenics"],
++    )
++
++    xml = record.OAIREPresenter(doc, is_v3=True).to_xml()
++
++    _SCHEMA.assertValid(etree.ElementTree(_resource_element(xml)))
++
++
++def test_oaire_presenter_es_dict_minimal_output_is_schema_valid(patcher):
++    # No DOI, no stock fields, no funding, no categories/tags/authors -- the sparsest record
++    # this presenter renders. Confirms every optional block is skipped cleanly rather than
++    # emitting an empty/invalid element (funderName-less fundingReference, empty subjects, etc.).
++    patcher.object(record, "get_item_type", return_value=None)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    doc = _es_openaire_doc(doi=None, categories=[], tags=[], authors=[])
++
++    xml = record.OAIREPresenter(doc, is_v3=True).to_xml()
++
++    _SCHEMA.assertValid(etree.ElementTree(_resource_element(xml)))
++
++    resource = _resource_element(xml)
++    identifier = resource.find(".//{*}identifier")
++    assert identifier.get("identifierType") == "URL"
++    language = resource.find(".//{*}language")
++    assert language.text == "und"
++    assert resource.find(".//{*}alternateIdentifiers") is None
++
++
++@patch.object(DBConnection, "get_session", return_value=Mock())
++def test_oaire_presenter_orm_object_output_is_schema_valid(db_conn, article, patcher):
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    article.defined_type_api = Mock(get_mapping=Mock(return_value="Publication/c_18cf"))
++    # article.funding is explicitly None on this fixture (non-ITBM); get_article_funding()
++    # falls through to article.get_field_value("funding_list"), an otherwise-unstubbed Mock
++    # method whose auto-return is truthy -- same stub the RDFPresenter ORM funding tests use.
++    article.get_field_value = Mock(return_value=[])
++
++    xml = record.OAIREPresenter(article, is_v3=True).to_xml()
++
++    _SCHEMA.assertValid(etree.ElementTree(_resource_element(xml)))
+diff --git a/figshare_api2/tests/app/presenters/oai/record_test.py b/figshare_api2/tests/app/presenters/oai/record_test.py
+index 05d058ff..0e015c6b 100644
+--- a/figshare_api2/tests/app/presenters/oai/record_test.py
++++ b/figshare_api2/tests/app/presenters/oai/record_test.py
+@@ -1,3 +1,6 @@
++import os
++import re
++
+ import pytest
+ 
+ from datetime import date, datetime
+@@ -1930,6 +1933,22 @@ def test_qdc_presenter_multi_value_language_repeats_element(patcher):
+     assert [e.text for e in xml.findall(".//{*}language")] == ["ro", "en"]
+ 
+ 
++def test_qdc_presenter_haspart_excludes_private_and_link_only_files(patcher):
++    _patched_sql_data_cache(patcher)
++    doc = _es_thesis_doc_itbm(
++        files=[
++            {"id": 1, "name": "public.csv", "size": 1, "is_private": False, "is_link_only": False},
++            {"id": 2, "name": "private.csv", "size": 1, "is_private": True, "is_link_only": False},
++            {"id": 3, "name": "linked.csv", "size": 1, "is_private": False, "is_link_only": True},
++        ]
++    )
++
++    xml = record.QualifiedDublinCorePresenter(doc, is_v3=True).to_xml()
++
++    has_part_urls = [e.text for e in xml.findall(".//{*}hasPart")]
++    assert len(has_part_urls) == 1
++
++
+ @pytest.mark.parametrize(
+     "presenter_class",
+     [record.DublinCorePresenter, record.QualifiedDublinCorePresenter],
+@@ -2751,6 +2770,276 @@ def test_cerif_openaire_presenter_itbm_stock_fields_not_rendered_when_not_v3(pat
+     assert xml.find(".//{*}Volume") is None
+ 
+ 
++def test_oaire_presenter_es_dict_required_fields(patcher):
++    _patched_sql_data_cache(patcher)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    doc = _es_thesis_doc_itbm()
++
++    xml = record.OAIREPresenter(doc, is_v3=True).to_xml()
++
++    doi_alt_ids = [
++        e.text for e in xml.findall(".//{*}alternateIdentifier") if e.get("alternateIdentifierType") == "DOI"
++    ]
++    assert doi_alt_ids == [doc["doi"]]
++
++    assert xml.find(".//{*}title").text == doc["title"]
++
++    resource_type = xml.find(".//{*}resourceType")
++    assert resource_type.get("resourceTypeGeneral") == "dataset"
++
++    creator_names = xml.findall(".//{*}creatorName")
++    assert len(creator_names) >= 1
++
++    rights = xml.findall(".//{*}rights")
++    assert len(rights) >= 1
++    assert all(r.get("rightsURI") for r in rights)
++
++    assert xml.find(".//{*}publisher").text == "Figgy"
++
++
++def test_oaire_presenter_handle_only_uses_handle_identifier_type(patcher):
++    _patched_sql_data_cache(patcher)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    doc = _es_thesis_doc_itbm(doi=None, handle="111084/figshare.234")
++
++    xml = record.OAIREPresenter(doc, is_v3=True).to_xml()
++
++    identifier = xml.find(".//{*}identifier")
++    assert identifier.get("identifierType") == "HANDLE"
++    assert identifier.text == "111084/figshare.234"
++
++    handle_alt_ids = [
++        e.text for e in xml.findall(".//{*}alternateIdentifier") if e.get("alternateIdentifierType") == "Handle"
++    ]
++    assert handle_alt_ids == ["111084/figshare.234"]
++
++
++def test_oaire_presenter_resource_type_literature_for_publication_mapping(article, patcher):
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    article.defined_type_api = Mock(get_mapping=Mock(return_value="Publication/c_18cf"))
++    article.get_field_value = Mock(return_value=[])
++
++    xml = record.OAIREPresenter(article, is_v3=True).to_xml()
++
++    resource_type = xml.find(".//{*}resourceType")
++    assert resource_type.get("resourceTypeGeneral") == "literature"
++    assert resource_type.get("uri") == "http://purl.org/coar/resource_type/c_18cf"
++    assert resource_type.text == "text"
++
++
++def test_oaire_presenter_resource_type_preserves_specific_coar_code(article, patcher):
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    article.defined_type_api = Mock(get_mapping=Mock(return_value="Product/c_5ce6"))
++    article.get_field_value = Mock(return_value=[])
++
++    xml = record.OAIREPresenter(article, is_v3=True).to_xml()
++
++    resource_type = xml.find(".//{*}resourceType")
++    assert resource_type.get("resourceTypeGeneral") == "software"
++    assert resource_type.get("uri") == "http://purl.org/coar/resource_type/c_5ce6"
++    assert resource_type.text == "software"
++
++
++def test_oaire_presenter_resource_type_falls_back_for_unrecognized_coar_code(article, patcher):
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    article.defined_type_api = Mock(get_mapping=Mock(return_value="Publication/c_not_a_real_code"))
++    article.get_field_value = Mock(return_value=[])
++
++    xml = record.OAIREPresenter(article, is_v3=True).to_xml()
++
++    resource_type = xml.find(".//{*}resourceType")
++    assert resource_type.get("resourceTypeGeneral") == "literature"
++    assert resource_type.get("uri") == "http://purl.org/coar/resource_type/c_18cf"
++    assert resource_type.text == "text"
++
++
++def test_oaire_presenter_resource_type_uses_specific_label_for_journal_article(article, patcher):
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    article.defined_type_api = Mock(get_mapping=Mock(return_value="Publication/c_6501"))
++    article.get_field_value = Mock(return_value=[])
++
++    xml = record.OAIREPresenter(article, is_v3=True).to_xml()
++
++    resource_type = xml.find(".//{*}resourceType")
++    assert resource_type.get("resourceTypeGeneral") == "literature"
++    assert resource_type.text == "journal article"
++
++
++def test_oaire_presenter_resource_type_label_falls_back_to_dataset(article, patcher):
++    patcher.object(record, "get_item_type", return_value=None)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    article.get_field_value = Mock(return_value=[])
++
++    xml = record.OAIREPresenter(article, is_v3=True).to_xml()
++
++    resource_type = xml.find(".//{*}resourceType")
++    assert resource_type.get("resourceTypeGeneral") == "dataset"
++    assert resource_type.text == "dataset"
++
++
++def test_oaire_resource_type_label_table_matches_vendored_xsd_comments():
++    xsd_path = os.path.join(os.path.dirname(__file__), "schemas", "oaire", "oaire-resourceType-v4.xsd")
++    xsd_text = open(xsd_path).read()
++    labels_from_xsd = dict(
++        re.findall(
++            r'value="http://purl\.org/coar/resource_type/(c_[a-z0-9]+)"\s*/>\s*<!--([^>]*)-->',
++            xsd_text,
++        )
++    )
++    labels_from_xsd = {code: label.strip() for code, label in labels_from_xsd.items()}
++
++    assert labels_from_xsd == record.OAIRE_RESOURCE_TYPE_LABEL_BY_COAR_CODE
++    assert set(record.OAIRE_RESOURCE_TYPE_LABEL_BY_COAR_CODE) == set(record.OAIRE_RESOURCE_TYPE_GENERAL_BY_COAR_CODE)
++
++
++def test_oaire_presenter_sanitizes_publisher_control_chars(article, patcher):
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy\x0bPress"})
++    article.defined_type_api = Mock(get_mapping=Mock(return_value="Publication/c_18cf"))
++    article.get_field_value = Mock(return_value=[])
++
++    xml = record.OAIREPresenter(article, is_v3=True).to_xml()
++
++    assert xml.find(".//{*}publisher").text == "FiggyPress"
++
++
++def test_oaire_presenter_optional_fields_render_when_present(patcher):
++    _patched_sql_data_cache(patcher)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    doc = _es_thesis_doc_itbm(
++        stock_fields={"language": ["English"], "journal": "Journal of Cryo Studies", "medium": "PDF"},
++        funding_list=[{"funder_title": "NIH", "grant_code": "R01"}],
++        categories=[{"id": 1, "title": "Chemistry"}],
++        tags=["cryogenics"],
++    )
++
++    xml = record.OAIREPresenter(doc, is_v3=True).to_xml()
++
++    assert xml.find(".//{*}language").text == "en"
++    assert xml.find(".//{*}source").text == "Journal of Cryo Studies"
++    assert xml.find(".//{*}format").text == "PDF"
++    assert xml.find(".//{*}funderName").text == "NIH"
++
++    subjects = [e.text for e in xml.findall(".//{*}subject")]
++    assert "Chemistry" in subjects
++    assert "cryogenics" in subjects
++
++
++def test_oaire_presenter_optional_fields_absent_render_nothing(patcher):
++    _patched_sql_data_cache(patcher)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    doc = _es_thesis_doc_itbm()
++
++    xml = record.OAIREPresenter(doc, is_v3=True).to_xml()
++
++    assert xml.find(".//{*}language").text == "und"
++    assert xml.find(".//{*}source") is None
++    assert xml.find(".//{*}format") is None
++    assert xml.find(".//{*}fundingReferences") is None
++
++
++def test_oaire_presenter_identifier_falls_back_to_url_without_doi_or_handle(patcher):
++    _patched_sql_data_cache(patcher)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    doc = _es_thesis_doc_itbm(doi=None, handle=None)
++
++    presenter = record.OAIREPresenter(doc, is_v3=True)
++    xml = presenter.to_xml()
++
++    identifier = xml.find(".//{*}identifier")
++    assert identifier.get("identifierType") == "URL"
++    assert identifier.text == presenter["relation"]
++    assert xml.find(".//{*}alternateIdentifiers") is None
++
++
++def test_oaire_presenter_renders_file_for_public_files(patcher):
++    _patched_sql_data_cache(patcher)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    doc = _es_thesis_doc_itbm(
++        restrictions={"active": 0, "rules": {"on_files": 0}},
++        files=[
++            {
++                "id": 1,
++                "name": "data.csv",
++                "size": 10,
++                "is_link_only": False,
++                "computed_md5": "md5",
++                "supplied_md5": "md5",
++                "file_meta": {"MIMEType": "text/csv"},
++            }
++        ],
++    )
++    expected_download_url = "{}/files/1".format(config["download_endpoint"])
++
++    xml = record.OAIREPresenter(doc, is_v3=True).to_xml()
++
++    file_element = xml.find(".//{*}file")
++    assert file_element is not None
++    assert file_element.text == expected_download_url
++    assert file_element.get("objectType") == "dataset"
++    assert file_element.get("accessRightsURI") == "http://purl.org/coar/access_right/c_abf2"
++    assert file_element.get("mimeType") == "text/csv"
++
++
++def test_oaire_presenter_file_object_type_matches_software_resource_type(article, patcher):
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    article.defined_type_api = Mock(get_mapping=Mock(return_value="Product/c_5ce6"))
++    article.get_field_value = Mock(return_value=[])
++
++    xml = record.OAIREPresenter(article, is_v3=True).to_xml()
++
++    file_element = xml.find(".//{*}file")
++    assert file_element is not None
++    assert file_element.get("objectType") == "software"
++
++
++def test_oaire_presenter_omits_mimetype_when_unknown(patcher):
++    _patched_sql_data_cache(patcher)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    doc = _es_thesis_doc_itbm(
++        restrictions={"active": 0, "rules": {"on_files": 0}},
++        files=[
++            {
++                "id": 1,
++                "name": "data.csv",
++                "size": 10,
++                "is_link_only": False,
++                "computed_md5": "md5",
++                "supplied_md5": "md5",
++            }
++        ],
++    )
++
++    xml = record.OAIREPresenter(doc, is_v3=True).to_xml()
++
++    file_element = xml.find(".//{*}file")
++    assert file_element is not None
++    assert file_element.get("mimeType") is None
++
++
++def test_oaire_presenter_omits_file_for_link_only_files(patcher):
++    _patched_sql_data_cache(patcher)
++    patcher.object(record, "get_citation_data", return_value={"publisher": "Figgy"})
++    doc = _es_thesis_doc_itbm(
++        restrictions={"active": 0, "rules": {"on_files": 0}},
++        files=[
++            {
++                "id": 1,
++                "name": "data.csv",
++                "size": 10,
++                "download_url": "https://example.com/data.csv",
++                "is_link_only": True,
++                "computed_md5": "md5",
++                "supplied_md5": "md5",
++                "mimetype": "text/csv",
++            }
++        ],
++    )
++
++    xml = record.OAIREPresenter(doc, is_v3=True).to_xml()
++
++    assert xml.find(".//{*}file") is None
++
++
+ # --- uketd_dc / EthosPresenter ---
+ # The swap (language/publisher/qualificationname/qualificationlevel) is tested directly
+ # against _get_stock_or_custom_field_values() first -- covers the (is_v3 x has_itbm) matrix
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-contributorType-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-contributorType-v4.xsd
+new file mode 100644
+index 00000000..65e6a569
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-contributorType-v4.xsd
+@@ -0,0 +1,40 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!-- Version 1.0 - Created 2011-01-13 - FZ, TIB, Germany
++   2013-05 v3.0: Addition of ID to simpleType element, added values "ResearchGroup" & "Other"
++   2014-08-20 v3.1: Addition of value "DataCurator"
++   2015-05-14 v4.0 dropped value "Funder", use new "funderReference" -->
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++	xmlns="http://datacite.org/schema/kernel-4" 
++	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++	targetNamespace="http://datacite.org/schema/kernel-4" 
++	elementFormDefault="qualified"
++	xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd">
++  <xs:simpleType name="contributorType" id="contributorType">
++    <xs:annotation>
++      <xs:documentation>The type of contributor of the resource.</xs:documentation>
++    </xs:annotation>
++    <xs:restriction base="xs:string">
++      <xs:enumeration value="ContactPerson"/>
++      <xs:enumeration value="DataCollector"/>
++      <xs:enumeration value="DataCurator"/>
++      <xs:enumeration value="DataManager"/>
++      <xs:enumeration value="Distributor"/>
++      <xs:enumeration value="Editor"/>
++      <xs:enumeration value="HostingInstitution"/>
++      <xs:enumeration value="Other"/>
++      <xs:enumeration value="Producer"/>
++      <xs:enumeration value="ProjectLeader"/>
++      <xs:enumeration value="ProjectManager"/>
++      <xs:enumeration value="ProjectMember"/>
++      <xs:enumeration value="RegistrationAgency"/>
++      <xs:enumeration value="RegistrationAuthority"/>
++      <xs:enumeration value="RelatedPerson"/>
++      <xs:enumeration value="ResearchGroup"/>
++      <xs:enumeration value="RightsHolder"/>
++      <xs:enumeration value="Researcher"/>
++      <xs:enumeration value="Sponsor"/>
++      <xs:enumeration value="Supervisor"/>
++      <xs:enumeration value="WorkPackageLeader"/>
++    </xs:restriction>
++  </xs:simpleType>
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-dateType-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-dateType-v4.xsd
+new file mode 100644
+index 00000000..5b5f0651
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-dateType-v4.xsd
+@@ -0,0 +1,26 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!-- Version 1.0 - Created 2011-01-13 - FZ, TIB, Germany
++     2013-05 v3.0: Addition of ID to simpleType element; addition of value "Collected"; deleted "StartDate" & "EndDate"-->
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++	xmlns="http://datacite.org/schema/kernel-4" 
++	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
++	targetNamespace="http://datacite.org/schema/kernel-4" 
++	elementFormDefault="qualified"
++	xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd">
++  <xs:simpleType name="dateType" id="dateType">
++    <xs:annotation>
++      <xs:documentation>The type of date. Use RKMS‐ISO8601 standard for depicting date ranges.To indicate the end of an embargo period, use Available. To indicate the start of an embargo period, use Submitted or Accepted, as appropriate.</xs:documentation>
++    </xs:annotation>
++    <xs:restriction base="xs:string">
++      <xs:enumeration value="Accepted"/>
++      <xs:enumeration value="Available"/>
++      <xs:enumeration value="Collected"/>
++      <xs:enumeration value="Copyrighted"/>
++      <xs:enumeration value="Created"/>
++      <xs:enumeration value="Issued"/>
++      <xs:enumeration value="Submitted"/>
++      <xs:enumeration value="Updated"/>
++      <xs:enumeration value="Valid"/>
++    </xs:restriction>
++  </xs:simpleType>
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-funderIdentifierType-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-funderIdentifierType-v4.xsd
+new file mode 100644
+index 00000000..ead5d658
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-funderIdentifierType-v4.xsd
+@@ -0,0 +1,20 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!-- Version 1.0 - Created 2016-05-14 -->
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++	xmlns="http://datacite.org/schema/kernel-4" 
++	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++	targetNamespace="http://datacite.org/schema/kernel-4" 
++	elementFormDefault="qualified"
++	xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd">
++  <xs:simpleType name="funderIdentifierType" id="funderIdentifierType">
++    <xs:annotation>
++      <xs:documentation>The type of the funderIdentifier.</xs:documentation>
++    </xs:annotation>
++    <xs:restriction base="xs:string">
++      <xs:enumeration value="ISNI"/>
++      <xs:enumeration value="GRID"/>
++      <xs:enumeration value="Crossref Funder ID"/>
++      <xs:enumeration value="Other"/>
++    </xs:restriction>
++  </xs:simpleType>
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-nameType-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-nameType-v4.xsd
+new file mode 100644
+index 00000000..d81021af
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-nameType-v4.xsd
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!-- Version 4.1 - Created 2017-10-23 -->
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns="http://datacite.org/schema/kernel-4" targetNamespace="http://datacite.org/schema/kernel-4" elementFormDefault="qualified">
++  <xs:simpleType name="nameType" id="nameType">
++    <xs:restriction base="xs:string">
++      <xs:enumeration value="Organizational"/>
++      <xs:enumeration value="Personal"/>
++    </xs:restriction>
++  </xs:simpleType>
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-relatedIdentifierType-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-relatedIdentifierType-v4.xsd
+new file mode 100644
+index 00000000..6a75fa9e
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-relatedIdentifierType-v4.xsd
+@@ -0,0 +1,41 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!-- Version 1.0 - Created 2011-01-13 - FZ, TIB, Germany
++  2013-05 v3.0: Addition of ID to simpleType element; addition of value "PMID"
++  2014-08-20 v3.1: Addition of values "arxiv" and "bibcode"
++  2015-02-12 v4.0 Addition of value "IGSN" 
++  2018-11-07 openaire-guidelines: addition of values "WOS", "PISSN"
++  -->
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++	xmlns="http://datacite.org/schema/kernel-4"
++        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"	
++	targetNamespace="http://datacite.org/schema/kernel-4" 
++	elementFormDefault="qualified"
++	xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd">
++  <xs:simpleType name="relatedIdentifierType" id="relatedIdentifierType">
++    <xs:annotation>
++      <xs:documentation>The type of the RelatedIdentifier.</xs:documentation>
++    </xs:annotation>
++    <xs:restriction base="xs:string">
++      <xs:enumeration value="ARK"/>
++      <xs:enumeration value="arXiv"/>
++      <xs:enumeration value="bibcode"/>
++      <xs:enumeration value="DOI"/>
++      <xs:enumeration value="EAN13"/>
++      <xs:enumeration value="EISSN"/>
++      <xs:enumeration value="Handle"/>
++      <xs:enumeration value="IGSN"/>
++      <xs:enumeration value="ISBN"/>
++      <xs:enumeration value="ISSN"/>
++      <xs:enumeration value="ISTC"/>
++      <xs:enumeration value="LISSN"/>
++      <xs:enumeration value="LSID"/>
++      <xs:enumeration value="PISSN"/>
++      <xs:enumeration value="PMID"/>
++      <xs:enumeration value="PURL"/>
++      <xs:enumeration value="UPC"/>
++      <xs:enumeration value="URL"/>
++      <xs:enumeration value="URN"/>
++      <xs:enumeration value="WOS"/>
++    </xs:restriction>
++  </xs:simpleType>
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-relationType-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-relationType-v4.xsd
+new file mode 100644
+index 00000000..7f32f53a
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-relationType-v4.xsd
+@@ -0,0 +1,50 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!--
++  2011-01-13 v1.0 - FZ, TIB, Germany
++  2013-05 v3.0: Addition of ID to simpleType element, addition of values "IsIdenticalTo", "HasMetadata" & "IsMetadataFor"
++  2014-08-20 v3.1: Addition of values "Reviews" & "IsReviewedBy" and "IsDerivedFrom" & "IsSourceOf"-->
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++	xmlns="http://datacite.org/schema/kernel-4" 
++	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++	targetNamespace="http://datacite.org/schema/kernel-4" 
++	elementFormDefault="qualified"
++	xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd">
++  <xs:simpleType name="relationType" id="relationType">
++    <xs:annotation>
++      <xs:documentation>Description of the relationship of the resource being registered (A) and the related resource (B).</xs:documentation>
++    </xs:annotation>
++    <xs:restriction base="xs:string">
++      <xs:enumeration value="IsCitedBy"/>
++      <xs:enumeration value="Cites"/>
++      <xs:enumeration value="IsSupplementTo"/>
++      <xs:enumeration value="IsSupplementedBy"/>
++      <xs:enumeration value="IsContinuedBy"/>
++      <xs:enumeration value="Continues"/>
++      <xs:enumeration value="IsDescribedBy"/>
++      <xs:enumeration value="Describes"/>
++      <xs:enumeration value="HasVersion"/>
++      <xs:enumeration value="IsVersionOf"/>
++      <xs:enumeration value="IsNewVersionOf"/>
++      <xs:enumeration value="IsPreviousVersionOf"/>
++      <xs:enumeration value="IsPartOf"/>
++      <xs:enumeration value="HasPart"/>
++      <xs:enumeration value="IsReferencedBy"/>
++      <xs:enumeration value="References"/>
++      <xs:enumeration value="IsDocumentedBy"/>
++      <xs:enumeration value="Documents"/>
++      <xs:enumeration value="IsCompiledBy"/>
++      <xs:enumeration value="Compiles"/>
++      <xs:enumeration value="IsVariantFormOf"/>
++      <xs:enumeration value="IsOriginalFormOf"/>
++      <xs:enumeration value="IsIdenticalTo"/>
++      <xs:enumeration value="HasMetadata"/>
++      <xs:enumeration value="IsMetadataFor"/>
++      <xs:enumeration value="Reviews"/>
++      <xs:enumeration value="IsReviewedBy"/>
++      <xs:enumeration value="IsDerivedFrom"/>
++      <xs:enumeration value="IsSourceOf"/>
++      <xs:enumeration value="IsRequiredBy"/>
++      <xs:enumeration value="Requires"/>
++    </xs:restriction>
++  </xs:simpleType>
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-resourceType-v4.1.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-resourceType-v4.1.xsd
+new file mode 100644
+index 00000000..8dc519b1
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-resourceType-v4.1.xsd
+@@ -0,0 +1,29 @@
++<!--
++ Version 1.0 - Created 2011-01-13 - FZ, TIB, Germany
++     2013-05 v3.0: Addition of ID to simpleType element; added values "Audiovisual", "Workflow" & "Other"; deleted value "Film"
++     2017-10-23 v4.1: Addition of value "DataPaper" 
++-->
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns="http://datacite.org/schema/kernel-4" targetNamespace="http://datacite.org/schema/kernel-4" elementFormDefault="qualified">
++    <xs:simpleType name="resourceType" id="resourceType">
++        <xs:annotation>
++            <xs:documentation>The general type of a resource.</xs:documentation>
++        </xs:annotation>
++        <xs:restriction base="xs:string">
++            <xs:enumeration value="Audiovisual"/>
++            <xs:enumeration value="Collection"/>
++            <xs:enumeration value="DataPaper"/>
++            <xs:enumeration value="Dataset"/>
++            <xs:enumeration value="Event"/>
++            <xs:enumeration value="Image"/>
++            <xs:enumeration value="InteractiveResource"/>
++            <xs:enumeration value="Model"/>
++            <xs:enumeration value="PhysicalObject"/>
++            <xs:enumeration value="Service"/>
++            <xs:enumeration value="Software"/>
++            <xs:enumeration value="Sound"/>
++            <xs:enumeration value="Text"/>
++            <xs:enumeration value="Workflow"/>
++            <xs:enumeration value="Other"/>
++        </xs:restriction>
++    </xs:simpleType>
++</xs:schema>
+\ No newline at end of file
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-titleType-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-titleType-v4.xsd
+new file mode 100644
+index 00000000..a58bbe6e
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-titleType-v4.xsd
+@@ -0,0 +1,15 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!-- Version 1.0 - Created 2011-01-13 - FZ, TIB, Germany
++  2013-05 v3.0: Addition of ID to simpleType element
++  2015-02-12 v4.0 Added value "Other" -->
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns="http://datacite.org/schema/kernel-4" targetNamespace="http://datacite.org/schema/kernel-4" elementFormDefault="qualified">
++  <xs:simpleType name="titleType" id="titleType">
++    <xs:restriction base="xs:string">
++      <xs:enumeration value="AlternativeTitle"/>
++      <xs:enumeration value="Subtitle"/>
++      <xs:enumeration value="TranslatedTitle"/>
++      <xs:enumeration value="Other"/>
++    </xs:restriction>
++  </xs:simpleType>
++</xs:schema>
++
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-v4.xsd
+new file mode 100644
+index 00000000..2c615eb1
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/datacite-v4.xsd
+@@ -0,0 +1,348 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++    xmlns="http://datacite.org/schema/kernel-4"
++    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++    xmlns:oaire="http://namespace.openaire.eu/schema/oaire/"
++    targetNamespace="http://datacite.org/schema/kernel-4" 
++    elementFormDefault="qualified"
++    xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd" >
++
++    <xs:include schemaLocation="datacite-contributorType-v4.xsd"/>
++    <xs:include schemaLocation="datacite-funderIdentifierType-v4.xsd"/>
++    <xs:include schemaLocation="datacite-relatedIdentifierType-v4.xsd"/>
++    <xs:include schemaLocation="datacite-relationType-v4.xsd"/>
++    <xs:include schemaLocation="datacite-dateType-v4.xsd"/>
++    <xs:include schemaLocation="datacite-titleType-v4.xsd"/>
++    <xs:include schemaLocation="datacite-nameType-v4.xsd"/>
++    <xs:include schemaLocation="datacite-resourceType-v4.1.xsd"/>
++    <xs:include schemaLocation="oaire-identifierType-v4.0.xsd"/>
++    <xs:include schemaLocation="oaire-accessRight-v4.xsd"/>
++
++    <xs:import namespace="http://namespace.openaire.eu/schema/oaire/" schemaLocation="oaire.xsd"/>
++    <xs:import namespace="http://www.w3.org/XML/1998/namespace" schemaLocation="xml.xsd"/>
++    
++    <xs:element name="identifier">        
++        <xs:annotation>
++            <xs:documentation>
++                A persistent identifier that identifies a resource.
++            </xs:documentation>
++        </xs:annotation>
++        <xs:complexType>
++            <xs:simpleContent>
++                <xs:extension base="xs:string">
++                    <xs:attribute name="identifierType" use="required" type="idType"/>
++                </xs:extension>
++            </xs:simpleContent>
++        </xs:complexType>
++    </xs:element>
++
++    
++    <xs:element name="titles">
++        <xs:complexType>
++            <xs:sequence>
++                <xs:element name="title" maxOccurs="unbounded">
++                    <xs:annotation>
++                        <xs:documentation>A name or title by which a resource is known.</xs:documentation>
++                    </xs:annotation>
++                    <xs:complexType>
++                        <xs:simpleContent>
++                            <xs:extension base="nonemptycontentStringType">
++                                <xs:attribute name="titleType" type="titleType" use="optional"/>
++                                <xs:attribute ref="xml:lang"/>
++                            </xs:extension>
++                        </xs:simpleContent>
++                    </xs:complexType>
++                </xs:element>
++            </xs:sequence>
++        </xs:complexType>
++    </xs:element>
++
++    <xs:element name="creators">
++        <xs:complexType>
++            <xs:sequence>
++                <xs:element name="creator" maxOccurs="unbounded">
++                    <xs:annotation>
++                        <xs:documentation>
++                            The main researchers involved working on the data, or the authors of the publication in priority order. May be a corporate/institutional or personal name.
++                        </xs:documentation>
++                        <xs:documentation>Format: Family, Given.</xs:documentation>
++                        <xs:documentation>
++                            Personal names can be further specified using givenName and familyName.
++                        </xs:documentation>
++                    </xs:annotation>
++                    <xs:complexType>
++                        <xs:sequence>
++                            <xs:element name="creatorName">
++                                <xs:complexType>
++                                    <xs:simpleContent>
++                                        <xs:extension base="nonemptycontentStringType">
++                                            <xs:attribute name="nameType" type="nameType" use="optional"/>
++                                        </xs:extension>
++                                    </xs:simpleContent>
++                                </xs:complexType>
++                            </xs:element>
++                            <xs:element name="givenName" minOccurs="0"/>
++                            <xs:element name="familyName" minOccurs="0"/>
++                            <xs:element name="nameIdentifier" minOccurs="0" maxOccurs="unbounded">
++                                <xs:complexType>
++                                    <xs:simpleContent>
++                                        <xs:extension base="nonemptycontentStringType">
++                                            <xs:attribute name="nameIdentifierScheme" use="required"/>
++                                            <xs:attribute name="schemeURI" type="xs:anyURI" use="optional"/>
++                                        </xs:extension>
++                                    </xs:simpleContent>
++                                </xs:complexType>
++                            </xs:element>
++                            <xs:element name="affiliation" minOccurs="0" maxOccurs="unbounded"/>
++                        </xs:sequence>
++                    </xs:complexType>
++                </xs:element>
++            </xs:sequence>
++        </xs:complexType>
++    </xs:element>
++    
++    <xs:element name="contributors" >
++        <xs:complexType>
++            <xs:sequence>
++                <xs:element name="contributor" minOccurs="0" maxOccurs="unbounded">
++                    <xs:annotation>
++                        <xs:documentation>
++                            The institution or person responsible for collecting, creating, or otherwise contributing to the developement of the dataset.
++                        </xs:documentation>
++                        <xs:documentation>The personal name format should be: Family, Given.</xs:documentation>
++                    </xs:annotation>
++                    <xs:complexType>
++                        <xs:sequence>
++                            <xs:element name="contributorName">
++                                <xs:complexType>
++                                    <xs:simpleContent>
++                                        <xs:extension base="nonemptycontentStringType">
++                                            <xs:attribute name="nameType" type="nameType" use="optional"/>
++                                        </xs:extension>
++                                    </xs:simpleContent>
++                                </xs:complexType>
++                            </xs:element>
++                            <xs:element name="givenName" minOccurs="0"/>
++                            <xs:element name="familyName" minOccurs="0"/>
++                            <xs:element name="nameIdentifier" minOccurs="0" maxOccurs="unbounded">
++                                <xs:complexType>
++                                    <xs:simpleContent>
++                                        <xs:extension base="xs:string">
++                                            <xs:attribute name="nameIdentifierScheme" use="required"/>
++                                            <xs:attribute name="schemeURI" type="xs:anyURI" use="optional"/>
++                                        </xs:extension>
++                                    </xs:simpleContent>
++                                </xs:complexType>
++                            </xs:element>
++                            <xs:element name="affiliation" minOccurs="0" maxOccurs="unbounded"/>
++                        </xs:sequence>
++                        <xs:attribute name="contributorType" type="contributorType" use="required"/>
++                    </xs:complexType>
++                </xs:element>
++            </xs:sequence>
++        </xs:complexType>
++    </xs:element>
++    
++    
++    
++    <xs:element name="alternateIdentifiers" >
++        <xs:complexType>
++            <xs:sequence>
++                <xs:element name="alternateIdentifier" minOccurs="0" maxOccurs="unbounded">
++                    <xs:annotation>
++                        <xs:documentation>
++                            An identifier or identifiers other than the primary Identifier applied to the resource being registered. This may be any alphanumeric string which is unique within its domain of issue. May be used for local identifiers. AlternateIdentifier should be used for another identifier of the same instance (same location, same file).
++                        </xs:documentation>
++                    </xs:annotation>
++                    <xs:complexType>
++                        <xs:simpleContent>
++                            <xs:extension base="nonemptycontentStringType">
++                                <xs:attribute name="alternateIdentifierType" use="required"/>
++                            </xs:extension>
++                        </xs:simpleContent>
++                    </xs:complexType>
++                </xs:element>
++            </xs:sequence>
++        </xs:complexType>
++    </xs:element>
++    
++    <xs:element name="relatedIdentifiers">
++        <xs:complexType>
++            <xs:sequence>
++                <xs:element name="relatedIdentifier" minOccurs="0" maxOccurs="unbounded">
++                    <xs:annotation>
++                        <xs:documentation>
++                            Identifiers of related resources. Use this property to indicate subsets of properties, as appropriate.
++                        </xs:documentation>
++                    </xs:annotation>
++                    <xs:complexType>
++                        <xs:simpleContent>
++                            <xs:extension base="xs:string">
++                                <xs:attribute name="resourceTypeGeneral" type="resourceType" use="optional"/>
++                                <xs:attribute name="relatedIdentifierType" type="relatedIdentifierType" use="required"/>
++                                <xs:attribute name="relationType" type="relationType" use="required"/>
++                                <xs:attribute name="relatedMetadataScheme" use="optional"/>
++                                <xs:attribute name="schemeURI" type="xs:anyURI" use="optional"/>
++                                <xs:attribute name="schemeType" use="optional"/>
++                            </xs:extension>
++                        </xs:simpleContent>
++                    </xs:complexType>
++                </xs:element>
++            </xs:sequence>
++        </xs:complexType>
++    </xs:element>
++    
++    <xs:element name="dates">
++        <xs:complexType>
++            <xs:sequence>
++                <xs:element name="date" minOccurs="0" maxOccurs="unbounded">
++                    <xs:annotation>
++                        <xs:documentation>Different dates relevant to the work.</xs:documentation>
++                        <xs:documentation>
++                            YYYY,YYYY-MM-DD, YYYY-MM-DDThh:mm:ssTZD or any other format or level of granularity described in W3CDTF. Use RKMS-ISO8601 standard for depicting date ranges.
++                        </xs:documentation>
++                    </xs:annotation>
++                    <xs:complexType>
++                        <xs:simpleContent>
++                            <xs:extension base="xs:string">
++                                <xs:attribute name="dateType" type="dateType" use="required"/>
++                                <xs:attribute name="dateInformation" use="optional"/>
++                            </xs:extension>
++                        </xs:simpleContent>
++                    </xs:complexType>
++                </xs:element>
++            </xs:sequence>
++        </xs:complexType>
++    </xs:element>
++    
++    <xs:element name="sizes">
++        <xs:complexType>
++            <xs:sequence>
++                <xs:element name="size" type="xs:string" minOccurs="0" maxOccurs="unbounded">
++                    <xs:annotation>
++                        <xs:documentation>Unstructures size information about the resource.</xs:documentation>
++                    </xs:annotation>
++                </xs:element>
++            </xs:sequence>
++        </xs:complexType>
++    </xs:element>
++
++    <xs:element name="rights">
++        <xs:complexType>
++            <xs:annotation>
++                <xs:documentation>Main access right for the resource from coar vocabulary. </xs:documentation>
++            </xs:annotation>
++            <xs:simpleContent>
++                <xs:extension base="nonemptycontentStringType">
++                      <xs:attribute name="rightsURI" type="accessRight" use="required"/>
++                      <xs:attribute ref="xml:lang"/>
++                </xs:extension>
++            </xs:simpleContent>
++        </xs:complexType>
++    </xs:element>
++
++    <xs:element name="geoLocations">
++        <xs:complexType>
++            <xs:sequence>
++                <xs:element name="geoLocation" minOccurs="0" maxOccurs="unbounded">
++                    <xs:complexType>
++                        <xs:choice maxOccurs="unbounded">
++                            <xs:element name="geoLocationPlace" minOccurs="0">
++                                <xs:annotation>
++                                    <xs:documentation>
++                                        Spatial region or named place where the data was gathered or about which the data is focused.
++                                    </xs:documentation>
++                                </xs:annotation>
++                            </xs:element>
++                            <xs:element name="geoLocationPoint" type="point" minOccurs="0">
++                                <xs:annotation>
++                                    <xs:documentation>
++                                        A point contains a single latitude-longitude pair, separated by whitespace.
++                                    </xs:documentation>
++                                </xs:annotation>
++                            </xs:element>
++                            <xs:element name="geoLocationBox" type="box" minOccurs="0">
++                                <xs:annotation>
++                                    <xs:documentation>
++                                        A box contains two white space separated latitude-longitude pairs, with each pair separated by whitespace. The first pair is the lower corner, the second is the upper corner.
++                                    </xs:documentation>
++                                </xs:annotation>
++                            </xs:element>
++                            <xs:element name="geoLocationPolygon" minOccurs="0" maxOccurs="unbounded">
++                                <xs:annotation>
++                                    <xs:documentation>
++                                        A drawn polygon area, defined by a set of points and lines connecting the points in a closed chain.
++                                    </xs:documentation>
++                                </xs:annotation>
++                                <xs:complexType>
++                                    <xs:sequence>
++                                        <xs:element name="polygonPoint" type="point" minOccurs="4" maxOccurs="unbounded"/>
++                                        <xs:element name="inPolygonPoint" type="point" minOccurs="0" maxOccurs="1"/>
++                                    </xs:sequence>
++                                </xs:complexType>
++                            </xs:element>
++                        </xs:choice>
++                    </xs:complexType>
++                </xs:element>
++            </xs:sequence>
++        </xs:complexType>
++    </xs:element>
++    
++    <xs:element name="subjects">
++        <xs:complexType>
++            <xs:sequence>
++                <xs:element name="subject" minOccurs="0" maxOccurs="unbounded">
++                    <xs:annotation>
++                        <xs:documentation>
++                            Subject, keywords, classification codes, or key phrases describing the resource.
++                        </xs:documentation>
++                    </xs:annotation>
++                    <xs:complexType>
++                        <xs:simpleContent>
++                            <xs:extension base="xs:string">
++                                <xs:attribute name="subjectScheme" use="optional"/>
++                                <xs:attribute name="schemeURI" type="xs:anyURI" use="optional"/>
++                                <xs:attribute name="valueURI" type="xs:anyURI" use="optional"/>
++                                <xs:attribute ref="xml:lang"/>
++                            </xs:extension>
++                        </xs:simpleContent>
++                    </xs:complexType>
++                </xs:element>
++            </xs:sequence>
++        </xs:complexType>
++    </xs:element>
++    
++    <!-- defines value for mandatory fields -->
++    <xs:simpleType name="nonemptycontentStringType">
++        <xs:restriction base="xs:string">
++            <xs:minLength value="1"/>
++        </xs:restriction>
++    </xs:simpleType>
++  <!-- definitions for geoLocation -->
++  <xs:complexType name="point">
++    <xs:all>
++      <xs:element name="pointLongitude" type="longitudeType" minOccurs="1"/>
++      <xs:element name="pointLatitude" type="latitudeType" minOccurs="1"/>
++    </xs:all>
++  </xs:complexType>
++  <xs:complexType name="box">
++    <xs:all>
++      <xs:element name="westBoundLongitude" type="longitudeType" minOccurs="1"/>
++      <xs:element name="eastBoundLongitude" type="longitudeType" minOccurs="1"/>
++      <xs:element name="southBoundLatitude" type="latitudeType" minOccurs="1"/>
++      <xs:element name="northBoundLatitude" type="latitudeType" minOccurs="1"/>
++    </xs:all>
++  </xs:complexType>
++  <xs:simpleType name="longitudeType">
++    <xs:restriction base="xs:float">
++      <xs:minInclusive value="-180"/>
++      <xs:maxInclusive value="180"/>
++    </xs:restriction>
++  </xs:simpleType>
++  <xs:simpleType name="latitudeType">
++    <xs:restriction base="xs:float">
++      <xs:minInclusive value="-90"/>
++      <xs:maxInclusive value="90"/>
++    </xs:restriction>
++  </xs:simpleType>    
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/dc.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/dc.xsd
+new file mode 100644
+index 00000000..36a749a8
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/dc.xsd
+@@ -0,0 +1,110 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
++           xmlns="http://purl.org/dc/elements/1.1/"
++           targetNamespace="http://purl.org/dc/elements/1.1/"
++           elementFormDefault="qualified"
++           attributeFormDefault="unqualified">
++
++  <xs:annotation>
++    <xs:documentation xml:lang="en">
++      DCMES 1.1 XML Schema
++      XML Schema for http://purl.org/dc/elements/1.1/ namespace
++
++      Created 2008-02-11
++
++      Created by 
++
++      Tim Cole (t-cole3@uiuc.edu)
++      Tom Habing (thabing@uiuc.edu)
++      Jane Hunter (jane@dstc.edu.au)
++      Pete Johnston (p.johnston@ukoln.ac.uk),
++      Carl Lagoze (lagoze@cs.cornell.edu)
++
++      This schema declares XML elements for the 15 DC elements from the
++      http://purl.org/dc/elements/1.1/ namespace.
++
++      It defines a complexType SimpleLiteral which permits mixed content 
++      and makes the xml:lang attribute available. It disallows child elements by
++      use of minOcccurs/maxOccurs.
++
++      However, this complexType does permit the derivation of other complexTypes
++      which would permit child elements.
++
++      All elements are declared as substitutable for the abstract element any, 
++      which means that the default type for all elements is dc:SimpleLiteral.
++
++    </xs:documentation>
++
++  </xs:annotation>
++
++
++  <xs:import namespace="http://www.w3.org/XML/1998/namespace"
++             schemaLocation="xml.xsd">
++  </xs:import>
++
++  <xs:complexType name="SimpleLiteral">
++        <xs:annotation>
++        <xs:documentation xml:lang="en">
++            This is the default type for all of the DC elements.
++            It permits text content only with optional
++            xml:lang attribute.
++            Text is allowed because mixed="true", but sub-elements
++            are disallowed because minOccurs="0" and maxOccurs="0" 
++            are on the xs:any tag.
++
++    	    This complexType allows for restriction or extension permitting
++            child elements.
++    	</xs:documentation>
++  	</xs:annotation>
++
++   <xs:complexContent mixed="true">
++    <xs:restriction base="xs:anyType">
++     <xs:sequence>
++      <xs:any processContents="lax" minOccurs="0" maxOccurs="0"/>
++     </xs:sequence>
++     <xs:attribute ref="xml:lang" use="optional"/>
++    </xs:restriction>
++   </xs:complexContent>
++  </xs:complexType>
++
++  <xs:element name="any" type="SimpleLiteral" abstract="true"/>
++
++  <xs:element name="description" substitutionGroup="any"/>
++  <xs:element name="publisher" substitutionGroup="any"/>
++  <xs:element name="format" substitutionGroup="any"/>
++  <xs:element name="source" substitutionGroup="any"/>
++  <xs:element name="language" substitutionGroup="any"/>
++  <xs:element name="coverage" substitutionGroup="any"/>
++
++  <xs:group name="elementsGroup">
++  	<xs:annotation>
++    	<xs:documentation xml:lang="en">
++    	    This group is included as a convenience for schema authors
++            who need to refer to all the elements in the 
++            http://purl.org/dc/elements/1.1/ namespace.
++    	</xs:documentation>
++  	</xs:annotation>
++
++  <xs:sequence>
++    <xs:choice minOccurs="0" maxOccurs="unbounded">
++      <xs:element ref="any"/>
++    </xs:choice>
++    </xs:sequence>
++  </xs:group>
++
++  <xs:complexType name="elementContainer">
++  	<xs:annotation>
++    	<xs:documentation xml:lang="en">
++    		This complexType is included as a convenience for schema authors who need to define a root
++    		or container element for all of the DC elements.
++    	</xs:documentation>
++  	</xs:annotation>
++
++    <xs:choice>
++      <xs:group ref="elementsGroup"/>
++    </xs:choice>
++  </xs:complexType>
++
++
++</xs:schema>
++<!--#include virtual="/schemas/xmls/qdc/2008/02/11/dc.xsd" -->
+\ No newline at end of file
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/dcterms.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/dcterms.xsd
+new file mode 100644
+index 00000000..ce1277b1
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/dcterms.xsd
+@@ -0,0 +1,73 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
++           xmlns:dc="http://purl.org/dc/elements/1.1/"
++           targetNamespace="http://purl.org/dc/terms/"
++           xmlns="http://purl.org/dc/terms/"
++           elementFormDefault="qualified"
++           attributeFormDefault="unqualified">
++
++  <xs:annotation>
++    <xs:documentation xml:lang="en">
++      DCterms XML Schema
++      XML Schema for http://purl.org/dc/terms/ namespace
++ 
++      Created 2008-02-11
++
++      Created by 
++
++      Tim Cole (t-cole3@uiuc.edu)
++      Tom Habing (thabing@uiuc.edu)
++      Jane Hunter (jane@dstc.edu.au)
++      Pete Johnston (p.johnston@ukoln.ac.uk),
++      Carl Lagoze (lagoze@cs.cornell.edu)
++
++      This schema declares XML elements for the DC elements and
++      DC element refinements from the http://purl.org/dc/terms/ namespace.
++      
++      It reuses the complexType dc:SimpleLiteral, imported from the dc.xsd
++      schema, which permits simple element content, and makes the xml:lang
++      attribute available.
++
++      This complexType permits the derivation of other complexTypes
++      which would permit child elements.
++
++      XML elements corresponding to DC elements are declared as substitutable for the abstract element dc:any, and 
++      XML elements corresponding to DC element refinements are defined as substitutable for the base elements 
++      which they refine.
++
++      This means that the default type for all XML elements (i.e. corresponding to all DC elements and 
++      element refinements) is dc:SimpleLiteral.
++
++      Encoding schemes are defined as complexTypes which are restrictions
++      of the dc:SimpleLiteral complexType. These complexTypes restrict 
++      values to an appropriates syntax or format using data typing,
++      regular expressions, or enumerated lists.
++  
++      In order to specify one of these encodings an xsi:type attribute must 
++      be used in the instance document.
++
++      Also, note that one shortcoming of this approach is that any type can be 
++      applied to any of the elements or refinements.  There is no convenient way
++      to restrict types to specific elements using this approach.
++
++      Changes in 2008-02-11 version:
++      
++      Add element declarations corresponding to 15 new dcterms URIs, and amend use of substitutionGroups.
++      
++      Add compexType definitions corresponding to ISO639-3, RFC4646.
++      
++    </xs:documentation>
++
++  </xs:annotation>
++
++  <xs:import namespace="http://purl.org/dc/elements/1.1/"
++    schemaLocation="dc.xsd"/>
++
++  <xs:import namespace="http://www.w3.org/XML/1998/namespace"
++             schemaLocation="xml.xsd">
++  </xs:import>
++
++  <xs:element name="audience" substitutionGroup="dc:any"/>
++
++
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-accessRight-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-accessRight-v4.xsd
+new file mode 100644
+index 00000000..c99d12aa
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-accessRight-v4.xsd
+@@ -0,0 +1,18 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++	xmlns="http://namespace.openaire.eu/schema/oaire/" 
++	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++	elementFormDefault="qualified"
++	xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd">
++    <xs:simpleType name="accessRight" id="accessRight">
++        <xs:annotation>
++            <xs:documentation>The main access right of the resource. Choose an SKOS-Concept-URI from the COAR access right vocabulary</xs:documentation>
++        </xs:annotation>
++        <xs:restriction base="xs:anyURI">
++            <xs:enumeration value="http://purl.org/coar/access_right/c_abf2"/><!--open access-->
++            <xs:enumeration value="http://purl.org/coar/access_right/c_f1cf"/><!--embargoed access-->
++            <xs:enumeration value="http://purl.org/coar/access_right/c_16ec"/><!--restricted access-->
++            <xs:enumeration value="http://purl.org/coar/access_right/c_14cb"/><!--metadata only access-->
++        </xs:restriction>
++    </xs:simpleType>
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-identifierType-v4.0.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-identifierType-v4.0.xsd
+new file mode 100644
+index 00000000..441bf64a
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-identifierType-v4.0.xsd
+@@ -0,0 +1,25 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!-- 
++  2018-11-07 openaire-guidelines: extends the datacite list of identifier types
++  -->
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++	xmlns="http://datacite.org/schema/kernel-4"
++        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"	
++	elementFormDefault="qualified"
++	xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd">
++
++    <xs:simpleType name="idType" id="idType">
++    <xs:annotation>
++      <xs:documentation>The type of the Identifier.</xs:documentation>
++    </xs:annotation>
++        <xs:restriction base="xs:string">
++            <xs:enumeration value="DOI"/>
++            <xs:enumeration value="URN"/>
++            <xs:enumeration value="PURL"/>
++           <xs:enumeration value="URL"/>
++            <xs:enumeration value="HANDLE"/>
++            <xs:enumeration value="ARK"/>
++        </xs:restriction>
++    </xs:simpleType>
++
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-resourceType-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-resourceType-v4.xsd
+new file mode 100644
+index 00000000..d205bb2b
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-resourceType-v4.xsd
+@@ -0,0 +1,73 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++	xmlns="http://namespace.openaire.eu/schema/oaire/" 
++	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++	targetNamespace="http://namespace.openaire.eu/schema/oaire/" 
++	elementFormDefault="qualified"
++	xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd">
++    <xs:simpleType name="resourceType" id="resourceType">
++        <xs:annotation>
++            <xs:documentation>The type of the resource. Choose an SKOS-Concept-URI from the COAR resource type vocabulary</xs:documentation>
++        </xs:annotation>
++        <xs:restriction base="xs:anyURI">
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_1162"/><!--annotation-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_0640"/><!--journal-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_6501"/><!--journal article-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_b239"/><!--editorial-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_7a1f"/><!--bachelor thesis-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_86bc"/><!--bibliography-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_2f33"/><!--book-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_3248"/><!--book part-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_ba08"/><!--book review-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_7ad9"/><!--website-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_e9a0"/><!--interactive resource-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_f744"/><!--conference proceedings-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_c94f"/><!--conference object-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_5794"/><!--conference paper-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_6670"/><!--conference poster-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_3e5a"/><!--contribution to journal-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_beb9"/><!--data paper-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_ddb1"/><!--dataset-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_db06"/><!--doctoral thesis-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_c513"/><!--image-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_8544"/><!--lecture-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_0857"/><!--letter-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_bdcc"/><!--master thesis-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_8a7e"/><!--moving image-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_2659"/><!--periodical-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_545b"/><!--letter to the editor-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_1843"/><!--other-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_15cd"/><!--patent-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_816b"/><!--preprint-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_93fc"/><!--report-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_ba1f"/><!--report part-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_baaf"/><!--research proposal-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_efa0"/><!--review-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_5ce6"/><!--software-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_ecc8"/><!--still image-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_71bd"/><!--technical documentation-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_393c"/><!--workflow-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_8042"/><!--working paper-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_46ec"/><!--thesis-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_12cc"/><!--cartographic material-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_12cd"/><!--map-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_12ce"/><!--video-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18cc"/><!--sound-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18cd"/><!--musical composition-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18cf"/><!--text-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18cp"/><!--conference paper not in proceedings-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18co"/><!--conference poster not in proceedings-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18cw"/><!--musical notation-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18ww"/><!--internal report-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18wz"/><!--memorandum-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18wq"/><!--other type of report-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_186u"/><!--policy report-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18op"/><!--project deliverable-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18hj"/><!--report to funding agency-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18ws"/><!--research report-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_18gh"/><!--technical report-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_dcae04bc"/><!--review article-->
++            <xs:enumeration value="http://purl.org/coar/resource_type/c_2df8fbb1"/><!--research article-->
++        </xs:restriction>
++    </xs:simpleType>
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-versions-v4.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-versions-v4.xsd
+new file mode 100644
+index 00000000..73776dbf
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire-versions-v4.xsd
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++	xmlns="http://namespace.eu/schema/oaire/" 
++	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++	targetNamespace="http://namespace.openaire.eu/schema/oaire/" 
++	elementFormDefault="qualified"
++	xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd">
++    <xs:simpleType name="version" id="version">
++        <xs:annotation>
++            <xs:documentation>The version of the resource. Choose an SKOS-Concept-URI from the COAR version vocabulary</xs:documentation>
++        </xs:annotation>
++        <xs:restriction base="xs:anyURI">
++		<xs:enumeration value="http://purl.org/coar/version/c_b1a7d7d4d402bcce"/><!--AO	(Author’s Original)-->
++            <xs:enumeration value="http://purl.org/coar/version/c_71e4c1898caa6e32"/><!--SMUR (Submitted Manuscript Under Review)-->
++            <xs:enumeration value="http://purl.org/coar/version/c_ab4af688f83e57aa"/><!--AM (Accepted Manuscript)-->
++            <xs:enumeration value="http://purl.org/coar/version/c_fa2ee174bc00049f"/><!--P (Proof)-->
++            <xs:enumeration value="http://purl.org/coar/version/c_970fb48d4fbd8a85"/><!--VoR (Version of Record)-->
++            <xs:enumeration value="http://purl.org/coar/version/c_e19f295774971610"/><!--CVoR (Corrected Version of Record)-->
++            <xs:enumeration value="http://purl.org/coar/version/c_dc82b40f9837b551"/><!--EVoR (Enhanced Version of Record)-->
++            <xs:enumeration value="http://purl.org/coar/version/c_be7fb7dd8ff6fe43"/><!--NA (Not Applicable (or Unknown))-->
++        </xs:restriction>
++    </xs:simpleType>
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire.xsd
+new file mode 100644
+index 00000000..4ce54d50
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/oaire.xsd
+@@ -0,0 +1,220 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++           xmlns="http://namespace.openaire.eu/schema/oaire/" 
++           targetNamespace="http://namespace.openaire.eu/schema/oaire/" 
++           elementFormDefault="qualified" 
++           xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
++           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++           xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd" >
++    <xs:import namespace="http://www.w3.org/XML/1998/namespace" schemaLocation="xml.xsd"/>
++    
++    <xs:include schemaLocation="oaire-accessRight-v4.xsd"/>
++    <xs:include schemaLocation="oaire-versions-v4.xsd"/>
++    <xs:include schemaLocation="oaire-resourceType-v4.xsd"></xs:include>
++    
++    <xs:annotation>
++        <xs:documentation>
++            The schema describes elements that extend the schemes of Dublin Core and DataCite
++        </xs:documentation>
++    </xs:annotation>
++    
++    <xs:element name="citationTitle" type="xs:string"/>
++    <xs:element name="citationVolume" type="xs:string"/>
++    <xs:element name="citationIssue" type="xs:string"/>
++    <xs:element name="citationStartPage" type="xs:string"/>
++    <xs:element name="citationEndPage" type="xs:string"/>
++    <xs:element name="citationEdition" type="xs:string"/>
++    <xs:element name="citationConferencePlace" type="xs:string"/>
++    <xs:element name="citationConferenceDate" type="xs:string"/>
++    
++  
++<!--    <xs:element name="audience">
++        <xs:simpleType>
++            <xs:restriction base="xs:string">
++                <xs:enumeration value="Administrators"/>
++                 <xs:enumeration value="Community Groups"/>
++                <xs:enumeration value="Counsellors"/>
++                <xs:enumeration value="Federal Funds Recipients and Applicants"/>
++                <xs:enumeration value="Librarians"/>
++                <xs:enumeration value="News Media"/>
++                <xs:enumeration value="Other"/>
++                <xs:enumeration value="Parents and Families"/>
++                <xs:enumeration value="Policymakers"/>
++                <xs:enumeration value="Researchers"/>
++                <xs:enumeration value="School Support Staff"/>
++                <xs:enumeration value="Student Financial Aid Providers"/>
++                <xs:enumeration value="Students"/>
++                <xs:enumeration value="Teachers"/>
++            </xs:restriction>
++        </xs:simpleType>
++    </xs:element>
++-->  
++    <xs:element name="licenseCondition">
++        <xs:complexType>
++                  <xs:simpleContent>
++              <xs:extension base="xs:string">
++                  <xs:attribute name="startDate"></xs:attribute>
++                  <xs:attribute name="uri"></xs:attribute>
++              </xs:extension>
++          </xs:simpleContent>
++        </xs:complexType>
++    </xs:element>
++
++    <xs:element name="file">
++        <xs:complexType>
++            <xs:simpleContent>
++                <xs:extension base="xs:string">
++                    <xs:attribute name="mimeType"></xs:attribute>
++                    <xs:attribute name="accessRightsURI" type="accessRight"></xs:attribute>
++                    <xs:attribute name="objectType" type="objectType"></xs:attribute>
++                </xs:extension>
++            </xs:simpleContent>    
++        </xs:complexType>  
++    </xs:element>
++
++    <xs:simpleType name="objectType" id="objectType">
++        <xs:annotation>
++            <xs:documentation>The type of object of the file</xs:documentation>
++        </xs:annotation>
++        <xs:restriction base="xs:string">
++            <xs:enumeration value="fulltext"/>
++            <xs:enumeration value="dataset"/>
++            <xs:enumeration value="software"/>
++            <xs:enumeration value="other"/>
++        </xs:restriction>
++    </xs:simpleType>
++    
++    <xs:element name="version">
++        <xs:complexType>
++        <xs:annotation>
++            <xs:documentation>Version types from coar vocabulary. </xs:documentation>
++        </xs:annotation>
++        <xs:simpleContent>
++            <xs:extension base="nonemptycontentStringType">
++                <xs:attribute name="uri" type="version"/>
++            </xs:extension>
++        </xs:simpleContent>
++            
++    </xs:complexType>
++    </xs:element>
++
++    <xs:element name="resourceType">
++        <xs:complexType>
++            <xs:annotation>
++                <xs:documentation>The type of scientific output the resource is a manifestation of. Allowed values for the attribute URI belongs to the COAR vocabulary for Resource Type Genres (version 1.1) </xs:documentation>
++            </xs:annotation>
++            <xs:simpleContent>
++                <xs:extension base="nonemptycontentStringType">
++                    <xs:attribute name="resourceTypeGeneral" type="resourceTypeGeneral" use="required"/>
++                    <xs:attribute name="uri" type="resourceType" use="required"/>
++                </xs:extension>
++            </xs:simpleContent>
++        </xs:complexType>
++    </xs:element>
++
++    <xs:simpleType name="resourceTypeGeneral" id="resourceTypeGeneral">
++        <xs:annotation>
++            <xs:documentation>The general resource type as supported in OpenAIRE</xs:documentation>
++        </xs:annotation>
++        <xs:restriction base="xs:string">
++            <xs:enumeration value="literature"/>
++            <xs:enumeration value="dataset"/>
++            <xs:enumeration value="software"/>
++            <xs:enumeration value="other research product"/>
++        </xs:restriction>
++    </xs:simpleType>
++     
++    <xs:element name="fundingReferences">
++        <xs:complexType>
++            <xs:sequence>
++                <xs:element name="fundingReference" minOccurs="0" maxOccurs="unbounded">
++                    <xs:annotation>
++                        <xs:documentation>
++                            Information about financial support (funding) for the resource being registered.
++                        </xs:documentation>
++                    </xs:annotation>
++                    <xs:complexType>
++                        <xs:all>
++                            <xs:element name="funderName" minOccurs="1" maxOccurs="1">
++                                <xs:annotation>
++                                    <xs:documentation>Name of the funding provider.</xs:documentation>
++                                </xs:annotation>
++                                <xs:simpleType>
++                                    <xs:restriction base="nonemptycontentStringType"/>
++                                </xs:simpleType>
++                            </xs:element>
++                            <xs:element name="funderIdentifier" minOccurs="0">
++                                <xs:annotation>
++                                    <xs:documentation>
++                                        Uniquely identifies a funding entity, according to various types.
++                                    </xs:documentation>
++                                </xs:annotation>
++                                <xs:complexType>
++                                    <xs:simpleContent>
++                                        <xs:extension base="xs:string">
++                                            <xs:attribute name="funderIdentifierType" type="funderIdentifierType" use="required"/>
++                                        </xs:extension>
++                                    </xs:simpleContent>
++                                </xs:complexType>
++                            </xs:element>
++                            <xs:element ref="fundingStream" minOccurs="0">
++                                <xs:annotation>
++                                    <xs:documentation>Name of the funding stream.</xs:documentation>
++                                </xs:annotation>
++                            </xs:element>
++                            <xs:element name="awardNumber" minOccurs="0">
++                                <xs:annotation>
++                                    <xs:documentation>
++                                        The code assigned by the funder to a sponsored award (grant).
++                                    </xs:documentation>
++                                </xs:annotation>
++                                <xs:complexType>
++                                    <xs:simpleContent>
++                                        <xs:extension base="xs:string">
++                                            <xs:attribute name="awardURI" type="xs:anyURI" use="optional"/>
++                                        </xs:extension>
++                                    </xs:simpleContent>
++                                </xs:complexType>
++                            </xs:element>
++                            <xs:element name="awardTitle" minOccurs="0">
++                                <xs:annotation>
++                                    <xs:documentation>The human readable title of the award (grant).</xs:documentation>
++                                </xs:annotation>
++                                <xs:simpleType>
++                                    <xs:restriction base="nonemptycontentStringType"/>
++                                </xs:simpleType>
++                            </xs:element>
++                        </xs:all>
++                    </xs:complexType>
++                </xs:element>
++            </xs:sequence>
++        </xs:complexType>
++    </xs:element>
++    
++    <xs:simpleType name="funderIdentifierType" id="funderIdentifierType">
++        <xs:annotation>
++            <xs:documentation>The type of the funderIdentifier.</xs:documentation>
++        </xs:annotation>
++        <xs:restriction base="xs:string">
++            <xs:enumeration value="ISNI"/>
++            <xs:enumeration value="GRID"/>
++            <xs:enumeration value="Crossref Funder ID"/>
++            <xs:enumeration value="Other"/>
++        </xs:restriction>
++    </xs:simpleType>
++    <xs:element name="fundingStream" type="fundingStreamType"/>
++    <xs:simpleType name="fundingStreamType">
++        <xs:annotation>
++            <xs:documentation>Name of the funding stream.</xs:documentation>
++        </xs:annotation>
++            <xs:restriction base="nonemptycontentStringType"/>
++    </xs:simpleType>
++    
++    <xs:simpleType name="nonemptycontentStringType">
++        <xs:restriction base="xs:string">
++            <xs:minLength value="1"/>
++        </xs:restriction>
++    </xs:simpleType>
++
++
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/openaire.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/openaire.xsd
+new file mode 100644
+index 00000000..2b82869e
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/openaire.xsd
+@@ -0,0 +1,249 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<xs:schema 
++  xmlns:xs ="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified"
++  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
++  xmlns:dc="http://purl.org/dc/elements/1.1/"
++  xmlns:dcterms="http://purl.org/dc/terms/"
++  xmlns:datacite="http://datacite.org/schema/kernel-4"
++  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
++  xmlns="http://namespace.openaire.eu/schema/oaire/"
++  targetNamespace="http://namespace.openaire.eu/schema/oaire/"
++  xsi:schemaLocation="http://www.w3.org/2001/XMLSchema https://www.w3.org/2012/04/XMLSchema.xsd">
++
++  <xs:import namespace="http://purl.org/dc/elements/1.1/"
++    schemaLocation="dc.xsd"/>
++
++  <xs:import namespace="http://purl.org/dc/terms/"
++    schemaLocation="dcterms.xsd"/>
++
++  <xs:import namespace="http://datacite.org/schema/kernel-4"
++    schemaLocation="datacite-v4.xsd"/>
++  
++  <xs:include schemaLocation="oaire.xsd"/> 
++
++ <xs:element name="resource">
++  <xs:annotation>
++    <xs:documentation>
++      This schema defines the xml format for OpenAIRE Guidelines for Literature Repositories v4.
++      
++      The schema represents an application profile consisting of
++      * elements from Dublin Core with optional refinement attributes xml:lang and rdf:resource
++      * elements from DataCite metadata schema v4.1 to express granular information on creator, contributor, fundingReference, relatedIdentifier, alternateIdentifier, date, subject
++      * elements from OpenAIRE to express information on bibliographic citation details, (fulltext) files,  version and license condition
++    </xs:documentation>
++  </xs:annotation>
++  <xs:complexType>
++    <xs:choice maxOccurs="unbounded">
++      <xs:element ref="dc:coverage" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Optional</xs:documentation>
++          <xs:documentation xml:lang="en">The extent or scope of the content of the resource. Coverage will typically include spatial location (a place name or geographic coordinates), temporal period (a period label, date, or date range) or jurisdiction (such as a named administrative entity).</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="datacite:creators">
++        <xs:annotation>
++          <xs:documentation>Mandatory if applicable</xs:documentation>
++          <xs:documentation>An entity primarily responsible for making the resource. (DCMI definition)</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++
++      <xs:element ref="datacite:contributors" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation>Mandatory if applicable</xs:documentation>
++          <xs:documentation>An entity responsible for making contributions to the content of the resource. Examples of a Contributor include a person, an organization, or a service. Typically, the name of a Contributor should be used to indicate the entity. (DCMI definition)</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++
++      <xs:element ref="fundingReferences" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation>Mandatory if applicable</xs:documentation>
++          <xs:documentation>Information about financial support (funding) for the resource being registered. (DataCite definition)</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="datacite:alternateIdentifiers" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation>Optional</xs:documentation>
++          <xs:documentation>An identifier or identifiers other than the primary Identifier applied to the resource being registered. This may be any alphanumeric string which is unique within its domain of issue. May be used for local identifiers. AlternateIdentifier should be used for another identifier of the same instance (same location, same file).</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="datacite:relatedIdentifiers" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation>Optional</xs:documentation>
++          <xs:documentation>Identifiers of related resources. Use this property to indicate subsets of properties, as appropriate. (DataCite definition)</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++
++      <xs:element ref="datacite:dates" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Optional, use 'accepted' to indicate embargo start date</xs:documentation>
++          <xs:documentation xml:lang="en">Optional, use 'available' to indicate embargo end date</xs:documentation>
++          <xs:documentation xml:lang="en">(TODO compare with dc:date) Optional, use 'issued' to indicate date of publication</xs:documentation>
++        </xs:annotation>        
++      </xs:element>
++
++      <xs:element ref="datacite:titles" minOccurs="1">
++        <xs:annotation>
++          <xs:documentation>Mandatory</xs:documentation>
++          <xs:documentation>A name given to the resource.</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++
++      <xs:element ref="dc:language" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation>Mandatory</xs:documentation>
++          <xs:documentation>A language of the intellectual content of the resource. (DCMI definition)</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="dc:publisher" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation>Mandatory when applicable</xs:documentation>
++          <xs:documentation>An entity responsible for making the resource available. Examples of a Publisher include a person, an organization, or a service. Typically, the name of a Publisher should be used to indicate the entity. (DCMI definition)</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++
++      
++      <xs:element ref="resourceType" minOccurs="1">
++        <xs:annotation>
++          <xs:documentation>Mandatory</xs:documentation>
++          <xs:documentation>The type of scientific output the resource is a manifestation of. </xs:documentation>
++        </xs:annotation>
++      </xs:element>
++            
++      <xs:element ref="dc:description" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Mandatory when applicable</xs:documentation>
++          <xs:documentation>An account of the resource. (DCMI definition)</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="dc:format" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++          <xs:documentation>The file format, physical medium, or dimensions of the resource. (DCMI definition)</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="datacite:identifier" minOccurs="1" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Mandatory</xs:documentation>
++          <xs:documentation>An unambiguous reference to the resource within a given context.</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="datacite:rights" minOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Mandatory</xs:documentation>
++          <xs:documentation>The main access right of the resource</xs:documentation>
++          <xs:documentation>The accessright attribute in the file element might be more specific</xs:documentation>
++          <xs:documentation>The rdf:resource attribute should contain the concept-URI chosen from the COAR Access Right vocabulary.</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="dc:source" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++          <xs:documentation>A reference to a resource from which the present resource is derived. (DCMI definition)</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="datacite:subjects" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Mandatory when applicable</xs:documentation>
++          <xs:documentation>(TODO) a recommended list of subjec classification scheme URIs to provide in rdf:resource attribute</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      <xs:element ref="datacite:geoLocations" minOccurs="0" maxOccurs="unbounded">
++  <xs:annotation>
++    <xs:documentation>Spatial region or named place where the data was gathered or about which the data is focused </xs:documentation>
++  </xs:annotation>
++</xs:element>
++  <xs:element ref="datacite:sizes" minOccurs="0" maxOccurs="unbounded">
++    <xs:annotation>
++      <xs:documentation>Unstructured size information about the resource (occurrences: 0-n).</xs:documentation>
++    </xs:annotation>
++  </xs:element>
++      <xs:element ref="citationTitle" minOccurs="0" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>          
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="citationVolume" minOccurs="0" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="citationIssue" minOccurs="0" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="citationStartPage" minOccurs="0" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="citationEndPage" minOccurs="0" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++
++      <xs:element ref="citationEdition" minOccurs="0" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++
++      <xs:element ref="citationConferencePlace" minOccurs="0" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++
++      <xs:element ref="citationConferenceDate" minOccurs="0" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="version" minOccurs="0" maxOccurs="1">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++          <xs:documentation>(TODO) use term from controlled list of version types; alignment with and URIfication of NISO-JAV terms pending.</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++      
++      <xs:element ref="file" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Mandatory if applicable</xs:documentation>
++          <xs:documentation>The link(s) to the fulltext file(s)</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++
++      <xs:element ref="licenseCondition" minOccurs="0">
++        <xs:annotation>
++          <xs:documentation xml:lang="en">Recommended</xs:documentation>
++          <xs:documentation>License condition</xs:documentation>
++        </xs:annotation>
++      </xs:element>
++
++    <xs:element ref="dcterms:audience" minOccurs="0" maxOccurs="unbounded">
++      <xs:annotation>
++        <xs:documentation>A class of entity for whom the resource is intended or useful.</xs:documentation>
++      </xs:annotation>
++    </xs:element>
++    </xs:choice>    
++  </xs:complexType>
++  
++</xs:element>
++
++
++</xs:schema>
+diff --git a/figshare_api2/tests/app/presenters/oai/schemas/oaire/xml.xsd b/figshare_api2/tests/app/presenters/oai/schemas/oaire/xml.xsd
+new file mode 100644
+index 00000000..bd291f3d
+--- /dev/null
++++ b/figshare_api2/tests/app/presenters/oai/schemas/oaire/xml.xsd
+@@ -0,0 +1,286 @@
++<?xml version='1.0'?>
++<?xml-stylesheet href="../../2008/09/xsd.xsl" type="text/xsl"?>
++<xs:schema targetNamespace="http://www.w3.org/XML/1998/namespace" 
++  xmlns:xs="http://www.w3.org/2001/XMLSchema" 
++  xmlns   ="http://www.w3.org/1999/xhtml"
++  xml:lang="en">
++
++ <xs:annotation>
++  <xs:documentation>
++   <div>
++    <h1>About the XML namespace</h1>
++
++    <div class="bodytext">
++     <p>
++      This schema document describes the XML namespace, in a form
++      suitable for import by other schema documents.
++     </p>
++     <p>
++      See <a href="http://www.w3.org/XML/1998/namespace.html">
++      http://www.w3.org/XML/1998/namespace.html</a> and
++      <a href="http://www.w3.org/TR/REC-xml">
++      http://www.w3.org/TR/REC-xml</a> for information 
++      about this namespace.
++     </p>
++     <p>
++      Note that local names in this namespace are intended to be
++      defined only by the World Wide Web Consortium or its subgroups.
++      The names currently defined in this namespace are listed below.
++      They should not be used with conflicting semantics by any Working
++      Group, specification, or document instance.
++     </p>
++     <p>   
++      See further below in this document for more information about <a
++      href="#usage">how to refer to this schema document from your own
++      XSD schema documents</a> and about <a href="#nsversioning">the
++      namespace-versioning policy governing this schema document</a>.
++     </p>
++    </div>
++   </div>
++  </xs:documentation>
++ </xs:annotation>
++
++ <xs:attribute name="lang">
++  <xs:annotation>
++   <xs:documentation>
++    <div>
++     
++      <h3>lang (as an attribute name)</h3>
++      <p>
++       denotes an attribute whose value
++       is a language code for the natural language of the content of
++       any element; its value is inherited.  This name is reserved
++       by virtue of its definition in the XML specification.</p>
++     
++    </div>
++    <div>
++     <h4>Notes</h4>
++     <p>
++      Attempting to install the relevant ISO 2- and 3-letter
++      codes as the enumerated possible values is probably never
++      going to be a realistic possibility.  
++     </p>
++     <p>
++      See BCP 47 at <a href="http://www.rfc-editor.org/rfc/bcp/bcp47.txt">
++       http://www.rfc-editor.org/rfc/bcp/bcp47.txt</a>
++      and the IANA language subtag registry at
++      <a href="http://www.iana.org/assignments/language-subtag-registry">
++       http://www.iana.org/assignments/language-subtag-registry</a>
++      for further information.
++     </p>
++     <p>
++      The union allows for the 'un-declaration' of xml:lang with
++      the empty string.
++     </p>
++    </div>
++   </xs:documentation>
++  </xs:annotation>
++  <xs:simpleType>
++   <xs:union memberTypes="xs:language">
++    <xs:simpleType>    
++     <xs:restriction base="xs:string">
++      <xs:enumeration value=""/>
++     </xs:restriction>
++    </xs:simpleType>
++   </xs:union>
++  </xs:simpleType>
++ </xs:attribute>
++
++ <xs:attribute name="space">
++  <xs:annotation>
++   <xs:documentation>
++    <div>
++     
++      <h3>space (as an attribute name)</h3>
++      <p>
++       denotes an attribute whose
++       value is a keyword indicating what whitespace processing
++       discipline is intended for the content of the element; its
++       value is inherited.  This name is reserved by virtue of its
++       definition in the XML specification.</p>
++     
++    </div>
++   </xs:documentation>
++  </xs:annotation>
++  <xs:simpleType>
++   <xs:restriction base="xs:NCName">
++    <xs:enumeration value="default"/>
++    <xs:enumeration value="preserve"/>
++   </xs:restriction>
++  </xs:simpleType>
++ </xs:attribute>
++ 
++ <xs:attribute name="base" type="xs:anyURI"> <xs:annotation>
++   <xs:documentation>
++    <div>
++     
++      <h3>base (as an attribute name)</h3>
++      <p>
++       denotes an attribute whose value
++       provides a URI to be used as the base for interpreting any
++       relative URIs in the scope of the element on which it
++       appears; its value is inherited.  This name is reserved
++       by virtue of its definition in the XML Base specification.</p>
++     
++     <p>
++      See <a
++      href="http://www.w3.org/TR/xmlbase/">http://www.w3.org/TR/xmlbase/</a>
++      for information about this attribute.
++     </p>
++    </div>
++   </xs:documentation>
++  </xs:annotation>
++ </xs:attribute>
++ 
++ <xs:attribute name="id" type="xs:ID">
++  <xs:annotation>
++   <xs:documentation>
++    <div>
++     
++      <h3>id (as an attribute name)</h3> 
++      <p>
++       denotes an attribute whose value
++       should be interpreted as if declared to be of type ID.
++       This name is reserved by virtue of its definition in the
++       xml:id specification.</p>
++     
++     <p>
++      See <a
++      href="http://www.w3.org/TR/xml-id/">http://www.w3.org/TR/xml-id/</a>
++      for information about this attribute.
++     </p>
++    </div>
++   </xs:documentation>
++  </xs:annotation>
++ </xs:attribute>
++
++ <xs:attributeGroup name="specialAttrs">
++  <xs:attribute ref="xml:base"/>
++  <xs:attribute ref="xml:lang"/>
++  <xs:attribute ref="xml:space"/>
++  <xs:attribute ref="xml:id"/>
++ </xs:attributeGroup>
++
++ <xs:annotation>
++  <xs:documentation>
++   <div>
++   
++    <h3>Father (in any context at all)</h3> 
++
++    <div class="bodytext">
++     <p>
++      denotes Jon Bosak, the chair of 
++      the original XML Working Group.  This name is reserved by 
++      the following decision of the W3C XML Plenary and 
++      XML Coordination groups:
++     </p>
++     <blockquote>
++       <p>
++	In appreciation for his vision, leadership and
++	dedication the W3C XML Plenary on this 10th day of
++	February, 2000, reserves for Jon Bosak in perpetuity
++	the XML name "xml:Father".
++       </p>
++     </blockquote>
++    </div>
++   </div>
++  </xs:documentation>
++ </xs:annotation>
++
++ <xs:annotation>
++  <xs:documentation>
++   <div xml:id="usage" id="usage">
++    <h2><a name="usage">About this schema document</a></h2>
++
++    <div class="bodytext">
++     <p>
++      This schema defines attributes and an attribute group suitable
++      for use by schemas wishing to allow <code>xml:base</code>,
++      <code>xml:lang</code>, <code>xml:space</code> or
++      <code>xml:id</code> attributes on elements they define.
++     </p>
++     <p>
++      To enable this, such a schema must import this schema for
++      the XML namespace, e.g. as follows:
++     </p>
++     <pre>
++          &lt;schema . . .>
++           . . .
++           &lt;import namespace="http://www.w3.org/XML/1998/namespace"
++                      schemaLocation="http://www.w3.org/2001/xml.xsd"/>
++     </pre>
++     <p>
++      or
++     </p>
++     <pre>
++           &lt;import namespace="http://www.w3.org/XML/1998/namespace"
++                      schemaLocation="http://www.w3.org/2009/01/xml.xsd"/>
++     </pre>
++     <p>
++      Subsequently, qualified reference to any of the attributes or the
++      group defined below will have the desired effect, e.g.
++     </p>
++     <pre>
++          &lt;type . . .>
++           . . .
++           &lt;attributeGroup ref="xml:specialAttrs"/>
++     </pre>
++     <p>
++      will define a type which will schema-validate an instance element
++      with any of those attributes.
++     </p>
++    </div>
++   </div>
++  </xs:documentation>
++ </xs:annotation>
++
++ <xs:annotation>
++  <xs:documentation>
++   <div id="nsversioning" xml:id="nsversioning">
++    <h2><a name="nsversioning">Versioning policy for this schema document</a></h2>
++    <div class="bodytext">
++     <p>
++      In keeping with the XML Schema WG's standard versioning
++      policy, this schema document will persist at
++      <a href="http://www.w3.org/2009/01/xml.xsd">
++       http://www.w3.org/2009/01/xml.xsd</a>.
++     </p>
++     <p>
++      At the date of issue it can also be found at
++      <a href="http://www.w3.org/2001/xml.xsd">
++       http://www.w3.org/2001/xml.xsd</a>.
++     </p>
++     <p>
++      The schema document at that URI may however change in the future,
++      in order to remain compatible with the latest version of XML
++      Schema itself, or with the XML namespace itself.  In other words,
++      if the XML Schema or XML namespaces change, the version of this
++      document at <a href="http://www.w3.org/2001/xml.xsd">
++       http://www.w3.org/2001/xml.xsd 
++      </a> 
++      will change accordingly; the version at 
++      <a href="http://www.w3.org/2009/01/xml.xsd">
++       http://www.w3.org/2009/01/xml.xsd 
++      </a> 
++      will not change.
++     </p>
++     <p>
++      Previous dated (and unchanging) versions of this schema 
++      document are at:
++     </p>
++     <ul>
++      <li><a href="http://www.w3.org/2009/01/xml.xsd">
++	http://www.w3.org/2009/01/xml.xsd</a></li>
++      <li><a href="http://www.w3.org/2007/08/xml.xsd">
++	http://www.w3.org/2007/08/xml.xsd</a></li>
++      <li><a href="http://www.w3.org/2004/10/xml.xsd">
++	http://www.w3.org/2004/10/xml.xsd</a></li>
++      <li><a href="http://www.w3.org/2001/03/xml.xsd">
++	http://www.w3.org/2001/03/xml.xsd</a></li>
++     </ul>
++    </div>
++   </div>
++  </xs:documentation>
++ </xs:annotation>
++
++</xs:schema>
+diff --git a/figshare_api2/tests/app/views/oai/oai_handler_test.py b/figshare_api2/tests/app/views/oai/oai_handler_test.py
+index 4965a001..cb5f702c 100644
+--- a/figshare_api2/tests/app/views/oai/oai_handler_test.py
++++ b/figshare_api2/tests/app/views/oai/oai_handler_test.py
+@@ -213,6 +213,36 @@ class TestOAIBaseHandler:
+ 
+             assert handler.params["page"] == 2
+ 
++    def test_extract_params_with_resumption_token_rejects_v3_only_prefix_on_v2(self, oai_request_list_identifiers):
++        """A resumptionToken issued on /v3/oai for oai_openaire (v3-only, FIG-45329) must not be
++        replayable against /v2/oai -- tokens carry no version binding of their own, so this has
++        to be re-checked at decode time here, not just at the original request's validate_args()."""
++        oai_request = {"verb": "ListIdentifiers", "resumptionToken": "token"}
++        handler = OAIBaseHandler(oai_request, is_v3=False)
++
++        with patch("figshare_api2.app.views.oai.handler.ResumptionToken") as mock_token:
++            mock_decoded = Mock(
++                is_valid=True, params_dict={"verb": "ListIdentifiers", "metadataPrefix": "oai_openaire"}
++            )
++            mock_token.decode.return_value = mock_decoded
++
++            with pytest.raises(oai_exceptions.CannotDiseminateFormat):
++                handler.extract_params()
++
++    def test_extract_params_with_resumption_token_accepts_v3_only_prefix_on_v3(self, oai_request_list_identifiers):
++        oai_request = {"verb": "ListIdentifiers", "resumptionToken": "token"}
++        handler = OAIBaseHandler(oai_request, is_v3=True)
++
++        with patch("figshare_api2.app.views.oai.handler.ResumptionToken") as mock_token:
++            mock_decoded = Mock(
++                is_valid=True, params_dict={"verb": "ListIdentifiers", "metadataPrefix": "oai_openaire"}
++            )
++            mock_token.decode.return_value = mock_decoded
++
++            handler.extract_params()
++
++            assert handler.params["metadataPrefix"] == "oai_openaire"
++
+     def test_build_resumption_token(self, oai_request_list_identifiers):
+         """Test build_resumption_token creates next page token"""
+         handler = OAIBaseHandler(oai_request_list_identifiers)
+@@ -279,6 +309,24 @@ class TestListMetadataFormatsHandler:
+ 
+         assert result is not None
+ 
++    def test_list_metadata_formats_excludes_v3_only_prefix_on_v2(self):
++        oai_request = {"verb": "ListMetadataFormats"}
++        handler = ListMetadataFormatsHandler(oai_request, is_v3=False)
++        handler.extract_params()
++
++        prefixes = [f["metadataPrefix"] for f in handler.process().known_formats]
++
++        assert "oai_openaire" not in prefixes
++
++    def test_list_metadata_formats_includes_v3_only_prefix_on_v3(self):
++        oai_request = {"verb": "ListMetadataFormats"}
++        handler = ListMetadataFormatsHandler(oai_request, is_v3=True)
++        handler.extract_params()
++
++        prefixes = [f["metadataPrefix"] for f in handler.process().known_formats]
++
++        assert "oai_openaire" in prefixes
++
+     def test_list_metadata_formats_with_valid_identifier(self):
+         """Test ListMetadataFormats with valid identifier"""
+         oai_request = {"verb": "ListMetadataFormats", "identifier": "oai:figshare.com:article/123"}
+diff --git a/figshare_api2/tests/app/views/oai/oai_view_test.py b/figshare_api2/tests/app/views/oai/oai_view_test.py
+index 0813c560..a43a09d3 100644
+--- a/figshare_api2/tests/app/views/oai/oai_view_test.py
++++ b/figshare_api2/tests/app/views/oai/oai_view_test.py
+@@ -105,6 +105,41 @@ class TestOAIPMHViewParseParams:
+         assert view.oai_request is not None
+         assert view.oai_request.get("verb") == "GetRecord"
+ 
++    def test_parse_params_get_record_v3_only_prefix_rejected_on_v2(self, pyramid_request):
++        pyramid_request.registry.settings = {"api_default_revision": "2.0"}
++        pyramid_request.params = {
++            "verb": "GetRecord",
++            "metadataPrefix": "oai_openaire",
++            "identifier": "oai:figshare.network:article/123",
++        }
++        pyramid_request.environ = {
++            "QUERY_STRING": "verb=GetRecord&metadataPrefix=oai_openaire&identifier=oai:figshare.network:article/123"
++        }
++
++        view = OAIPMHView(pyramid_request)
++        view.parse_params()
++
++        assert view.oai_request.is_v3 is False
++        with pytest.raises(oai_exceptions.CannotDiseminateFormat):
++            view.oai_request.validate()
++
++    def test_parse_params_get_record_v3_only_prefix_accepted_on_v3(self, pyramid_request):
++        pyramid_request.registry.settings = {"api_default_revision": "3.0"}
++        pyramid_request.params = {
++            "verb": "GetRecord",
++            "metadataPrefix": "oai_openaire",
++            "identifier": "oai:figshare.network:article/123",
++        }
++        pyramid_request.environ = {
++            "QUERY_STRING": "verb=GetRecord&metadataPrefix=oai_openaire&identifier=oai:figshare.network:article/123"
++        }
++
++        view = OAIPMHView(pyramid_request)
++        view.parse_params()
++
++        assert view.oai_request.is_v3 is True
++        view.oai_request.validate()  # doesn't raise
++
+     def test_parse_params_unknown_verb_defaults_to_identify(self, pyramid_request):
+         """Test parsing params with unknown verb defaults to Identify"""
+         pyramid_request.params = {"verb": "UnknownVerb"}

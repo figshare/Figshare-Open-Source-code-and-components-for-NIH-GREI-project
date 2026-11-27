@@ -1,0 +1,161 @@
+diff --git a/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx b/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx
+index e38270402..be8db3bee 100644
+--- a/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx
++++ b/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx
+@@ -1,16 +1,24 @@
+ import React from "react";
+ import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
++import userEvent from "@testing-library/user-event";
+ 
+ import { AffiliationsComponent } from "./Affiliations";
+ 
+ 
+-// useRorSearch is stubbed so tests never hit a real network call
++// useRorSearch is stubbed so tests never hit a real network call.
++// Uses real React state so that setSearchTerm triggers a re-render (needed
++// for the keyboard-accessibility useEffect to re-fire after input changes).
+ jest.mock("./useRorSearch", () => {
++  const { useState, useCallback } = require("react");
++
+   return {
+     useRorSearch: () => {
++      const [searchTerm, setSearchTermRaw] = useState("");
++      const setSearchTerm = useCallback((v: string) => setSearchTermRaw(v), []);
++
+       return {
+-        searchTerm: "",
+-        setSearchTerm: jest.fn(),
++        searchTerm,
++        setSearchTerm,
+         loading: false,
+         error: undefined,
+         results: [],
+@@ -79,7 +87,7 @@ jest.mock("./AffiliationsList/AffiliationsList", () => {
+   return { AffiliationsList: () => <div data-testid="affiliations-list" /> };
+ });
+ 
+-// Latest Button renders as a native button so click assertions work
++// Latest Button renders as a native button so click assertions work.
+ // Passes through extra props (disabled, data-part, tabIndex, aria-label, etc.)
+ // so the real SearchInput's buttons and disabled state are testable.
+ function MockButton({ children, onClick, ...rest }: any) {
+@@ -99,14 +107,7 @@ jest.mock("@digital-science/figshare-fcl/icons/react/Plus", () => {
+   };
+ });
+ 
+-// SearchInput renders as a plain input for value/onChange assertions
+-jest.mock("@digital-science/figshare-fcl/latest/SearchInput", () => {
+-  return {
+-    SearchInput: (props: React.InputHTMLAttributes<HTMLInputElement>) => (
+-      <input data-testid="search-input" {...props} />
+-    ),
+-  };
+-});
++// Use the real FCL SearchInput — no mock needed
+ 
+ // Alert renders a sentinel element plus a close button to test dismissal
+ jest.mock("@digital-science/figshare-fcl/latest/Alert", () => {
+@@ -177,7 +178,7 @@ describe("AffiliationsComponent", () => {
+     fireEvent.click(screen.getByRole("button", { name: /Add another affiliation/i }));
+ 
+     await waitFor(() => {
+-      expect(screen.getByTestId("search-input")).toBeInTheDocument();
++      expect(screen.getByRole("search").querySelector("input")).toBeInTheDocument();
+       expect(screen.getByTestId("search-dropdown")).toBeInTheDocument();
+     });
+ 
+@@ -542,7 +543,7 @@ describe("AffiliationsComponent", () => {
+     });
+ 
+     // Search mode is still active after duplicate — type in the search input to dismiss the alert
+-    fireEvent.change(screen.getByTestId("search-input"), { target: { value: "new search" } });
++    fireEvent.change(screen.getByRole("search").querySelector("input"), { target: { value: "new search" } });
+ 
+     await waitFor(() => {
+       expect(screen.queryByTestId("duplicate-alert")).not.toBeInTheDocument();
+@@ -610,4 +611,49 @@ describe("AffiliationsComponent", () => {
+ 
+     teardown();
+   });
++
++  it("makes SearchInput search button keyboard-reachable", async() => {
++    render(<AffiliationsComponent {...defaultProps} />);
++
++    // Enter search mode
++    fireEvent.click(screen.getByRole("button", { name: /Add another affiliation/i }));
++
++    await waitFor(() => {
++      expect(screen.getByRole("search")).toBeInTheDocument();
++    });
++
++    // The FCL SearchInput sets tabIndex={-1} on its submit button. Our
++    // workaround overrides it to tabIndex=0 so it's keyboard-reachable.
++    const searchWrap = screen.getByRole("search");
++    const submitButton = searchWrap.querySelector("[data-part='search-input-submit-button']");
++    expect(submitButton.getAttribute("tabindex")).toBe("0");
++
++    teardown();
++  });
++
++  it("makes SearchInput clear button keyboard-reachable after typing", async() => {
++    const user = userEvent.setup();
++    render(<AffiliationsComponent {...defaultProps} />);
++
++    // Enter search mode
++    fireEvent.click(screen.getByRole("button", { name: /Add another affiliation/i }));
++
++    await waitFor(() => {
++      expect(screen.getByRole("search")).toBeInTheDocument();
++    });
++
++    // Type so the clear button appears
++    const input = screen.getByRole("search").querySelector("input");
++    await user.type(input, "test");
++
++    // The clear button should now be present and keyboard-reachable (tabindex=0)
++    const searchWrap = screen.getByRole("search");
++    await waitFor(() => {
++      const clearBtn = searchWrap.querySelector("[data-part='search-input-clear-button']");
++      expect(clearBtn).toBeTruthy();
++      expect(clearBtn.getAttribute("tabindex")).toBe("0");
++    });
++
++    teardown();
++  });
+ });
+diff --git a/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx b/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx
+index 8b0d770af..463418a32 100644
+--- a/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx
++++ b/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx
+@@ -1,4 +1,4 @@
+-import React, { useState, useCallback, useEffect } from "react";
++import React, { useState, useCallback, useEffect, useRef } from "react";
+ import { Button } from "@digital-science/figshare-fcl/latest/Button";
+ import PlusSvg from "@digital-science/figshare-fcl/icons/react/Plus";
+ import { SearchInput } from "@digital-science/figshare-fcl/latest/SearchInput";
+@@ -24,6 +24,17 @@ export function AffiliationsComponent({ name, updateField, value = [], locked =
+   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+ 
+   const { searchTerm, setSearchTerm, loading, error, results, hasMore, handleLoadMore } = useRorSearch();
++  const searchInputRef = useRef<HTMLDivElement>(null);
++
++  // FCL SearchInput sets tabIndex={-1} on its clear/submit buttons, making them
++  // unreachable via keyboard. Override with tabIndex=0 after each render.
++  useEffect(() => {
++    if (!isSearching || !searchInputRef.current) {
++      return;
++    }
++    const buttons = searchInputRef.current.querySelectorAll("button[tabindex='-1']");
++    buttons.forEach((btn) => btn.setAttribute("tabindex", "0"));
++  });
+ 
+   // Sync local state from form field value when it changes (e.g. initial load from API)
+   useEffect(() => {
+@@ -207,6 +218,7 @@ export function AffiliationsComponent({ name, updateField, value = [], locked =
+       {isSearching ? (
+         <div className={styles.searchColumn}>
+           <SearchInput
++            ref={searchInputRef}
+             placeholder="Search the ROR registry or type a name"
+             value={searchTerm}
+             onChange={handleSearchChange}

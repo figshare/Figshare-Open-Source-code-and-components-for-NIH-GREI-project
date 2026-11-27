@@ -1,0 +1,567 @@
+diff --git a/figshare/graphql/util/response.py b/figshare/graphql/util/response.py
+index a4b24be64..05b2dca22 100644
+--- a/figshare/graphql/util/response.py
++++ b/figshare/graphql/util/response.py
+@@ -1,32 +1,8 @@
+-from figcore.graphql.utils.case import camelcase
+-
+-
+-def is_list_of_dicts(content):
+-    if not isinstance(content, list):
+-        return False
+-    for el in content:
+-        if not isinstance(el, dict):
+-            return False
+-
+-    return True
++from figcore.graphql.utils.case import keys_to_camel
+ 
+ 
+ def keys_to_camel_case(func):
+     def convert(*args, **kwargs):
+-        def convert_dict_level(content):
+-            if not isinstance(content, dict) and not is_list_of_dicts(content):
+-                return content
+-
+-            if isinstance(content, dict):
+-                return {camelcase(key): convert_dict_level(value) for key, value in content.items()}
+-
+-            if is_list_of_dicts(content):
+-                camel_case_content = []
+-                for res in content:
+-                    camel_case_content.append({camelcase(key): convert_dict_level(value) for key, value in res.items()})
+-                return camel_case_content
+-
+-        result = func(*args, **kwargs)
+-        return convert_dict_level(result)
++        return keys_to_camel(func(*args, **kwargs))
+ 
+     return convert
+diff --git a/figshare/graphql/v2_mutations/account.py b/figshare/graphql/v2_mutations/account.py
+index 340df5ad2..1f36e6a08 100644
+--- a/figshare/graphql/v2_mutations/account.py
++++ b/figshare/graphql/v2_mutations/account.py
+@@ -325,8 +325,16 @@ def get_user_public_url(info, user, institution=None):
+     return url_data["url"]
+ 
+ 
++def _reject_on_itbm(account):
++    # ITBM keeps people inline in person_list fields (no ghost users), so authors aren't created or edited as users
++    feature = FeatureFlag.find_by_name("itbm_enabled")
++    if FeatureFlag.check_flag(feature, institution_id=account.institution_id):
++        raise exceptions.BadRequest("Operation not allowed in ITBM")
++
++
+ def create_author_user(root, info, last_name, first_name="", email="", orcid="", submission_token="", field_name=""):
+     account = get_context_account(info, submission_token)
++    _reject_on_itbm(account)
+     data = {"first_name": first_name, "last_name": last_name, "email": email, "orcid_id": orcid}
+ 
+     try:
+@@ -345,6 +353,7 @@ def create_author_user(root, info, last_name, first_name="", email="", orcid="",
+ 
+ 
+ def edit_author_user(root, info, user_id, last_name, first_name="", email="", orcid=""):
++    _reject_on_itbm(get_context_account(info))
+     author = User.find(user_id)
+     if not author:
+         raise exceptions.BadRequest("Author doesn't exist")
+diff --git a/figshare/graphql/v2_resolvers/entity_fields.py b/figshare/graphql/v2_resolvers/entity_fields.py
+index d72497d7f..d6902eb61 100644
+--- a/figshare/graphql/v2_resolvers/entity_fields.py
++++ b/figshare/graphql/v2_resolvers/entity_fields.py
+@@ -340,7 +340,7 @@ def _build_field_list(entity, underlying_fields, submission_config={}, info=None
+ def _get_field_value(entity_api, underlying_field, info=None, options={}):
+     # authors is a person_list field — it (and every other person_list field) is
+     # hydrated by figcore's shared serialize_person_list via hydrate_person_list,
+-    # reading the stored [{"user_id": X}] value from the fields blob.
++    # reading the stored value from the fields blob.
+     _field_id = str(underlying_field.id)
+ 
+     if underlying_field.name == "funding_list":
+diff --git a/figshare/graphql/v2_resolvers/item.py b/figshare/graphql/v2_resolvers/item.py
+index bdd63e9bd..a65f0e1cf 100644
+--- a/figshare/graphql/v2_resolvers/item.py
++++ b/figshare/graphql/v2_resolvers/item.py
+@@ -7,10 +7,10 @@ from figcore.api.funding.validator import FundingValidator
+ from figcore.api.related_material.validator import RelatedMaterialValidator
+ from figcore.lib.data.minting_info_static import MintingInfoStatic
+ from figcore.lib.validator import Validator
++from figcore.graphql.interceptors.user import hide_email
+ from figcore.graphql.internals.db_calls.utils import get_to_many_ast_from_obj_and_info_and_query_data
+ from figcore.graphql.utils import get_context_account
+ 
+-from figcore.graphql.resolvers_v2.generic import serialize_person_list
+ from figshare.config import config
+ from figshare.graphql.util.response import keys_to_camel_case
+ from figshare.lib.helpers.custom_domains import get_url_details
+@@ -343,6 +343,40 @@ def _get_item_group_mapping(item_group):
+     }
+ 
+ 
++def _serialize_person_list(users, institution_id, info, options):
++    # legacy (non-ITBM) authors: the person shape built from live User rows, unchanged for these items
++    options = options or {}
++    get_url_details = info.context.get_url_details
++
++    result = []
++    for user in users:
++        person = {
++            "id": user.id,
++            "first_name": user.first_name,
++            "last_name": user.last_name,
++            "name": user.name,
++            "orcid_id": user.orcid_id,
++            "email": user.email if options.get("author.show_email") else hide_email(user.email),
++            "isActive": user.is_active,
++            # bool(user.accounts) lazy-loads the relationship; person lists are small and the
++            # legacy item-author serializer did the same, so it is not a new N+1 regression.
++            "hasAccount": bool(user.accounts),
++            "isPublic": user.is_public,
++            "publicUrl": get_url_details(
++                institution_id,
++                {
++                    "endpoint": "profile_public_page",
++                    "params": {"url_name": user.url_name, "user_id": user.id},
++                },
++                request=info.context.request,
++            )["url"],
++        }
++        if options.get("author.add_photo_url"):
++            person["photo_url"] = user.photo_url
++        result.append(person)
++    return result
++
++
+ def get_internal_fields(item_api, item_group, options=None, info=None):
+     options = options or {}
+     validator = Validator()
+@@ -409,9 +443,7 @@ def get_internal_fields(item_api, item_group, options=None, info=None):
+                 "options": None,
+             },
+             "validation": {},
+-            # Legacy (non-ITBM) authors use the same figcore serializer as ITBM person_list
+-            # fields, so both paths return an identically shaped person object.
+-            "value": serialize_person_list(item_api.authors, item_api.institution_id, info, options),
++            "value": _serialize_person_list(item_api.authors, item_api.institution_id, info, options),
+             "order": 3,
+         },
+         "categories": {
+diff --git a/figshare/graphql/v2_resolvers/review_item.py b/figshare/graphql/v2_resolvers/review_item.py
+index 62c44d4cd..5e5024339 100644
+--- a/figshare/graphql/v2_resolvers/review_item.py
++++ b/figshare/graphql/v2_resolvers/review_item.py
+@@ -649,28 +649,7 @@ def article_to_dict(info, data_dump, review):
+                 if field_value is not None:
+                     value = None
+ 
+-                    if field_name == "authors":
+-                        value = []
+-                        get_url_details = info.context.get_url_details
+-
+-                        for author in data_dump["authors"]:
+-                            value.append(
+-                                {
+-                                    "id": author["id"],
+-                                    "name": author["name"],
+-                                    "publicUrl": get_url_details(
+-                                        review.institution_id,
+-                                        {
+-                                            "endpoint": "profile_public_page",
+-                                            "params": {"url_name": author["url_name"], "user_id": author["id"]},
+-                                        },
+-                                        request=info.context.request,
+-                                    )["url"],
+-                                    "isActive": author["is_active"],
+-                                    "isPublic": author["is_public"],
+-                                }
+-                            )
+-                    elif field_name == "licence":
++                    if field_name == "licence":
+                         licence = License.find(field_value)
+                         value = {
+                             "url": licence.url,
+diff --git a/figshare/graphql/v2_schema/mutations.py b/figshare/graphql/v2_schema/mutations.py
+index bace26aa6..b99124779 100644
+--- a/figshare/graphql/v2_schema/mutations.py
++++ b/figshare/graphql/v2_schema/mutations.py
+@@ -404,6 +404,7 @@ class Mutations(GqlRootType):
+         }
+ 
+     @classmethod
++    # deprecated in ITBM
+     def create_author(cls):
+         return {
+             "name": "create_author",
+@@ -422,6 +423,7 @@ class Mutations(GqlRootType):
+         }
+ 
+     @classmethod
++    # deprecated in ITBM
+     def edit_author(cls):
+         return {
+             "name": "edit_author",
+diff --git a/figshare/graphql/v2_schema/types/collection_version_page.py b/figshare/graphql/v2_schema/types/collection_version_page.py
+index 11d32a676..9a11c666d 100644
+--- a/figshare/graphql/v2_schema/types/collection_version_page.py
++++ b/figshare/graphql/v2_schema/types/collection_version_page.py
+@@ -79,6 +79,7 @@ class CollectionVersionPage(GqlType):
+     def fundings(cls):
+         return CollectionVersion.fundings()
+ 
++    # deprecated in ITBM
+     @classmethod
+     def authors(cls):
+         return CollectionVersion.authors()
+diff --git a/tests/functional/graphql/mutations/test_create_new_author.py b/tests/functional/graphql/mutations/test_create_new_author.py
+index 181a59e79..281f74d0a 100644
+--- a/tests/functional/graphql/mutations/test_create_new_author.py
++++ b/tests/functional/graphql/mutations/test_create_new_author.py
+@@ -225,3 +225,24 @@ def test_create_author_perfect_match_user(
+     mock_get_similar_users.assert_called_once_with(
+         {"first_name": "John", "last_name": "Doe", "email": "", "orcid_id": ""}, perfect_match=True
+     )
++
++
++def test_create_author_rejected_on_itbm(
++    testapp_session,
++    account,
++    mock_session_active_account,
++    mock_context_account,
++    mock_get_context_account,
++    mock_get_similar_users,
++    feature_flag_overrides,
++):
++    feature_flag_overrides({"itbm_enabled": True})
++
++    response = send_graphql_request(testapp_session, CREATE_AUTHOR_MUTATION)
++    mutation_response = response.json["errors"]
++
++    assert mutation_response[0]["errorClass"] == "BadRequest"
++    assert mutation_response[0]["code"] == 400
++    assert mutation_response[0]["graphqlPath"] == ["createAuthor"]
++    assert not account.create_author.called
++    assert not mock_get_similar_users.called
+diff --git a/tests/functional/graphql/mutations/test_edit_author.py b/tests/functional/graphql/mutations/test_edit_author.py
+index 822d2a5e5..80817cabd 100644
+--- a/tests/functional/graphql/mutations/test_edit_author.py
++++ b/tests/functional/graphql/mutations/test_edit_author.py
+@@ -211,3 +211,25 @@ def test_update_author_success(
+ 
+     calls = [call(NEW_USER_DATA)]
+     mock_get_similar_users.assert_has_calls(calls, any_order=False)
++
++
++def test_update_author_rejected_on_itbm(
++    patcher,
++    testapp_session,
++    mock_session_active_account,
++    mock_context_account,
++    user,
++    mock_get_similar_users,
++    feature_flag_overrides,
++):
++    feature_flag_overrides({"itbm_enabled": True})
++    mock_find = patcher.object(User, "find", return_value=user)
++
++    response = send_graphql_request(testapp_session, EDIT_AUTHOR_MUTATION)
++    mutation_response = response.json["errors"]
++
++    assert mutation_response[0]["errorClass"] == "BadRequest"
++    assert mutation_response[0]["code"] == 400
++    assert mutation_response[0]["graphqlPath"] == ["editAuthor"]
++    assert not mock_find.called
++    assert not user.create_author.called
+diff --git a/tests/functional/graphql/test_review.py b/tests/functional/graphql/test_review.py
+index eb8745857..eb5589dba 100644
+--- a/tests/functional/graphql/test_review.py
++++ b/tests/functional/graphql/test_review.py
+@@ -29,7 +29,6 @@ from figcore.lib.api_entity_collection import ApiEntityCollection
+ from figcore.lib.citations import CitationBuilder
+ from figcore.lib.es8.client import elasticsearch_client
+ from figcore.graphql import Context
+-from figcore.graphql.resolvers_v2.generic import serialize_person_list
+ 
+ from figshare.graphql.v2_resolvers import item, review_item
+ 
+@@ -271,6 +270,9 @@ def mock_project_find(patcher, project):
+ 
+ @pytest.fixture
+ def mock_article_load_from_es(patcher, article):
++    # has_itbm must be explicit: Mock(spec=Article) auto-creates a truthy Mock for it, which makes
++    # get_citation_authors enter the ITBM path and call get_field_value (another auto-Mock → crash).
++    article.has_itbm = False
+     return patcher.object(Article, "load_from_elastic_search", return_value=article)
+ 
+ 
+@@ -683,7 +685,7 @@ def test_author_in_item_fields():
+     info.context.get_url_details = lambda *args, **kwargs: {"url": "http://figshare.local/profile"}
+ 
+     options = {"author.show_email": True, "author.add_photo_url": True}
+-    data = serialize_person_list([user], 1, info, options)
++    data = item._serialize_person_list([user], 1, info, options)
+     expected_data = [
+         {
+             "id": 1,
+@@ -702,7 +704,7 @@ def test_author_in_item_fields():
+     assert data == expected_data
+ 
+     options = {"author.show_email": False, "author.add_photo_url": False}
+-    data = serialize_person_list([user], 1, info, options)
++    data = item._serialize_person_list([user], 1, info, options)
+     expected_data = [
+         {
+             "id": 1,
+diff --git a/tests/functional/itbm/test_entity_fields_item.py b/tests/functional/itbm/test_entity_fields_item.py
+index 10c03ee4c..53c44cc21 100644
+--- a/tests/functional/itbm/test_entity_fields_item.py
++++ b/tests/functional/itbm/test_entity_fields_item.py
+@@ -22,10 +22,18 @@ def author():
+     obj.is_public = True
+     obj.url_name = "john-doe"
+     obj.accounts = []
++    obj.type = 1
++    obj.affiliations = []
+ 
+     return obj
+ 
+ 
++@pytest.fixture(autouse=True)
++def mock_ids_with_account(patcher):
++    # the users in these tests are account users
++    return patcher.object(User, "ids_with_account", side_effect=lambda user_ids: set(user_ids))
++
++
+ @pytest.fixture
+ def category():
+     obj = Mock()
+@@ -157,7 +165,10 @@ def item(
+         str(description_institutional_field.id): {"value": "Item Description", "display_name": "Abstract"},
+         str(title_institutional_field.id): {"value": "Item Title", "display_name": "Title"},
+         str(authors_institutional_field.id): {
+-            "value": [{"user_id": author.id, "affiliations": []}],
++            "value": [
++                # values not overridden on this item come from the user
++                {"user_id": author.id}
++            ],
+             "display_name": "Creators",
+         },
+         str(licence_institutional_field.id): {"value": 1, "display_name": "Item licence"},
+@@ -351,14 +362,19 @@ def _get_item_fields(options):
+             "name": "authors",
+             "value": [
+                 {
+-                    "id": 123,
++                    "type": 1,
++                    "userId": 123,
++                    "hasAccount": True,
+                     "firstName": "John",
+                     "lastName": "Doe",
+-                    "orcidId": "0000-0000-0000-0000",
+                     "name": "John Doe",
+                     "email": "j*****e@email.com",
++                    "orcidId": "0000-0000-0000-0000",
++                    "isCorresponding": False,
++                    "affiliations": [],
++                    "rorId": None,
++                    "contributors": None,
+                     "isActive": True,
+-                    "hasAccount": False,
+                     "isPublic": True,
+                     "publicUrl": "http://localhost/authors/john-doe/123",
+                 }
+@@ -1230,7 +1246,7 @@ def test_custom_person_list_field_hydrated(
+     editor_user.accounts = []
+ 
+     item.fields[str(editors_custom_field.id)] = {
+-        "value": [{"user_id": 500, "affiliations": []}],
++        "value": [{"user_id": 500}],
+         "display_name": "Editors",
+     }
+ 
+@@ -1263,8 +1279,9 @@ def test_custom_person_list_field_hydrated(
+     assert editors_data["namespace"] == "custom"
+     assert editors_data["displayName"] == "Editors"
+     assert len(editors_data["value"]) == 1
+-    assert editors_data["value"][0]["id"] == 500
++    assert editors_data["value"][0]["userId"] == 500
+     assert editors_data["value"][0]["name"] == "Jane Editor"
++    # emails are always masked
+     assert editors_data["value"][0]["email"] == "j**e@editor.com"
+ 
+ 
+diff --git a/tests/functional/itbm/test_review.py b/tests/functional/itbm/test_review.py
+index 956a68816..c7ed6741e 100644
+--- a/tests/functional/itbm/test_review.py
++++ b/tests/functional/itbm/test_review.py
+@@ -29,7 +29,6 @@ from figcore.lib.api_entity_collection import ApiEntityCollection
+ from figcore.lib.citations import CitationBuilder
+ from figcore.lib.es8.client import elasticsearch_client
+ from figcore.graphql import Context
+-from figcore.graphql.resolvers_v2.generic import serialize_person_list
+ 
+ from figshare.graphql.v2_resolvers import item, review_item
+ 
+@@ -249,7 +248,12 @@ def curation(
+         "description": '<p dir="ltr">This is the historic description</p>',
+         "fields": {
+             str(authors_institutional_field.id): {
+-                "value": [1000, 1001],
++                "value": [
++                    # stored entries: the user id plus what differs on this item (user 1000 no longer exists)
++                    {"user_id": 1000, "first_name": "Author", "last_name": "1"},
++                    {"user_id": 1001, "affiliations": [{"name": "Some lab"}]},
++                    {"user_id": 1002, "is_corresponding": True},
++                ],
+                 "display_name": "Authors",
+                 "field_type": "person_list",
+                 "field_name": "authors",
+@@ -404,9 +408,20 @@ def mock_institution_find(patcher, institution):
+ 
+ @pytest.fixture
+ def mock_user_find_all(patcher):
++    # only user 500 (the editor in the editors tests) has an account
++    patcher.object(User, "ids_with_account", side_effect=lambda user_ids: {500} & set(user_ids))
+     return patcher.object(User, "find_all", return_value=[])
+ 
+ 
++def user_mock(user_id, user_type=1, **values):
++    user = Mock(spec=User)
++    attributes = {"first_name": "", "last_name": "", "name": "", "email": "", "orcid_id": "", "affiliations": []}
++    attributes.update(values, id=user_id, type=user_type, is_active=False, is_public=False, url_name="")
++    for key, value in attributes.items():
++        setattr(user, key, value)
++    return user
++
++
+ @pytest.fixture
+ def mock_get_files(patcher):
+     return patcher.object(File, "get_files", return_value=[])
+@@ -419,6 +434,11 @@ def mock_project_find(patcher, project):
+ 
+ @pytest.fixture
+ def mock_article_load_from_es(patcher, article):
++    # has_itbm must be explicit: Mock(spec=Article) auto-creates a truthy Mock for it, which makes
++    # get_citation_authors enter the ITBM path and call get_field_value (another auto-Mock → crash).
++    # These tests don't exercise citation generation (mock_citation_builder covers that), so the
++    # legacy path (has_itbm=False → entity.authors) is fine here.
++    article.has_itbm = False
+     return patcher.object(Article, "load_from_elastic_search", return_value=article)
+ 
+ 
+@@ -566,6 +586,11 @@ def test_review_historic_item(
+     feature_flag_overrides,
+ ):
+     feature_flag_overrides({"itbm_enabled": True})
++    # 1001 is a ghost user and 1002 an organization user; 1000 no longer exists
++    mock_user_find_all.return_value = [
++        user_mock(1001, first_name="Author", last_name="2", email="author2@lab.org"),
++        user_mock(1002, 2, name="Some Consortium", affiliations=[{"ror_id": "05cy4wa09", "name": "Some Consortium"}]),
++    ]
+ 
+     curation.status = "closed"
+     institution.get_citation_data.return_value = {"publisher": "The best one"}
+@@ -683,18 +708,46 @@ def test_review_historic_item(
+                             "order": 0,
+                             "value": [
+                                 {
+-                                    "id": 1000,
++                                    "type": 1,
++                                    "userId": 1000,
++                                    "hasAccount": False,
++                                    "firstName": "Author",
++                                    "lastName": "1",
+                                     "name": "Author 1",
+-                                    "publicUrl": "http://localhost/authors/Author_1/1000",
+-                                    "isActive": 1,
+-                                    "isPublic": 0,
++                                    "email": None,
++                                    "orcidId": None,
++                                    "isCorresponding": False,
++                                    "affiliations": [],
++                                    "rorId": None,
++                                    "contributors": None,
+                                 },
+                                 {
+-                                    "id": 1001,
++                                    "type": 1,
++                                    "userId": 1001,
++                                    "hasAccount": False,
++                                    "firstName": "Author",
++                                    "lastName": "2",
+                                     "name": "Author 2",
+-                                    "publicUrl": "http://localhost/authors/Author_2/1001",
+-                                    "isActive": 1,
+-                                    "isPublic": 0,
++                                    "email": "a*****2@lab.org",
++                                    "orcidId": None,
++                                    "isCorresponding": False,
++                                    "affiliations": [{"rorId": None, "name": "Some lab"}],
++                                    "rorId": None,
++                                    "contributors": None,
++                                },
++                                {
++                                    "type": 2,
++                                    "userId": 1002,
++                                    "hasAccount": False,
++                                    "firstName": None,
++                                    "lastName": None,
++                                    "name": "Some Consortium",
++                                    "email": None,
++                                    "orcidId": None,
++                                    "isCorresponding": True,
++                                    "affiliations": [],
++                                    "rorId": "05cy4wa09",
++                                    "contributors": None,
+                                 },
+                             ],
+                         },
+@@ -1030,7 +1083,7 @@ def test_author_in_item_fields():
+     info.context.get_url_details = lambda *args, **kwargs: {"url": "http://figshare.local/profile"}
+ 
+     options = {"author.show_email": True, "author.add_photo_url": True}
+-    data = serialize_person_list([user], 1, info, options)
++    data = item._serialize_person_list([user], 1, info, options)
+     expected_data = [
+         {
+             "id": 1,
+@@ -1049,7 +1102,7 @@ def test_author_in_item_fields():
+     assert data == expected_data
+ 
+     options = {"author.show_email": False, "author.add_photo_url": False}
+-    data = serialize_person_list([user], 1, info, options)
++    data = item._serialize_person_list([user], 1, info, options)
+     expected_data = [
+         {
+             "id": 1,
+@@ -1146,7 +1199,7 @@ def test_review_historic_item_custom_person_list(
+     institution.config.options = {"author.show_email": True, "author.add_photo_url": True}
+ 
+     curation.history_data_dump["fields"][str(editors_custom_field.id)] = {
+-        "value": [{"user_id": 500, "affiliations": []}],
++        "value": [{"user_id": 500, "last_name": "Editor"}],
+         "display_name": "Editors",
+         "field_type": "person_list",
+         "field_name": "editors",
+@@ -1155,9 +1208,9 @@ def test_review_historic_item_custom_person_list(
+ 
+     editor_user = Mock()
+     editor_user.id = 500
+-    editor_user.name = "Jane Editor"
++    editor_user.name = "Jane Renamed"
+     editor_user.first_name = "Jane"
+-    editor_user.last_name = "Editor"
++    editor_user.last_name = "Renamed"
+     editor_user.orcid_id = "0000-0000-0000-9999"
+     editor_user.email = "jane@editor.com"
+     editor_user.url_name = "Jane_Editor"
+@@ -1184,7 +1237,8 @@ def test_review_historic_item_custom_person_list(
+     assert editors_field["type"] == "person_list"
+     assert editors_field["displayName"] == "Editors"
+     assert len(editors_field["value"]) == 1
+-    assert editors_field["value"][0]["id"] == 500
++    # the item's override wins over the user's name; the account flags come from the account user
++    assert editors_field["value"][0]["userId"] == 500
+     assert editors_field["value"][0]["name"] == "Jane Editor"
+     assert editors_field["value"][0]["isActive"] is True
+     assert editors_field["value"][0]["isPublic"] is True

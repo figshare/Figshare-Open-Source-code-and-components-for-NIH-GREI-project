@@ -1,0 +1,121 @@
+diff --git a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/manageRelatedMaterials/RelatedMaterialPreviewBlock.jsx b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/manageRelatedMaterials/RelatedMaterialPreviewBlock.jsx
+index 48893c1ae..acff60519 100644
+--- a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/manageRelatedMaterials/RelatedMaterialPreviewBlock.jsx
++++ b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/manageRelatedMaterials/RelatedMaterialPreviewBlock.jsx
+@@ -13,7 +13,11 @@ import { HTMLContent } from "../../../../../../../../../shared/ui/highlights";
+ 
+ export function RelatedMaterialPreviewBlock({ material }) {
+   const identifiersAndRelationships = useContext(IdentifiersAndRelationshipsContext);
+-  const show = React.useMemo(() => !!(material.relationshipType && material.identifierType), [material]);
++  const show = React.useMemo(
++    // "Other" has no resolver — the preview sentence ("This Item [relation] [title]") doesn't apply
++    () => !!(material.relationshipType && material.identifierType && material.relationshipType !== "Other"),
++    [material]
++  );
+   const relationshipType = React.useMemo(() => {
+     const relationships = getIn(identifiersAndRelationships, "relationships.data", []);
+ 
+diff --git a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/manageRelatedMaterials/RelatedMaterialPreviewBlock.test.jsx b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/manageRelatedMaterials/RelatedMaterialPreviewBlock.test.jsx
+new file mode 100644
+index 000000000..e7a2aff07
+--- /dev/null
++++ b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/manageRelatedMaterials/RelatedMaterialPreviewBlock.test.jsx
+@@ -0,0 +1,79 @@
++import React from "react";
++import { render } from "@testing-library/react";
++import { IdentifiersAndRelationshipsContext } from "shared/resources/IdentifiersAndRelationships/context";
++
++import { RelatedMaterialPreviewBlock } from "./RelatedMaterialPreviewBlock";
++
++
++const contextValue = {
++  identifiers: {
++    data: [
++      { value: "DOI", label: "DOI" },
++      { value: "ARK", label: "ARK" },
++      { value: "RAiD", label: "RAiD" },
++    ],
++  },
++  relationships: {
++    data: [
++      { value: "References", label: "References" },
++      { value: "Other", label: "Other" },
++    ],
++  },
++};
++
++function renderWithContext(material) {
++  return render(
++    <IdentifiersAndRelationshipsContext.Provider value={contextValue}>
++      <RelatedMaterialPreviewBlock material={material} />
++    </IdentifiersAndRelationshipsContext.Provider>
++  );
++}
++
++
++describe("RelatedMaterialPreviewBlock", () => {
++  it("renders the preview banner for a standard relation type", () => {
++    const { container } = renderWithContext({
++      relationshipType: "References",
++      identifierType: "DOI",
++      identifier: "10.1234/test",
++    });
++
++    const preview = container.querySelector("[data-control-id='material-preview-section']");
++    expect(preview).not.toBeNull();
++    expect(preview.textContent).toContain("References");
++    expect(preview.textContent).toContain("(DOI)");
++    expect(preview.textContent).toContain("10.1234/test");
++  });
++
++  it("does not render the preview banner when relation type is Other", () => {
++    const { container } = renderWithContext({
++      relationshipType: "Other",
++      identifierType: "DOI",
++      identifier: "10.1234/test",
++    });
++
++    expect(container.querySelector("[data-control-id='material-preview-section']")).toBeNull();
++  });
++
++  it("does not render the preview banner when fields are missing", () => {
++    const { container } = renderWithContext({
++      relationshipType: "",
++      identifierType: "",
++    });
++
++    expect(container.querySelector("[data-control-id='material-preview-section']")).toBeNull();
++  });
++
++  it("renders the preview banner for ITBM identifier types", () => {
++    const { container } = renderWithContext({
++      relationshipType: "References",
++      identifierType: "RAiD",
++      identifier: "https://raid.org/10.25.1/abc",
++    });
++
++    const preview = container.querySelector("[data-control-id='material-preview-section']");
++    expect(preview).not.toBeNull();
++    expect(preview.textContent).toContain("(RAiD)");
++    expect(preview.textContent).toContain("https://raid.org/10.25.1/abc");
++  });
++});
+diff --git a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
+index 29bd21789..e42b304e8 100644
+--- a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
++++ b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/relatedMaterials/components/relatedMaterialsTileList/relatedMaterialTile.jsx
+@@ -68,8 +68,12 @@ export function RelatedMaterialTile(
+           </Button>
+           <Block kind="layout-rows gap-1 align-center justify-start flex-fit">
+             <Text wrap="nowrap" data-id="related-material-title">
+-              <span>{"This item "}</span>
+-              <span>{`${getRelationshipLabel(material, relationships)} `}</span>
++              {material.relationshipType !== "Other" && (
++                <>
++                  <span>{"This item "}</span>
++                  <span>{`${getRelationshipLabel(material, relationships)} `}</span>
++                </>
++              )}
+               <HTMLContent
+                 content={encoded} tag="span" style={ {
+                   overflow: "visible",

@@ -1,10 +1,30 @@
+diff --git a/src/figcore/lib/identifier/doi/datacite.py b/src/figcore/lib/identifier/doi/datacite.py
+index df3358b0e..99e25d754 100644
+--- a/src/figcore/lib/identifier/doi/datacite.py
++++ b/src/figcore/lib/identifier/doi/datacite.py
+@@ -118,10 +118,11 @@ class DataCiteDOIHelper(DOIHelper):
+                 funder_name = ET.SubElement(funding_reference, "funderName")
+                 funder_name.text = funding["funder_name"]
+ 
+-                funder_identifier = ET.SubElement(funding_reference, "funderIdentifier")
+-                funder_identifier.set("funderIdentifierType", funding["funder_identifier_type"])
+-                funder_identifier.set("schemeURI", funding["funder_identifier_scheme_uri"])
+-                funder_identifier.text = funding["funder_identifier"]
++                if funding["funder_identifier_type"] == "ROR":
++                    funder_identifier = ET.SubElement(funding_reference, "funderIdentifier")
++                    funder_identifier.set("funderIdentifierType", funding["funder_identifier_type"])
++                    funder_identifier.set("schemeURI", funding["funder_identifier_scheme_uri"])
++                    funder_identifier.text = funding["funder_identifier"]
+ 
+                 award_number = ET.SubElement(funding_reference, "awardNumber")
+                 if funding["award_uri"]:
 diff --git a/src/figcore/lib/identifier/doi/helper.py b/src/figcore/lib/identifier/doi/helper.py
 index f32734479..489ac13d5 100644
 --- a/src/figcore/lib/identifier/doi/helper.py
 +++ b/src/figcore/lib/identifier/doi/helper.py
 @@ -190,6 +190,7 @@ class DOIHelper(object):
              author_affiliations = {a: [] for a in authors}
-
+ 
          return {
 +            "is_base_entity": True,
              "item_id": self.build_suffix(private_article),
@@ -12,7 +32,7 @@ index f32734479..489ac13d5 100644
              "year": str(date.year),
 @@ -256,6 +257,7 @@ class DOIHelper(object):
              author_affiliations = {a: [] for a in authors}
-
+ 
          return {
 +            "is_base_entity": True,
              "item_id": self.build_suffix(private_collection),
@@ -37,7 +57,7 @@ index f32734479..489ac13d5 100644
 @@ -517,6 +521,11 @@ class DOIHelper(object):
                  material = RelatedMaterial.find(i)
                  self._add_relation_node(related_ids, material.identifier_type, material.relation, material.identifier)
-
+ 
 +        # Set the version if greater than 0
 +        if item_data.get("version", 0) > 0 and not item_data.get("is_base_entity", False):
 +            version = ET.SubElement(root, "version")
@@ -57,3 +77,4 @@ index 384cd7fed..fdb0ae694 100644
 +        self.assertNotEqual(item_data.pop("is_base_entity"), version_data.pop("is_base_entity"))
          for key, value in item_data.items():
              self.assertEqual(value, version_data[key])
+ 

@@ -1,0 +1,320 @@
+diff --git a/scripts/migrations/2026-11.sh b/scripts/migrations/2026-11.sh
+index 2a42038..a3b16a8 100755
+--- a/scripts/migrations/2026-11.sh
++++ b/scripts/migrations/2026-11.sh
+@@ -1,9 +1,10 @@
+ #!/bin/bash
+-# Add affiliations mapping to the user index.
++# Add affiliations and last_work mappings to the user index.
+ #
+-# The user indexer now writes affiliations (parsed from user_profile.affiliations blob).
++# The user indexer now writes affiliations (parsed from user_profile.affiliations blob)
++# and last_work (title of the user's most recent published item).
+ # The mapping is dynamic: strict, so it must be patched BEFORE the updated indexers
+-# are deployed. New indices created from the updated schema already include the field.
++# are deployed. New indices created from the updated schema already include the fields.
+ #
+ # Existing documents will have no value until they are reindexed (scripts/reindex.py).
+ #
+@@ -12,7 +13,7 @@
+ 
+ ES_URL="${ES_URL:=http://localhost:9200}"
+ 
+-AFFILIATIONS_MAPPING='{
++MAPPING='{
+   "properties": {
+     "affiliations": {
+       "dynamic": "strict",
+@@ -22,6 +23,13 @@ AFFILIATIONS_MAPPING='{
+         "url": {"type": "keyword", "normalizer": "fig_keyword"},
+         "order": {"type": "integer"}
+       }
++    },
++    "last_work": {
++      "dynamic": "strict",
++      "properties": {
++        "title": {"type": "text"},
++        "published_date": {"type": "date", "format": "yyyy-MM-dd HH:mm:ss"}
++      }
+     }
+   }
+ }'
+@@ -29,7 +37,7 @@ AFFILIATIONS_MAPPING='{
+ echo "Updating mapping for user index..."
+ HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -XPUT "${ES_URL}/user/_mapping" \
+   --header 'Content-Type: application/json' \
+-  --data-raw "${AFFILIATIONS_MAPPING}")
++  --data-raw "${MAPPING}")
+ if [ "$HTTP_CODE" = "200" ]; then
+   echo "  Success."
+ elif [ "$HTTP_CODE" = "404" ]; then
+diff --git a/src/replication/es_schema/user.py b/src/replication/es_schema/user.py
+index 321eff6..e5535b0 100644
+--- a/src/replication/es_schema/user.py
++++ b/src/replication/es_schema/user.py
+@@ -27,6 +27,13 @@ mappings = {
+                 "order": {"type": "integer"},
+             },
+         },
++        "last_work": {
++            "dynamic": "strict",
++            "properties": {
++                "title": {"type": "text"},
++                "published_date": {"type": "date", "format": "yyyy-MM-dd HH:mm:ss"},
++            },
++        },
+         "institution_id": {"type": "integer"},
+         "institution_name": {"type": "text"},
+         "institution_user_id": {"type": "keyword"},
+diff --git a/src/replication/indexers/common/common.py b/src/replication/indexers/common/common.py
+index fb5e84b..894ff13 100644
+--- a/src/replication/indexers/common/common.py
++++ b/src/replication/indexers/common/common.py
+@@ -105,6 +105,44 @@ def get_authors(database, authors, skip_affiliations=False, is_item=False):
+     return authors_with_affiliations, affiliations
+ 
+ 
++def update_authors_last_work(authors, title, published_date):
++    """Update last_work on each author's user document if this article is more recent.
++
++    Uses a conditional ES script so that only a newer published_date overwrites
++    the existing value.  Compares ISO-8601 date strings lexicographically.
++    """
++    from replication.indexers.lib.es_api import es_api
++
++    if not title or not published_date:
++        return
++
++    script = {
++        "source": (
++            "if (ctx._source.last_work == null "
++            "|| ctx._source.last_work.published_date == null "
++            "|| params.published_date.compareTo(ctx._source.last_work.published_date.toString()) > 0) { "
++            "ctx._source.last_work = params.last_work; "
++            "}"
++        ),
++        "params": {
++            "published_date": published_date,
++            "last_work": {
++                "title": title,
++                "published_date": published_date,
++            },
++        },
++    }
++
++    for author in authors:
++        user_id = author.get("user_id")
++        if user_id:
++            try:
++                es_api.update_document_with_script("user", user_id, script)
++            except Exception:
++                # User may not exist in the user index yet — skip silently.
++                logger.debug("Could not update last_work for user_id=%s", user_id)
++
++
+ def get_categories(database, categories):
+     categories_ids = json.loads(categories)
+     return get_entity_metadata(
+diff --git a/src/replication/indexers/public_item/public_item.py b/src/replication/indexers/public_item/public_item.py
+index 65b1b63..63a87b5 100644
+--- a/src/replication/indexers/public_item/public_item.py
++++ b/src/replication/indexers/public_item/public_item.py
+@@ -24,6 +24,7 @@ from replication.indexers.common.common import (
+     institution_has_file_content_feature_flag,
+     institution_has_itbm_feature_flag,
+     list_copy_keys,
++    update_authors_last_work,
+ )
+ from replication.indexers.common.format_converters import public_item_legacy_to_itbm_format
+ from replication.indexers.common.itbm_guard import itbm_disabled
+@@ -106,6 +107,14 @@ class PublicItem(PrivateItem):
+             es_dict, assoc_institutions = cls.get_public_item_basic_data(
+                 data, entity_id, institution_id, bulk_reindex, index_tail
+             )
++            # Update last_work on each author's user document (skip during bulk reindex).
++            if not bulk_reindex:
++                update_authors_last_work(
++                    es_dict.get("authors", []),
++                    es_dict.get("title"),
++                    es_dict.get("dates", {}).get("published"),
++                )
++
+             custom_fields, custom_fields_search, custom_fields_facets = get_custom_fields(
+                 cls.DATABASE, es_dict.get("custom_fields", "[]")
+             )
+diff --git a/src/replication/indexers/public_item_itbm/public_item_itbm.py b/src/replication/indexers/public_item_itbm/public_item_itbm.py
+index c14538e..16de517 100644
+--- a/src/replication/indexers/public_item_itbm/public_item_itbm.py
++++ b/src/replication/indexers/public_item_itbm/public_item_itbm.py
+@@ -12,6 +12,7 @@ from replication.indexers.common.common import (
+     get_stats,
+     institution_has_itbm_feature_flag,
+     list_copy_keys,
++    update_authors_last_work,
+ )
+ from replication.indexers.common.db_queries import ITEM_TYPE_QUERY, INSTITUTION_QUERY
+ from replication.indexers.common.itbm_guard import itbm_enabled
+@@ -89,6 +90,14 @@ class PublicItemItbm(PublicItem):
+                 es_dict["dates"].get("publisher_published"), es_dict["dates"].get("published")
+             )
+ 
++            # Update last_work on each author's user document (skip during bulk reindex).
++            if not bulk_reindex:
++                update_authors_last_work(
++                    es_dict.get("authors", []),
++                    es_dict.get("title"),
++                    es_dict.get("dates", {}).get("published"),
++                )
++
+             assoc_institutions = es_dict["associated_institutions"]
+             assoc_institutions_ids = [inst["id"] for inst in assoc_institutions if inst["id"] != 0]
+             allowed_institutions = get_allowed_institutions_for_custom_indices(cls.DATABASE)
+@@ -208,6 +217,14 @@ class PublicItemItbm(PublicItem):
+             es_dict["dates"].get("publisher_published"), es_dict["dates"].get("published")
+         )
+ 
++        # Update last_work on each author's user document (skip during bulk reindex).
++        if not bulk_reindex:
++            update_authors_last_work(
++                es_dict.get("authors", []),
++                es_dict.get("title"),
++                es_dict.get("dates", {}).get("published"),
++            )
++
+         assoc_institutions = es_dict["associated_institutions"]
+         assoc_institutions_ids = [inst["id"] for inst in assoc_institutions if inst["id"] != 0]
+         allowed_institutions = get_allowed_institutions_for_custom_indices(cls.DATABASE)
+diff --git a/tests/replication/common/test_update_authors_last_work.py b/tests/replication/common/test_update_authors_last_work.py
+new file mode 100644
+index 0000000..1dab0ef
+--- /dev/null
++++ b/tests/replication/common/test_update_authors_last_work.py
+@@ -0,0 +1,110 @@
++from mock import MagicMock, call
++
++from replication.indexers.common.common import update_authors_last_work
++
++
++def _expected_script(title, published_date):
++    """Build the expected painless script payload for assertions."""
++    return {
++        "source": (
++            "if (ctx._source.last_work == null "
++            "|| ctx._source.last_work.published_date == null "
++            "|| params.published_date.compareTo(ctx._source.last_work.published_date.toString()) > 0) { "
++            "ctx._source.last_work = params.last_work; "
++            "}"
++        ),
++        "params": {
++            "published_date": published_date,
++            "last_work": {
++                "title": title,
++                "published_date": published_date,
++            },
++        },
++    }
++
++
++def test_updates_each_author_with_user_id(mocker):
++    """Each author with a user_id gets an ES script update on the user index."""
++    es_mock = MagicMock()
++    mocker.patch("replication.indexers.lib.es_api.es_api", es_mock)
++
++    authors = [
++        {"user_id": 10, "name": "Alice"},
++        {"user_id": 20, "name": "Bob"},
++    ]
++    update_authors_last_work(authors, "My Article", "2026-10-01 00:00:00")
++
++    expected = _expected_script("My Article", "2026-10-01 00:00:00")
++    es_mock.update_document_with_script.assert_has_calls(
++        [call("user", 10, expected), call("user", 20, expected)],
++        any_order=False,
++    )
++    assert es_mock.update_document_with_script.call_count == 2
++
++
++def test_skips_authors_without_user_id(mocker):
++    """Authors without a user_id (unlinked) are skipped."""
++    es_mock = MagicMock()
++    mocker.patch("replication.indexers.lib.es_api.es_api", es_mock)
++
++    authors = [
++        {"user_id": 10, "name": "Alice"},
++        {"name": "Unlinked Author"},
++        {"user_id": None, "name": "Also unlinked"},
++    ]
++    update_authors_last_work(authors, "My Article", "2026-10-01 00:00:00")
++
++    # Only user_id=10 should be updated
++    assert es_mock.update_document_with_script.call_count == 1
++    es_mock.update_document_with_script.assert_called_once_with(
++        "user", 10, _expected_script("My Article", "2026-10-01 00:00:00")
++    )
++
++
++def test_no_op_when_title_is_empty(mocker):
++    """No ES calls when title is empty."""
++    es_mock = MagicMock()
++    mocker.patch("replication.indexers.lib.es_api.es_api", es_mock)
++
++    update_authors_last_work([{"user_id": 10}], "", "2026-10-01 00:00:00")
++    update_authors_last_work([{"user_id": 10}], None, "2026-10-01 00:00:00")
++
++    es_mock.update_document_with_script.assert_not_called()
++
++
++def test_no_op_when_published_date_is_empty(mocker):
++    """No ES calls when published_date is empty."""
++    es_mock = MagicMock()
++    mocker.patch("replication.indexers.lib.es_api.es_api", es_mock)
++
++    update_authors_last_work([{"user_id": 10}], "My Article", "")
++    update_authors_last_work([{"user_id": 10}], "My Article", None)
++
++    es_mock.update_document_with_script.assert_not_called()
++
++
++def test_no_op_when_authors_is_empty(mocker):
++    """No ES calls when authors list is empty."""
++    es_mock = MagicMock()
++    mocker.patch("replication.indexers.lib.es_api.es_api", es_mock)
++
++    update_authors_last_work([], "My Article", "2026-10-01 00:00:00")
++
++    es_mock.update_document_with_script.assert_not_called()
++
++
++def test_continues_on_es_exception(mocker):
++    """If ES update fails for one author, continue with the rest."""
++    es_mock = MagicMock()
++    es_mock.update_document_with_script.side_effect = [Exception("not found"), None]
++    mocker.patch("replication.indexers.lib.es_api.es_api", es_mock)
++
++    authors = [
++        {"user_id": 10, "name": "Missing User"},
++        {"user_id": 20, "name": "Existing User"},
++    ]
++    # Should not raise
++    update_authors_last_work(authors, "My Article", "2026-10-01 00:00:00")
++
++    # Both should be attempted
++    assert es_mock.update_document_with_script.call_count == 2
+diff --git a/tests/scripts/test_schema_user.py b/tests/scripts/test_schema_user.py
+index 555458b..f23fdfa 100644
+--- a/tests/scripts/test_schema_user.py
++++ b/tests/scripts/test_schema_user.py
+@@ -41,6 +41,13 @@ def test_schema_user(mocker):
+                         "order": {"type": "integer"},
+                     },
+                 },
++                "last_work": {
++                    "dynamic": "strict",
++                    "properties": {
++                        "title": {"type": "text"},
++                        "published_date": {"type": "date", "format": "yyyy-MM-dd HH:mm:ss"},
++                    },
++                },
+                 "institution_id": {"type": "integer"},
+                 "institution_name": {"type": "text"},
+                 "institution_user_id": {"type": "keyword"},

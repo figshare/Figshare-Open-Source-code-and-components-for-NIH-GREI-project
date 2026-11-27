@@ -1,0 +1,241 @@
+diff --git a/scripts/sql_migrations/2026-10.sql b/scripts/sql_migrations/2026-10.sql
+index 9e5a8ff67..e0baebddf 100644
+--- a/scripts/sql_migrations/2026-10.sql
++++ b/scripts/sql_migrations/2026-10.sql
+@@ -3,3 +3,33 @@ ALTER TABLE `institution_config` ADD COLUMN `ror_id` varchar(255) NOT NULL DEFAU
+ 
+ -- FIG-47075: Add affiliations column (BLOB to avoid row size limit, supports up to 100 entries)
+ ALTER TABLE `user_profile` ADD COLUMN `affiliations` blob NOT NULL DEFAULT '[]' AFTER `grid_ids`;
++
++-- FIG-45329: Add oai_openaire item type mappings
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_c513') WHERE string_id = 'figure';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_18cf') WHERE string_id = 'media';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_ddb1') WHERE string_id = 'dataset';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_18cf') WHERE string_id = 'poster';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_6501') WHERE string_id = 'journal_contribution';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_c94f') WHERE string_id = 'conference_contribution';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_816b') WHERE string_id = 'preprint';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_c94f') WHERE string_id = 'presentation';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_46ec') WHERE string_id = 'thesis';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_5ce6') WHERE string_id IN ('software', 'code');
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_2f33') WHERE string_id = 'book';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_e9a0') WHERE string_id = 'online_resource';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_3248') WHERE string_id = 'chapter';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_efa0') WHERE string_id = 'peer_review';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_1843') WHERE string_id = 'educational_resource';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_93fc') WHERE string_id = 'report';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_18cf') WHERE string_id = 'standard';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_18cd') WHERE string_id = 'composition';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_18cf') WHERE string_id = 'funding';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_1843') WHERE string_id = 'physical_object';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_18cf') WHERE string_id = 'data_management_plan';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_393c') WHERE string_id = 'workflow';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_2f33') WHERE string_id = 'monograph';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_e9a0') WHERE string_id = 'performance';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_18cf') WHERE string_id IN ('event_', 'event');
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_18cf') WHERE string_id = 'service';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_1843') WHERE string_id = 'model';
++UPDATE item_type SET mappings = JSON_SET(mappings, '$.oai_openaire', 'c_18cf') WHERE string_id = 'registration';
+\ No newline at end of file
+diff --git a/src/figcore/utils/scripts/sql/item_types.py b/src/figcore/utils/scripts/sql/item_types.py
+index 2930646a8..9df94cfc6 100644
+--- a/src/figcore/utils/scripts/sql/item_types.py
++++ b/src/figcore/utils/scripts/sql/item_types.py
+@@ -3,169 +3,169 @@ queries = [
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (1, 'figure', 'figure', 'figure', 'Figures are generally photos, graphs and static images that would be represented in traditional pdf publications.', '{"cerif": ["20947cb9-79ae-47c5-8595-982626dd010f", "Image"], "datacite": "Image", "dublin": "Image", "rdf": "Image", "jisc": "image", "crossref": "other"}');
++            (1, 'figure', 'figure', 'figure', 'Figures are generally photos, graphs and static images that would be represented in traditional pdf publications.', '{"cerif": ["20947cb9-79ae-47c5-8595-982626dd010f", "Image"], "datacite": "Image", "dublin": "Image", "rdf": "Image", "jisc": "image", "crossref": "other", "oai_openaire": "c_c513"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (2, 'media', 'media', 'media', 'Media is any form of research output that is recorded and played. This is most commonly video, but can be audio or 3D representations.', '{"cerif": ["fcff62b8-0950-4b13-bc8d-7c0c1ec7090d", "Audiovisual"], "datacite": "Audiovisual", "dublin": "Dataset", "rdf": "AudioVisualDocument", "jisc": "movingImage", "crossref": "other"}');
++            (2, 'media', 'media', 'media', 'Media is any form of research output that is recorded and played. This is most commonly video, but can be audio or 3D representations.', '{"cerif": ["fcff62b8-0950-4b13-bc8d-7c0c1ec7090d", "Audiovisual"], "datacite": "Audiovisual", "dublin": "Dataset", "rdf": "AudioVisualDocument", "jisc": "movingImage", "crossref": "other", "oai_openaire": "c_18cf"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (4, 'dataset', 'dataset', 'dataset', 'Datasets usually provide raw data for analysis. This raw data often comes in spreadsheet form, but can be any collection of data, on which analysis can be performed.', '{"cerif": ["f150e5de-204e-4b24-94a6-bed814e99ddf", "Collection"], "datacite": "Collection", "dublin": "Dataset", "rdf": "Collection", "jisc": "other", "crossref": "other"}');
++            (4, 'dataset', 'dataset', 'dataset', 'Datasets usually provide raw data for analysis. This raw data often comes in spreadsheet form, but can be any collection of data, on which analysis can be performed.', '{"cerif": ["f150e5de-204e-4b24-94a6-bed814e99ddf", "Collection"], "datacite": "Collection", "dublin": "Dataset", "rdf": "Collection", "jisc": "other", "crossref": "other", "oai_openaire": "c_ddb1"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (5, 'poster', 'poster', 'poster', 'Poster sessions are particularly prominent at academic conferences. Posters are usually one frame of a powerpoint (or similar) presentation and are represented at full resolution to make them zoomable.', '{"cerif": ["20947cb9-79ae-47c5-8595-982626dd010f", "Image"], "datacite": "Image", "dublin": "Image", "rdf": "ConferencePoster", "jisc": "other", "crossref": "other"}');
++            (5, 'poster', 'poster', 'poster', 'Poster sessions are particularly prominent at academic conferences. Posters are usually one frame of a powerpoint (or similar) presentation and are represented at full resolution to make them zoomable.', '{"cerif": ["20947cb9-79ae-47c5-8595-982626dd010f", "Image"], "datacite": "Image", "dublin": "Image", "rdf": "ConferencePoster", "jisc": "other", "crossref": "other", "oai_openaire": "c_18cf"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (6, 'journal contribution', 'journal_contribution', 'paper', 'Any type of content formally published in an academic journal, usually following a peer-review process.', '{"cerif": ["9c3a4abc-2005-4f50-8eff-4eb14e273cff", "Text"], "datacite": "Text", "dublin": "Text", "rdf": "ConferencePaper", "jisc": "article", "crossref": "other"}');
++            (6, 'journal contribution', 'journal_contribution', 'paper', 'Any type of content formally published in an academic journal, usually following a peer-review process.', '{"cerif": ["9c3a4abc-2005-4f50-8eff-4eb14e273cff", "Text"], "datacite": "Text", "dublin": "Text", "rdf": "ConferencePaper", "jisc": "article", "crossref": "other", "oai_openaire": "c_6501"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (14, 'conference contribution', 'conference_contribution', 'paper', 'Any type of content contributed to an academic conference, such as papers, presentations, lectures or proceedings.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (14, 'conference contribution', 'conference_contribution', 'paper', 'Any type of content contributed to an academic conference, such as papers, presentations, lectures or proceedings.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_c94f"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (12, 'preprint', 'preprint', 'preprint', "Preprints are manuscripts made publicly available before they have been submitted for formal peer review and publication. They might contain new research findings or data. Preprints can be a draft or final version of an authors' research but must not have been accepted for publication at the time of submission.", '{"cerif": null, "datacite": "Text", "dublin": "Text", "rdf": null, "jisc": "preprint", "crossref": "preprint"}');
++            (12, 'preprint', 'preprint', 'preprint', "Preprints are manuscripts made publicly available before they have been submitted for formal peer review and publication. They might contain new research findings or data. Preprints can be a draft or final version of an authors' research but must not have been accepted for publication at the time of submission.", '{"cerif": null, "datacite": "Text", "dublin": "Text", "rdf": null, "jisc": "preprint", "crossref": "preprint", "oai_openaire": "c_816b"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (7, 'presentation', 'presentation', 'presentation', 'Academic presentations can be uploaded in their original slide format. Presentations are usually represented as slide decks. Videos of presentations can be uploaded as media.', '{"cerif": ["fcff62b8-0950-4b13-bc8d-7c0c1ec7090d", "Audiovisual"], "datacite": "Audiovisual", "dublin": "Text", "rdf": "Slideshow", "jisc": "other", "crossref": "other"}');
++            (7, 'presentation', 'presentation', 'presentation', 'Academic presentations can be uploaded in their original slide format. Presentations are usually represented as slide decks. Videos of presentations can be uploaded as media.', '{"cerif": ["fcff62b8-0950-4b13-bc8d-7c0c1ec7090d", "Audiovisual"], "datacite": "Audiovisual", "dublin": "Text", "rdf": "Slideshow", "jisc": "other", "crossref": "other", "oai_openaire": "c_c94f"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (8, 'thesis', 'thesis', 'thesis', 'In order to distinguish essays and pre-prints from academic theses, we have a separate category. These are often much longer text based documents than a paper.', '{"cerif": ["9c3a4abc-2005-4f50-8eff-4eb14e273cff", "Text"], "datacite": "Text", "dublin": "Text", "rdf": "Thesis", "jisc": "thesisDissertation", "crossref": "dissertation"}');
++            (8, 'thesis', 'thesis', 'thesis', 'In order to distinguish essays and pre-prints from academic theses, we have a separate category. These are often much longer text based documents than a paper.', '{"cerif": ["9c3a4abc-2005-4f50-8eff-4eb14e273cff", "Text"], "datacite": "Text", "dublin": "Text", "rdf": "Thesis", "jisc": "thesisDissertation", "crossref": "dissertation", "oai_openaire": "c_46ec"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (9, 'software', 'software', 'code', 'Code as a research output can either be uploaded directly from your computer or through the code management system GitHub. Versioning of code repositories is supported.', '{"cerif": ["74ff535e-9b4a-4b9a-aa94-8396b1c33e70", "Software"], "datacite": "Software", "dublin": "Software", "rdf": "ERO_0000071", "jisc": "software", "crossref": "other"}');
++            (9, 'software', 'software', 'code', 'Code as a research output can either be uploaded directly from your computer or through the code management system GitHub. Versioning of code repositories is supported.', '{"cerif": ["74ff535e-9b4a-4b9a-aa94-8396b1c33e70", "Software"], "datacite": "Software", "dublin": "Software", "rdf": "ERO_0000071", "jisc": "software", "crossref": "other", "oai_openaire": "c_5ce6"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (13, 'book', 'book', 'book', 'Books are generally long-form documents, a specialist work of writing that contains multiple chapters or a detailed written study.', '{"cerif": ["eda2b2f6-34c5-11e1-b86c-0800200c9a66", "Book"], "datacite": "Text", "dublin": "Text", "rdf": "Book", "jisc": "presentation", "crossref": "other"}');
++            (13, 'book', 'book', 'book', 'Books are generally long-form documents, a specialist work of writing that contains multiple chapters or a detailed written study.', '{"cerif": ["eda2b2f6-34c5-11e1-b86c-0800200c9a66", "Book"], "datacite": "Text", "dublin": "Text", "rdf": "Book", "jisc": "presentation", "crossref": "other", "oai_openaire": "c_2f33"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (15, 'chapter', 'chapter', 'book', 'Division of a book, which in a scholarly context usually treats a part of a larger subject in a stand-alone manner.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (15, 'chapter', 'chapter', 'book', 'Division of a book, which in a scholarly context usually treats a part of a larger subject in a stand-alone manner.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_3248"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (16, 'peer review', 'peer_review', 'paper', 'The evaluation of a scholarly work, usually performed before formal publication by a number of field experts.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (16, 'peer review', 'peer_review', 'paper', 'The evaluation of a scholarly work, usually performed before formal publication by a number of field experts.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_efa0"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (17, 'educational resource', 'educational_resource', 'thesis', 'Any type of content useful for teaching, learning or research in an educational context.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (17, 'educational resource', 'educational_resource', 'thesis', 'Any type of content useful for teaching, learning or research in an educational context.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_1843"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (18, 'report', 'report', 'paper', 'A formal account of an observation, investigation, finding, activity or any other type of information. ', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (18, 'report', 'report', 'paper', 'A formal account of an observation, investigation, finding, activity or any other type of information. ', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_93fc"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (19, 'standard', 'standard', 'paper', 'A formal and detailed description of an invention, protocol or workflow; examples include patents, patent applications and requests for comments (RFC).', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (19, 'standard', 'standard', 'paper', 'A formal and detailed description of an invention, protocol or workflow; examples include patents, patent applications and requests for comments (RFC).', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_18cf"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (11, 'online resource', 'online_resource', 'onlineresource', 'Any type of resource available online.', '{"cerif": null, "datacite": "Other", "dublin": "Text", "rdf": "Webpage", "jisc": "other", "crossref": "other"}');
++            (11, 'online resource', 'online_resource', 'onlineresource', 'Any type of resource available online.', '{"cerif": null, "datacite": "Other", "dublin": "Text", "rdf": "Webpage", "jisc": "other", "crossref": "other", "oai_openaire": "c_e9a0"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (3, 'online resource', 'online_resource', 'onlineresource', 'Any type of resource available online.', '{"cerif": null, "datacite": "Other", "dublin": "Text", "rdf": "Webpage", "jisc": "other", "crossref": "other"}');
++            (3, 'online resource', 'online_resource', 'onlineresource', 'Any type of resource available online.', '{"cerif": null, "datacite": "Other", "dublin": "Text", "rdf": "Webpage", "jisc": "other", "crossref": "other", "oai_openaire": "c_e9a0"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (20, 'composition', 'composition', 'fineart', 'A creative work in a fine art context, such as a piece of music or a poem.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (20, 'composition', 'composition', 'fineart', 'A creative work in a fine art context, such as a piece of music or a poem.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_18cd"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (21, 'funding', 'funding', 'preprint', 'A resource describing various aspects related to the funding of a research venture, such as funding agency, amount, grant name or recipient. ', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (21, 'funding', 'funding', 'preprint', 'A resource describing various aspects related to the funding of a research venture, such as funding agency, amount, grant name or recipient. ', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_18cf"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (22, 'physical object', 'physical_object', 'figure', 'A record describing any type of physical object, such as a work of art, instrument or archaeological artefact.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (22, 'physical object', 'physical_object', 'figure', 'A record describing any type of physical object, such as a work of art, instrument or archaeological artefact.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_1843"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (23, 'data management plan', 'data_management_plan', 'preprint', 'Data management plans are an integral part of a research venture, describing what data will be collected or created and how, and also the means by which it will be shared and preserved.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (23, 'data management plan', 'data_management_plan', 'preprint', 'Data management plans are an integral part of a research venture, describing what data will be collected or created and how, and also the means by which it will be shared and preserved.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_18cf"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (24, 'workflow', 'workflow', 'wesm', 'Resource describing protocols, procedures, methods or activities part of a scientific experiment.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (24, 'workflow', 'workflow', 'wesm', 'Resource describing protocols, procedures, methods or activities part of a scientific experiment.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_393c"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (25, 'monograph', 'monograph', 'book', 'A non-serial scholarly publication (either one or multiple finite volumes).', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (25, 'monograph', 'monograph', 'book', 'A non-serial scholarly publication (either one or multiple finite volumes).', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_2f33"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (26, 'performance', 'performance', 'fineart', 'The presentation of a theatrical play or music concert within a fine art context.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (26, 'performance', 'performance', 'fineart', 'The presentation of a theatrical play or music concert within a fine art context.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_e9a0"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (27, 'event ', 'event_', 'wesm', 'Information on the purpose, location, duration, agents or effects of an occurrence such as a conference, performance, natural phenomenon, or conflagration.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (27, 'event ', 'event_', 'wesm', 'Information on the purpose, location, duration, agents or effects of an occurrence such as a conference, performance, natural phenomenon, or conflagration.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_18cf"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (28, 'service', 'service', 'wesm', 'A system supplying a research need, such as a facility, instrument or API. ', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (28, 'service', 'service', 'wesm', 'A system supplying a research need, such as a facility, instrument or API. ', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_18cf"}');
+ """,
+     """
+ insert into item_type
+             (id, name, string_id, icon, public_description, `mappings`)
+             values
+-            (29, 'model', 'model', 'wesm', 'A formal representation of any system, entity, phenomenon or structure useful in the research endeavour.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": ""}');
++            (29, 'model', 'model', 'wesm', 'A formal representation of any system, entity, phenomenon or structure useful in the research endeavour.', '{"cerif": "", "datacite": "", "dublin": "", "rdf": "", "jisc": "", "crossref": "", "oai_openaire": "c_1843"}');
+ """,
+     """
+ INSERT INTO `item_type_group` (`institution_id`, `group_id`, `item_type_id`) (SELECT 0, 0, id FROM `item_type`);

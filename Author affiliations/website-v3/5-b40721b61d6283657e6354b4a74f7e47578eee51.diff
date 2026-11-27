@@ -1,0 +1,74 @@
+diff --git a/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx b/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx
+index 9414a740a..e38270402 100644
+--- a/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx
++++ b/src/pages/account/profileEdit/components/affiliations/Affiliations.test.tsx
+@@ -80,8 +80,10 @@ jest.mock("./AffiliationsList/AffiliationsList", () => {
+ });
+ 
+ // Latest Button renders as a native button so click assertions work
+-function MockButton({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
+-  return <button type="button" onClick={onClick}>{children}</button>;
++// Passes through extra props (disabled, data-part, tabIndex, aria-label, etc.)
++// so the real SearchInput's buttons and disabled state are testable.
++function MockButton({ children, onClick, ...rest }: any) {
++  return <button type="button" onClick={onClick} {...rest}>{children}</button>;
+ }
+ MockButton.Label = ({ children }: { children: React.ReactNode }) => <span>{children}</span>;
+ MockButton.Icon = ({ children }: { children: React.ReactNode }) => <span>{children}</span>;
+@@ -578,4 +580,34 @@ describe("AffiliationsComponent", () => {
+ 
+     teardown();
+   });
++
++  it("disables the Add button when 100 affiliations are present", async() => {
++    const value = Array.from({ length: 100 }, (_, i) => {
++      return { name: `Org ${i}`, url: "" };
++    });
++
++    render(<AffiliationsComponent {...defaultProps} value={value} />);
++
++    // Wait for the useEffect to sync value into local state
++    await waitFor(() => {
++      expect(screen.getAllByTestId("affiliation-row")).toHaveLength(100);
++    });
++    expect(screen.getByRole("button", { name: /Add another affiliation/i })).toBeDisabled();
++
++    teardown();
++  });
++
++  it("enables the Add button when fewer than 100 affiliations are present", async() => {
++    const value = Array.from({ length: 99 }, (_, i) => {
++      return { name: `Org ${i}`, url: "" };
++    });
++
++    render(<AffiliationsComponent {...defaultProps} value={value} />);
++
++    await waitFor(() => {
++      expect(screen.getByRole("button", { name: /Add another affiliation/i })).not.toBeDisabled();
++    });
++
++    teardown();
++  });
+ });
+diff --git a/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx b/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx
+index b53a65152..8b0d770af 100644
+--- a/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx
++++ b/src/pages/account/profileEdit/components/affiliations/Affiliations.tsx
+@@ -13,6 +13,8 @@ import { useRorSearch } from "./useRorSearch";
+ import styles from "./Affiliations.module.css";
+ 
+ 
++const MAX_AFFILIATIONS = 100;
++
+ export function AffiliationsComponent({ name, updateField, value = [], locked = false }) {
+   const [affiliations, setAffiliations] = useState([]);
+   const [isSearching, setIsSearching] = useState(false);
+@@ -224,7 +226,7 @@ export function AffiliationsComponent({ name, updateField, value = [], locked =
+           />
+         </div>
+       ) : (
+-        <Button kind="tertiary" onClick={handleAddClick}>
++        <Button disabled={affiliations.length >= MAX_AFFILIATIONS} kind="tertiary" onClick={handleAddClick}>
+           <Button.Icon><PlusSvg /></Button.Icon>
+           <Button.Label>Add another affiliation</Button.Label>
+         </Button>

@@ -1,0 +1,263 @@
+diff --git a/src/figcore/api/user/api.py b/src/figcore/api/user/api.py
+index 2d72e4b8c..498db9cfb 100644
+--- a/src/figcore/api/user/api.py
++++ b/src/figcore/api/user/api.py
+@@ -390,6 +390,12 @@ class User(APIEntity, UserStatic):
+         personal_profiles = self._profile.personal_profiles
+         return personal_profiles if isinstance(personal_profiles, list) else []
+ 
++    @property
++    @UserChecker.ensure("profile")
++    def ror_ids(self):
++        ror_ids = self._profile.ror_ids
++        return ror_ids if isinstance(ror_ids, list) else []
++
+     @property
+     @APIEntity.ensure_utf
+     @UserChecker.ensure("profile")
+diff --git a/src/figcore/graphql/schema/input_types/__init__.py b/src/figcore/graphql/schema/input_types/__init__.py
+index afe2ee414..5ca6635c1 100644
+--- a/src/figcore/graphql/schema/input_types/__init__.py
++++ b/src/figcore/graphql/schema/input_types/__init__.py
+@@ -1,3 +1,4 @@
++from figcore.graphql.schema.input_types.ror_affiliation_input import RorAffiliationInput
+ from figcore.graphql.schema.input_types.user_profile_input import UserProfileInput
+ from figcore.graphql.schema.input_types.project_member_invite import ProjectMemberInvite
+ from figcore.graphql.schema.input_types.collection_article_update import CollectionArticleUpdate
+@@ -13,6 +14,7 @@ from figcore.graphql.schema.input_types.underlying_field_input import (
+ )
+ 
+ input_types = [
++    RorAffiliationInput,
+     UserProfileInput,
+     ProjectMemberInvite,
+     CollectionArticleUpdate,
+diff --git a/src/figcore/graphql/schema/input_types/ror_affiliation_input.py b/src/figcore/graphql/schema/input_types/ror_affiliation_input.py
+new file mode 100644
+index 000000000..bbb3f0d54
+--- /dev/null
++++ b/src/figcore/graphql/schema/input_types/ror_affiliation_input.py
+@@ -0,0 +1,19 @@
++from figcore.graphql.internals import GqlType
++
++
++class RorAffiliationInput(GqlType):
++    @classmethod
++    def ror_id(cls):
++        return {"type": "String", "mandatory": False}
++
++    @classmethod
++    def name(cls):
++        return {"type": "String", "mandatory": True}
++
++    @classmethod
++    def url(cls):
++        return {"type": "String", "mandatory": False}
++
++    @classmethod
++    def order(cls):
++        return {"type": "Int", "mandatory": False}
+diff --git a/src/figcore/graphql/schema/input_types/user_profile_input.py b/src/figcore/graphql/schema/input_types/user_profile_input.py
+index 7de0db230..21c335663 100644
+--- a/src/figcore/graphql/schema/input_types/user_profile_input.py
++++ b/src/figcore/graphql/schema/input_types/user_profile_input.py
+@@ -1,4 +1,5 @@
+ from figcore.graphql.internals import GqlType
++from figcore.graphql.schema.input_types.ror_affiliation_input import RorAffiliationInput
+ from figcore.graphql.schema.types import User
+ 
+ 
+@@ -57,3 +58,7 @@ class UserProfileInput(GqlType):
+     @classmethod
+     def personal_profiles(cls):
+         return {"type": ["Json"], "meta": {"db_model": "user_profile", "db_column": "personal_profiles"}}
++
++    @classmethod
++    def ror_ids(cls):
++        return {"type": [RorAffiliationInput], "meta": {"db_model": "user_profile", "db_column": "ror_ids"}}
+diff --git a/src/figcore/graphql/schema/types/__init__.py b/src/figcore/graphql/schema/types/__init__.py
+index 4b4315269..51aa60e91 100644
+--- a/src/figcore/graphql/schema/types/__init__.py
++++ b/src/figcore/graphql/schema/types/__init__.py
+@@ -98,6 +98,7 @@ from figcore.graphql.schema.types.user import User, user
+ from figcore.graphql.schema.types.author import Author
+ from figcore.graphql.schema.types.virus_scan_info import VirusScanInfo
+ from figcore.graphql.schema.types.related_material import RelatedMaterial
++from figcore.graphql.schema.types.ror_affiliation import RorAffiliation
+ 
+ ql_types = [
+     Account,
+@@ -198,5 +199,6 @@ ql_types = [
+     AuthorListEntity,
+     VirusScanInfo,
+     RelatedMaterial,
++    RorAffiliation,
+     Validations,
+ ]
+diff --git a/src/figcore/graphql/schema/types/ror_affiliation.py b/src/figcore/graphql/schema/types/ror_affiliation.py
+new file mode 100644
+index 000000000..c6efe7b8e
+--- /dev/null
++++ b/src/figcore/graphql/schema/types/ror_affiliation.py
+@@ -0,0 +1,19 @@
++from figcore.graphql.internals import GqlType
++
++
++class RorAffiliation(GqlType):
++    @classmethod
++    def ror_id(cls):
++        return {"type": "String"}
++
++    @classmethod
++    def name(cls):
++        return {"type": "String"}
++
++    @classmethod
++    def url(cls):
++        return {"type": "String"}
++
++    @classmethod
++    def order(cls):
++        return {"type": "Int"}
+diff --git a/src/figcore/graphql/schema/types/user.py b/src/figcore/graphql/schema/types/user.py
+index 3881d81cb..3c001f61b 100644
+--- a/src/figcore/graphql/schema/types/user.py
++++ b/src/figcore/graphql/schema/types/user.py
+@@ -2,6 +2,7 @@ from figcore.graphql.interceptors.user import hide_email, open_in_new_tab, publi
+ from figcore.graphql.internals import GqlType
+ from figcore.graphql.resolvers.generic import entity_to_many_paginated
+ from figcore.graphql.resolvers.user import fields_of_interest, institution_string_id, photo_url
++from figcore.graphql.schema.types.ror_affiliation import RorAffiliation
+ 
+ 
+ class User(GqlType):
+@@ -190,5 +191,9 @@ class User(GqlType):
+     def personal_profiles(cls):
+         return {"meta": {"db_model": "user_profile", "db_column": "personal_profiles"}, "type": ["Json"]}
+ 
++    @classmethod
++    def ror_ids(cls):
++        return {"meta": {"db_model": "user_profile", "db_column": "ror_ids"}, "type": [RorAffiliation]}
++
+ 
+ user = User._type_class_to_dict()
+diff --git a/src/figcore/internals/user/user.py b/src/figcore/internals/user/user.py
+index 862901dde..7e5203f79 100644
+--- a/src/figcore/internals/user/user.py
++++ b/src/figcore/internals/user/user.py
+@@ -148,6 +148,7 @@ class UserInternals(object):
+             "linkedin_id",
+             "publications",
+             "grid_ids",
++            "ror_ids",
+             "personal_profiles",
+         ]
+ 
+diff --git a/src/figcore/lib/data/user_static.py b/src/figcore/lib/data/user_static.py
+index 7291a6a13..972acb2f8 100644
+--- a/src/figcore/lib/data/user_static.py
++++ b/src/figcore/lib/data/user_static.py
+@@ -26,6 +26,7 @@ class UserStatic(object):
+         "field_id",
+         "field_by_source_id",
+         "personal_profiles",
++        "ror_ids",
+         "temporary_photo_url",
+         "photo_url",
+     ]
+@@ -44,5 +45,6 @@ class UserStatic(object):
+         "field_by_source_id",
+         "publications",
+         "personal_profiles",
++        "ror_ids",
+         "temporary_photo_url",
+     ]
+diff --git a/tests/graphql/api/account/test_account.py b/tests/graphql/api/account/test_account.py
+index de46dd556..37eb874db 100644
+--- a/tests/graphql/api/account/test_account.py
++++ b/tests/graphql/api/account/test_account.py
+@@ -239,6 +239,10 @@ class TestAccountMutation(BaseTestTransactionedGql):
+             "fieldsOfInterest": [],
+             "publications": ["a1234"],
+             "personalProfiles": [{"label": "elements", "url": "https://elements.com"}],
++            "rorIds": [
++                {"rorId": "041kmwe10", "name": "University of Oxford", "url": "https://ox.ac.uk", "order": 0},
++                {"rorId": "01an7q238", "name": "University of Cambridge", "url": "", "order": 1},
++            ],
+         }
+ 
+         self.assertEqual(self.account1.user.orcid_id, "")
+@@ -258,6 +262,73 @@ class TestAccountMutation(BaseTestTransactionedGql):
+         self.assertEqual(account.user.field_id, data["fieldsOfInterest"])
+         self.assertEqual(account.user.publications, [{"publication": x} for x in data["publications"]])
+         self.assertEqual(account.user.personal_profiles, data["personalProfiles"])
++        # ror_ids should be stored with snake_case keys
++        self.assertEqual(
++            account.user.ror_ids,
++            [
++                {"ror_id": "041kmwe10", "name": "University of Oxford", "url": "https://ox.ac.uk", "order": 0},
++                {"ror_id": "01an7q238", "name": "University of Cambridge", "url": "", "order": 1},
++            ],
++        )
++
++    def test_account_update_profile_ror_ids_empty_list(self):
++        """Test that ror_ids can be cleared by sending an empty list"""
++        gql_parser = get_graphql_parser(options={"camel_case": True})
++
++        # First set some affiliations
++        data = {"rorIds": [{"rorId": "041kmwe10", "name": "University of Oxford", "url": "", "order": 0}]}
++        gql_parser.mutate("updateUserProfile", params={"userData": data}, fields=["ok"], account_id=self.account1.id)
++
++        account = Account.find(self.account1.id)
++        self.assertEqual(len(account.user.ror_ids), 1)
++
++        # Now clear them
++        data = {"rorIds": []}
++        gql_parser.mutate("updateUserProfile", params={"userData": data}, fields=["ok"], account_id=self.account1.id)
++
++        account = Account.find(self.account1.id)
++        self.assertEqual(account.user.ror_ids, [])
++
++    def test_account_update_profile_ror_ids_manual_entry(self):
++        """Test that manual affiliations (no rorId) are stored correctly"""
++        gql_parser = get_graphql_parser(options={"camel_case": True})
++
++        data = {"rorIds": [{"rorId": "", "name": "My Custom Lab", "url": "https://mylab.org", "order": 0}]}
++        gql_parser.mutate("updateUserProfile", params={"userData": data}, fields=["ok"], account_id=self.account1.id)
++
++        account = Account.find(self.account1.id)
++        self.assertEqual(
++            account.user.ror_ids,
++            [{"ror_id": "", "name": "My Custom Lab", "url": "https://mylab.org", "order": 0}],
++        )
++
++    def test_account_query_ror_ids(self):
++        """Test that ror_ids are returned via GraphQL query with camelCase keys"""
++        gql_parser = get_graphql_parser(options={"camel_case": True})
++
++        # Set affiliations first
++        data = {
++            "rorIds": [
++                {"rorId": "041kmwe10", "name": "University of Oxford", "url": "https://ox.ac.uk", "order": 0},
++            ]
++        }
++        gql_parser.mutate("updateUserProfile", params={"userData": data}, fields=["ok"], account_id=self.account1.id)
++
++        # Query the account and verify rorIds are returned with correct structure
++        result = gql_parser.query(
++            "account",
++            params={"id": self.account1.id},
++            fields=["user { rorIds { rorId name url order } }"],
++            account_id=self.account1.id,
++            get_url_details=self.mock_get_url_details,
++        )
++
++        ror_ids = result["user"]["rorIds"]
++        self.assertEqual(len(ror_ids), 1)
++        self.assertEqual(ror_ids[0]["rorId"], "041kmwe10")
++        self.assertEqual(ror_ids[0]["name"], "University of Oxford")
++        self.assertEqual(ror_ids[0]["url"], "https://ox.ac.uk")
++        self.assertEqual(ror_ids[0]["order"], 0)
+ 
+     def test_account_update_profile_locked_all(self):
+         self.account1.institution.update_config({"options": {"lock_profile_fields": "all"}})

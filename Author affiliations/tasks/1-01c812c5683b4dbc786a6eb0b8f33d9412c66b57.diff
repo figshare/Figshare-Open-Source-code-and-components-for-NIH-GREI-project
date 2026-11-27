@@ -1,0 +1,702 @@
+diff --git a/src/figtasks/tasks/__init__.py b/src/figtasks/tasks/__init__.py
+index e2255d4a..c8c24172 100644
+--- a/src/figtasks/tasks/__init__.py
++++ b/src/figtasks/tasks/__init__.py
+@@ -110,3 +110,4 @@ from .custom_field_value import CustomFieldValuesImportTaskImplementation
+ from .batch_management.tasks import BatchManagementUploadTask, BatchManagementDownloadTask
+ from .custom_fields.tasks import CustomFieldsExportTask
+ from .underlying_fields.tasks import UnderlyingFieldsExportTaskImplementation, ItemTypeConfigExportTaskImplementation
++from .ror_import.ror_import import RORImportTaskImplementation
+diff --git a/src/figtasks/tasks/ror_import/__init__.py b/src/figtasks/tasks/ror_import/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/src/figtasks/tasks/ror_import/ror_import.py b/src/figtasks/tasks/ror_import/ror_import.py
+new file mode 100644
+index 00000000..f4210765
+--- /dev/null
++++ b/src/figtasks/tasks/ror_import/ror_import.py
+@@ -0,0 +1,236 @@
++import json
++import tempfile
++import zipfile
++from collections import defaultdict
++
++from figcore.lib.data.institution_static import InstitutionStatic
++from figcore.lib.logs import FigcoreLogger
++
++from figtasks.config import tasks_config
++from figtasks.lib.shared import make_http_request
++
++from .task_definitions import RORImportTask
++
++# Zenodo community API endpoint for ROR data releases
++ZENODO_ROR_API = "https://zenodo.org/api/communities/ror-data/records?sort=mostrecent&size=1"
++
++# ES bulk request size — number of orgs per bulk request
++BULK_BATCH_SIZE = 5000
++
++# Map ROR status strings to the byte values used in the ES schema
++STATUS_MAP = InstitutionStatic.ROR_STATUS_MAP
++
++# ROR IDs come as full URLs (e.g. "https://ror.org/046fa4y88") — strip the prefix
++ROR_URL_PREFIX = "https://ror.org/"
++
++
++def _strip_ror_prefix(ror_url):
++    """Strip the https://ror.org/ prefix, keeping just the ID (e.g. '046fa4y88')."""
++    if ror_url and ror_url.startswith(ROR_URL_PREFIX):
++        return ror_url[len(ROR_URL_PREFIX) :]
++    return ror_url
++
++
++def _get_display_name(names):
++    """Extract the primary display name from a ROR names list.
++
++    ROR v2 names have types like 'ror_display', 'label', 'acronym', 'alias'.
++    We prefer the 'ror_display' name, then fall back to the first name.
++    """
++    for name_entry in names:
++        if "ror_display" in name_entry.get("types", []):
++            return name_entry["value"]
++    return names[0]["value"] if names else ""
++
++
++def _get_parent_ror_id(relationships):
++    """Extract the parent organization ROR ID (full URL) from relationships, if any."""
++    for rel in relationships:
++        if rel.get("type") == "parent":
++            return rel["id"]
++    return None
++
++
++def _build_children_map(orgs):
++    """Build a map of parent_ror_id (full URL) -> list of child {ror_id, name} dicts.
++
++    Used to denormalize children onto parent documents so the search UI
++    can display departments/sub-orgs alongside a parent match.
++    """
++    children = defaultdict(list)
++    for org in orgs:
++        parent_id = _get_parent_ror_id(org.get("relationships", []))
++        if parent_id:
++            children[parent_id].append(
++                {
++                    "ror_id": org["id"],
++                    "name": _get_display_name(org.get("names", [])),
++                }
++            )
++    return children
++
++
++def _transform_org(org, children_map):
++    """Transform a single ROR org dict into the ES document format.
++
++    All ror_id fields store the full URL (e.g. "https://ror.org/02bfwt286").
++    The ES _id uses only the stripped identifier for cleaner document IDs.
++    """
++    location = {}
++    locations = org.get("locations", [])
++    if locations:
++        geo = locations[0].get("geonames_details", {})
++        location = {
++            "country_code": geo.get("country_code", ""),
++            "country_name": geo.get("country_name", ""),
++            "city": geo.get("name", ""),
++        }
++
++    ror_id = org["id"]  # full URL
++    return {
++        "ror_id": ror_id,
++        "name": _get_display_name(org.get("names", [])),
++        "status": STATUS_MAP.get(org.get("status", "active"), 1),
++        "country_code": location.get("country_code", ""),
++        "country_name": location.get("country_name", ""),
++        "city": location.get("city", ""),
++        "parent_ror_id": _get_parent_ror_id(org.get("relationships", [])),
++        "children": children_map.get(ror_id, []),
++    }
++
++
++def _fetch_latest_ror_zip_url():
++    """Query the Zenodo API to find the download URL for the latest ROR release."""
++    FigcoreLogger.info("Fetching latest ROR release metadata from Zenodo")
++    with make_http_request(ZENODO_ROR_API, "GET", timeout=30) as response:
++        data = json.loads(response.read())
++
++    hits = data.get("hits", {}).get("hits", [])
++    if not hits:
++        raise RuntimeError("No ROR releases found on Zenodo")
++
++    record = hits[0]
++    release_title = record.get("metadata", {}).get("title", "unknown")
++    FigcoreLogger.info("Latest ROR release: %s (record %s)", release_title, record.get("id"))
++
++    # Find the zip file in the record's files
++    for file_entry in record.get("files", []):
++        if file_entry["key"].endswith(".zip"):
++            return file_entry["links"]["self"], release_title
++
++    raise RuntimeError(f"No zip file found in ROR release {record.get('id')}")
++
++
++def _download_and_parse_ror(zip_url):
++    """Download the ROR zip and parse the JSON file inside it.
++
++    Returns the list of org dicts from the ROR JSON.
++    """
++    FigcoreLogger.info("Downloading ROR data from %s", zip_url)
++
++    with tempfile.NamedTemporaryFile(suffix=".zip") as tmp:
++        # Stream download to temp file to avoid holding ~36MB in memory
++        with make_http_request(zip_url, "GET", timeout=120) as response:
++            while True:
++                chunk = response.read(8192)
++                if not chunk:
++                    break
++                tmp.write(chunk)
++        tmp.flush()
++
++        # Parse the JSON file inside the zip
++        with zipfile.ZipFile(tmp.name) as zf:
++            json_files = [n for n in zf.namelist() if n.endswith(".json")]
++            if not json_files:
++                raise RuntimeError("No JSON file found in ROR zip archive")
++
++            FigcoreLogger.info("Parsing %s", json_files[0])
++            with zf.open(json_files[0]) as f:
++                orgs = json.load(f)
++
++    FigcoreLogger.info("Parsed %d organizations from ROR data", len(orgs))
++    return orgs
++
++
++def _bulk_index_to_es(orgs, children_map):
++    """Bulk-index all ROR organizations into Elasticsearch.
++
++    Uses the _bulk API with index actions, batched to avoid oversized requests.
++    Indexes into the 'ror' alias so it hits the active underlying index.
++    """
++    es_url = tasks_config.get("search", {}).get("new_search")
++    if not es_url:
++        raise RuntimeError("search.new_search not configured in tasks_config")
++
++    bulk_endpoint = f"{es_url}/ror/_bulk"
++    headers = {"Content-Type": "application/x-ndjson"}
++
++    total_indexed = 0
++    batch = []
++
++    for org in orgs:
++        doc = _transform_org(org, children_map)
++
++        # NDJSON: action line + document line
++        # Use stripped ID for _id (e.g. "02bfwt286"), full URL stays in the document
++        action = json.dumps({"index": {"_index": "ror", "_id": _strip_ror_prefix(doc["ror_id"])}})
++        body = json.dumps(doc)
++        batch.append(action)
++        batch.append(body)
++
++        if len(batch) >= BULK_BATCH_SIZE * 2:
++            _send_bulk_batch(bulk_endpoint, headers, batch)
++            total_indexed += len(batch) // 2
++            FigcoreLogger.info("Indexed %d / %d organizations", total_indexed, len(orgs))
++            batch = []
++
++    # Final batch
++    if batch:
++        _send_bulk_batch(bulk_endpoint, headers, batch)
++        total_indexed += len(batch) // 2
++
++    FigcoreLogger.info("Finished indexing %d organizations to ES", total_indexed)
++
++
++def _send_bulk_batch(url, headers, batch):
++    """Send a single bulk batch to ES and raise on errors."""
++    ndjson = "\n".join(batch) + "\n"
++    with make_http_request(url, "POST", headers=headers, data=ndjson, timeout=60) as response:
++        result = json.loads(response.read())
++
++    if result.get("errors"):
++        error_items = [item for item in result.get("items", []) if "error" in item.get("index", {})]
++        for item in error_items[:5]:
++            FigcoreLogger.error("ES bulk error: %s", json.dumps(item["index"]["error"]))
++        raise RuntimeError(f"ES bulk indexing failed: {len(error_items)} errors in batch")
++
++
++def run_ror_import():
++    """Main entry point: download latest ROR release and index to ES.
++
++    Can be called from the Celery task or directly from a script.
++    """
++    zip_url, release_title = _fetch_latest_ror_zip_url()
++    orgs = _download_and_parse_ror(zip_url)
++
++    # Build parent->children map before indexing
++    children_map = _build_children_map(orgs)
++    FigcoreLogger.info("Built children map: %d parent orgs have children", len(children_map))
++
++    _bulk_index_to_es(orgs, children_map)
++    FigcoreLogger.info("ROR import complete: %s (%d orgs)", release_title, len(orgs))
++
++
++@RORImportTask.register_task
++class RORImportTaskImplementation(RORImportTask):
++    """Celery task that imports the latest ROR data release into Elasticsearch.
++
++    Scheduled to run monthly via Celery Beat. Downloads the latest ROR
++    data dump from Zenodo, parses the JSON, and bulk-indexes all ~137k
++    organizations into the 'ror' ES index.
++    """
++
++    def run(self):
++        FigcoreLogger.info("Running task %s", self.__class__.__name__)
++        run_ror_import()
++        FigcoreLogger.info("Task %s finished", self.__class__.__name__)
+diff --git a/src/figtasks/tasks/ror_import/task_definitions.py b/src/figtasks/tasks/ror_import/task_definitions.py
+new file mode 100644
+index 00000000..af7eefcc
+--- /dev/null
++++ b/src/figtasks/tasks/ror_import/task_definitions.py
+@@ -0,0 +1,7 @@
++from figcore.lib.tasks.base import AsyncTask
++
++
++class RORImportTask(AsyncTask):
++
++    abstract = True
++    name = "maintenance.ror_import"
+diff --git a/tests/tasks/ror_import/__init__.py b/tests/tasks/ror_import/__init__.py
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/tests/tasks/ror_import/test_ror_import.py b/tests/tasks/ror_import/test_ror_import.py
+new file mode 100644
+index 00000000..d05ec082
+--- /dev/null
++++ b/tests/tasks/ror_import/test_ror_import.py
+@@ -0,0 +1,426 @@
++import json
++import zipfile
++import io
++import pytest
++
++from unittest.mock import MagicMock, patch
++
++from figtasks.tasks.ror_import.ror_import import (
++    _strip_ror_prefix,
++    _get_display_name,
++    _get_parent_ror_id,
++    _build_children_map,
++    _transform_org,
++    _fetch_latest_ror_zip_url,
++    _download_and_parse_ror,
++    _bulk_index_to_es,
++    _send_bulk_batch,
++    run_ror_import,
++    ROR_URL_PREFIX,
++    BULK_BATCH_SIZE,
++    STATUS_MAP,
++)
++
++
++# ---------------------------------------------------------------------------
++# Sample data
++# ---------------------------------------------------------------------------
++
++SAMPLE_ORG = {
++    "id": "https://ror.org/041kmwe10",
++    "names": [
++        {"value": "Imperial College London", "types": ["ror_display"]},
++        {"value": "ICL", "types": ["acronym"]},
++    ],
++    "status": "active",
++    "locations": [
++        {
++            "geonames_details": {
++                "country_code": "GB",
++                "country_name": "United Kingdom",
++                "name": "London",
++            }
++        }
++    ],
++    "relationships": [],
++}
++
++# A child org that references a parent
++SAMPLE_CHILD_ORG = {
++    "id": "https://ror.org/02x9ncv92",
++    "names": [{"value": "Imperial College Business School", "types": ["ror_display"]}],
++    "status": "active",
++    "locations": [
++        {
++            "geonames_details": {
++                "country_code": "GB",
++                "country_name": "United Kingdom",
++                "name": "London",
++            }
++        }
++    ],
++    "relationships": [{"type": "parent", "id": "https://ror.org/041kmwe10"}],
++}
++
++# An org with no ror_display name — fallback to first name
++SAMPLE_ORG_NO_DISPLAY = {
++    "id": "https://ror.org/099fake99",
++    "names": [{"value": "Fallback Name", "types": ["label"]}],
++    "status": "inactive",
++    "locations": [],
++    "relationships": [],
++}
++
++
++# ---------------------------------------------------------------------------
++# _strip_ror_prefix
++# ---------------------------------------------------------------------------
++
++
++def test_strip_ror_prefix_removes_url():
++    assert _strip_ror_prefix("https://ror.org/041kmwe10") == "041kmwe10"
++
++
++def test_strip_ror_prefix_keeps_short_id():
++    """Already short IDs pass through unchanged."""
++    assert _strip_ror_prefix("041kmwe10") == "041kmwe10"
++
++
++def test_strip_ror_prefix_handles_none():
++    assert _strip_ror_prefix(None) is None
++
++
++def test_strip_ror_prefix_handles_empty():
++    assert _strip_ror_prefix("") == ""
++
++
++# ---------------------------------------------------------------------------
++# _get_display_name
++# ---------------------------------------------------------------------------
++
++
++def test_get_display_name_prefers_ror_display():
++    names = [
++        {"value": "Acronym", "types": ["acronym"]},
++        {"value": "Display Name", "types": ["ror_display"]},
++    ]
++    assert _get_display_name(names) == "Display Name"
++
++
++def test_get_display_name_falls_back_to_first():
++    """When no ror_display type exists, return the first name."""
++    names = [{"value": "Only Name", "types": ["label"]}]
++    assert _get_display_name(names) == "Only Name"
++
++
++def test_get_display_name_empty_list():
++    assert _get_display_name([]) == ""
++
++
++# ---------------------------------------------------------------------------
++# _get_parent_ror_id
++# ---------------------------------------------------------------------------
++
++
++def test_get_parent_ror_id_returns_parent():
++    rels = [
++        {"type": "related", "id": "https://ror.org/aaa111111"},
++        {"type": "parent", "id": "https://ror.org/041kmwe10"},
++    ]
++    # Should return the full URL
++    assert _get_parent_ror_id(rels) == "https://ror.org/041kmwe10"
++
++
++def test_get_parent_ror_id_returns_none_when_no_parent():
++    rels = [{"type": "related", "id": "https://ror.org/aaa111111"}]
++    assert _get_parent_ror_id(rels) is None
++
++
++def test_get_parent_ror_id_empty():
++    assert _get_parent_ror_id([]) is None
++
++
++# ---------------------------------------------------------------------------
++# _build_children_map
++# ---------------------------------------------------------------------------
++
++
++def test_build_children_map_groups_children():
++    orgs = [SAMPLE_ORG, SAMPLE_CHILD_ORG]
++    children_map = _build_children_map(orgs)
++
++    # The parent should have one child — keyed by full URL
++    assert "https://ror.org/041kmwe10" in children_map
++    assert len(children_map["https://ror.org/041kmwe10"]) == 1
++    assert children_map["https://ror.org/041kmwe10"][0]["ror_id"] == "https://ror.org/02x9ncv92"
++    assert children_map["https://ror.org/041kmwe10"][0]["name"] == "Imperial College Business School"
++
++
++def test_build_children_map_no_parents():
++    """Orgs with no parent relationships produce an empty map."""
++    children_map = _build_children_map([SAMPLE_ORG])
++    assert len(children_map) == 0
++
++
++# ---------------------------------------------------------------------------
++# _transform_org
++# ---------------------------------------------------------------------------
++
++
++def test_transform_org_full():
++    children_map = {"https://ror.org/041kmwe10": [{"ror_id": "https://ror.org/02x9ncv92", "name": "Business School"}]}
++    doc = _transform_org(SAMPLE_ORG, children_map)
++
++    assert doc["ror_id"] == "https://ror.org/041kmwe10"
++    assert doc["name"] == "Imperial College London"
++    assert doc["status"] == 1  # STATUS_MAP["active"]
++    assert doc["country_code"] == "GB"
++    assert doc["country_name"] == "United Kingdom"
++    assert doc["city"] == "London"
++    assert doc["parent_ror_id"] is None
++    assert len(doc["children"]) == 1
++    assert doc["children"][0]["ror_id"] == "https://ror.org/02x9ncv92"
++
++
++def test_transform_org_child_with_parent():
++    doc = _transform_org(SAMPLE_CHILD_ORG, {})
++
++    assert doc["ror_id"] == "https://ror.org/02x9ncv92"
++    assert doc["parent_ror_id"] == "https://ror.org/041kmwe10"
++    assert doc["children"] == []
++
++
++def test_transform_org_no_location():
++    """Org with empty locations should have empty location fields."""
++    doc = _transform_org(SAMPLE_ORG_NO_DISPLAY, {})
++
++    assert doc["country_code"] == ""
++    assert doc["country_name"] == ""
++    assert doc["city"] == ""
++    assert doc["status"] == 2  # STATUS_MAP["inactive"]
++    assert doc["name"] == "Fallback Name"
++
++
++def test_transform_org_unknown_status_defaults_to_active():
++    """Unknown status strings should map to 1 (active) as default."""
++    org = {**SAMPLE_ORG, "status": "unknown_status"}
++    doc = _transform_org(org, {})
++    assert doc["status"] == 1
++
++
++# ---------------------------------------------------------------------------
++# _fetch_latest_ror_zip_url
++# ---------------------------------------------------------------------------
++
++
++def test_fetch_latest_ror_zip_url_success(mocker):
++    """Should extract the zip download URL from the Zenodo API response."""
++    zenodo_response = {
++        "hits": {
++            "hits": [
++                {
++                    "id": 12345,
++                    "metadata": {"title": "ROR v1.58"},
++                    "files": [
++                        {
++                            "key": "v1.58-2025-12-11-ror-data.zip",
++                            "links": {"self": "https://zenodo.org/download.zip"},
++                        },
++                    ],
++                }
++            ]
++        }
++    }
++    mock_response = MagicMock()
++    mock_response.read.return_value = json.dumps(zenodo_response).encode()
++    mock_response.__enter__ = MagicMock(return_value=mock_response)
++    mock_response.__exit__ = MagicMock(return_value=False)
++    mocker.patch("figtasks.tasks.ror_import.ror_import.make_http_request", return_value=mock_response)
++
++    url, title = _fetch_latest_ror_zip_url()
++
++    assert url == "https://zenodo.org/download.zip"
++    assert title == "ROR v1.58"
++
++
++def test_fetch_latest_ror_zip_url_no_hits(mocker):
++    """Should raise RuntimeError when Zenodo returns no hits."""
++    zenodo_response = {"hits": {"hits": []}}
++    mock_response = MagicMock()
++    mock_response.read.return_value = json.dumps(zenodo_response).encode()
++    mock_response.__enter__ = MagicMock(return_value=mock_response)
++    mock_response.__exit__ = MagicMock(return_value=False)
++    mocker.patch("figtasks.tasks.ror_import.ror_import.make_http_request", return_value=mock_response)
++
++    with pytest.raises(RuntimeError, match="No ROR releases found"):
++        _fetch_latest_ror_zip_url()
++
++
++def test_fetch_latest_ror_zip_url_no_zip_file(mocker):
++    """Should raise RuntimeError when the record has no .zip file."""
++    zenodo_response = {
++        "hits": {
++            "hits": [
++                {
++                    "id": 12345,
++                    "metadata": {"title": "ROR v1.58"},
++                    "files": [{"key": "readme.txt", "links": {"self": "https://zenodo.org/readme.txt"}}],
++                }
++            ]
++        }
++    }
++    mock_response = MagicMock()
++    mock_response.read.return_value = json.dumps(zenodo_response).encode()
++    mock_response.__enter__ = MagicMock(return_value=mock_response)
++    mock_response.__exit__ = MagicMock(return_value=False)
++    mocker.patch("figtasks.tasks.ror_import.ror_import.make_http_request", return_value=mock_response)
++
++    with pytest.raises(RuntimeError, match="No zip file found"):
++        _fetch_latest_ror_zip_url()
++
++
++# ---------------------------------------------------------------------------
++# _download_and_parse_ror
++# ---------------------------------------------------------------------------
++
++
++def _make_ror_zip(orgs):
++    """Helper: create an in-memory zip containing a JSON file with the given orgs list."""
++    buf = io.BytesIO()
++    with zipfile.ZipFile(buf, "w") as zf:
++        zf.writestr("v1.58-2025-12-11-ror-data.json", json.dumps(orgs))
++    buf.seek(0)
++    return buf
++
++
++def test_download_and_parse_ror_success(mocker):
++    """Should download a zip, extract the JSON, and return the org list."""
++    orgs = [SAMPLE_ORG, SAMPLE_CHILD_ORG]
++    zip_bytes = _make_ror_zip(orgs)
++
++    # Mock make_http_request to return our in-memory zip bytes in chunks
++    mock_response = MagicMock()
++    zip_data = zip_bytes.read()
++    # Simulate chunked reads: first call returns all data, second returns empty
++    mock_response.read.side_effect = [zip_data, b""]
++    mock_response.__enter__ = MagicMock(return_value=mock_response)
++    mock_response.__exit__ = MagicMock(return_value=False)
++    mocker.patch("figtasks.tasks.ror_import.ror_import.make_http_request", return_value=mock_response)
++
++    result = _download_and_parse_ror("https://zenodo.org/download.zip")
++
++    assert len(result) == 2
++    assert result[0]["id"] == "https://ror.org/041kmwe10"
++
++
++def test_download_and_parse_ror_no_json_in_zip(mocker):
++    """Should raise RuntimeError when the zip has no JSON file."""
++    buf = io.BytesIO()
++    with zipfile.ZipFile(buf, "w") as zf:
++        zf.writestr("readme.txt", "no json here")
++    buf.seek(0)
++    zip_data = buf.read()
++
++    mock_response = MagicMock()
++    mock_response.read.side_effect = [zip_data, b""]
++    mock_response.__enter__ = MagicMock(return_value=mock_response)
++    mock_response.__exit__ = MagicMock(return_value=False)
++    mocker.patch("figtasks.tasks.ror_import.ror_import.make_http_request", return_value=mock_response)
++
++    with pytest.raises(RuntimeError, match="No JSON file found"):
++        _download_and_parse_ror("https://zenodo.org/download.zip")
++
++
++# ---------------------------------------------------------------------------
++# _send_bulk_batch
++# ---------------------------------------------------------------------------
++
++
++def test_send_bulk_batch_success(mocker):
++    """Should POST NDJSON to ES and not raise on success."""
++    mock_response = MagicMock()
++    mock_response.read.return_value = json.dumps({"errors": False, "items": []})
++    mock_response.__enter__ = MagicMock(return_value=mock_response)
++    mock_response.__exit__ = MagicMock(return_value=False)
++    mock_http = mocker.patch("figtasks.tasks.ror_import.ror_import.make_http_request", return_value=mock_response)
++
++    batch = ['{"index": {"_index": "ror", "_id": "abc"}}', '{"ror_id": "abc", "name": "Test"}']
++    _send_bulk_batch("https://es:9200/ror/_bulk", {"Content-Type": "application/x-ndjson"}, batch)
++
++    # Verify the NDJSON format (lines joined with \n, trailing \n)
++    call_args = mock_http.call_args
++    assert call_args[1]["data"] == '{"index": {"_index": "ror", "_id": "abc"}}\n{"ror_id": "abc", "name": "Test"}\n'
++
++
++def test_send_bulk_batch_raises_on_errors(mocker):
++    """Should raise RuntimeError when ES returns bulk errors."""
++    mock_response = MagicMock()
++    mock_response.read.return_value = json.dumps(
++        {
++            "errors": True,
++            "items": [{"index": {"error": {"type": "mapper_parsing_exception", "reason": "bad field"}}}],
++        }
++    )
++    mock_response.__enter__ = MagicMock(return_value=mock_response)
++    mock_response.__exit__ = MagicMock(return_value=False)
++    mocker.patch("figtasks.tasks.ror_import.ror_import.make_http_request", return_value=mock_response)
++    mocker.patch("figtasks.tasks.ror_import.ror_import.FigcoreLogger.error")
++
++    batch = ['{"index": {"_index": "ror", "_id": "abc"}}', '{"ror_id": "abc"}']
++    with pytest.raises(RuntimeError, match="ES bulk indexing failed: 1 errors"):
++        _send_bulk_batch("https://es:9200/ror/_bulk", {}, batch)
++
++
++# ---------------------------------------------------------------------------
++# _bulk_index_to_es
++# ---------------------------------------------------------------------------
++
++
++def test_bulk_index_to_es_raises_without_config(mocker):
++    """Should raise RuntimeError when search.new_search is not configured."""
++    mocker.patch("figtasks.tasks.ror_import.ror_import.tasks_config", {})
++
++    with pytest.raises(RuntimeError, match="search.new_search not configured"):
++        _bulk_index_to_es([SAMPLE_ORG], {})
++
++
++def test_bulk_index_to_es_sends_batches(mocker):
++    """Should call _send_bulk_batch for each batch of orgs."""
++    mocker.patch("figtasks.tasks.ror_import.ror_import.tasks_config", {"search": {"new_search": "https://es:9200"}})
++    mock_send = mocker.patch("figtasks.tasks.ror_import.ror_import._send_bulk_batch")
++
++    # Use 3 orgs with a batch size of 2 to verify batching
++    orgs = [SAMPLE_ORG, SAMPLE_CHILD_ORG, SAMPLE_ORG_NO_DISPLAY]
++    mocker.patch("figtasks.tasks.ror_import.ror_import.BULK_BATCH_SIZE", 2)
++
++    _bulk_index_to_es(orgs, {})
++
++    # 3 orgs with batch size 2 → 2 calls (batch of 2 + batch of 1)
++    assert mock_send.call_count == 2
++
++
++# ---------------------------------------------------------------------------
++# run_ror_import (integration of all steps)
++# ---------------------------------------------------------------------------
++
++
++def test_run_ror_import_orchestrates_all_steps(mocker):
++    """run_ror_import() should fetch URL, download, build children map, and bulk-index."""
++    mocker.patch(
++        "figtasks.tasks.ror_import.ror_import._fetch_latest_ror_zip_url",
++        return_value=("https://zenodo.org/download.zip", "ROR v1.58"),
++    )
++    mocker.patch(
++        "figtasks.tasks.ror_import.ror_import._download_and_parse_ror",
++        return_value=[SAMPLE_ORG, SAMPLE_CHILD_ORG],
++    )
++    mock_bulk = mocker.patch("figtasks.tasks.ror_import.ror_import._bulk_index_to_es")
++
++    run_ror_import()
++
++    # Verify bulk index was called with the orgs and a children map
++    mock_bulk.assert_called_once()
++    args = mock_bulk.call_args[0]
++    assert len(args[0]) == 2  # 2 orgs
++    # Children map should have parent (full URL) with child
++    assert "https://ror.org/041kmwe10" in args[1]

@@ -1,0 +1,254 @@
+diff --git a/scripts/migrations/2026-11.sh b/scripts/migrations/2026-11.sh
+new file mode 100755
+index 0000000..2a42038
+--- /dev/null
++++ b/scripts/migrations/2026-11.sh
+@@ -0,0 +1,42 @@
++#!/bin/bash
++# Add affiliations mapping to the user index.
++#
++# The user indexer now writes affiliations (parsed from user_profile.affiliations blob).
++# The mapping is dynamic: strict, so it must be patched BEFORE the updated indexers
++# are deployed. New indices created from the updated schema already include the field.
++#
++# Existing documents will have no value until they are reindexed (scripts/reindex.py).
++#
++# Usage:
++#   ES_URL=http://localhost:9200 bash scripts/migrations/2026-11.sh
++
++ES_URL="${ES_URL:=http://localhost:9200}"
++
++AFFILIATIONS_MAPPING='{
++  "properties": {
++    "affiliations": {
++      "dynamic": "strict",
++      "properties": {
++        "name": {"type": "text"},
++        "ror_id": {"type": "keyword", "normalizer": "fig_keyword"},
++        "url": {"type": "keyword", "normalizer": "fig_keyword"},
++        "order": {"type": "integer"}
++      }
++    }
++  }
++}'
++
++echo "Updating mapping for user index..."
++HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -XPUT "${ES_URL}/user/_mapping" \
++  --header 'Content-Type: application/json' \
++  --data-raw "${AFFILIATIONS_MAPPING}")
++if [ "$HTTP_CODE" = "200" ]; then
++  echo "  Success."
++elif [ "$HTTP_CODE" = "404" ]; then
++  echo "  user index not found — skipping."
++else
++  echo "  Failed to update user index (HTTP ${HTTP_CODE})" && exit 1
++fi
++
++echo ""
++echo "Migration complete."
+diff --git a/src/replication/es_schema/user.py b/src/replication/es_schema/user.py
+index 8f40c0e..321eff6 100644
+--- a/src/replication/es_schema/user.py
++++ b/src/replication/es_schema/user.py
+@@ -18,6 +18,15 @@ mappings = {
+             },
+         },
+         "orcid_id": {"type": "text", "analyzer": "fig_simple_string"},
++        "affiliations": {
++            "dynamic": "strict",
++            "properties": {
++                "name": {"type": "text"},
++                "ror_id": {"type": "keyword", "normalizer": "fig_keyword"},
++                "url": {"type": "keyword", "normalizer": "fig_keyword"},
++                "order": {"type": "integer"},
++            },
++        },
+         "institution_id": {"type": "integer"},
+         "institution_name": {"type": "text"},
+         "institution_user_id": {"type": "keyword"},
+diff --git a/src/replication/indexers/user/mappings.py b/src/replication/indexers/user/mappings.py
+index d2e44c4..1de69c2 100644
+--- a/src/replication/indexers/user/mappings.py
++++ b/src/replication/indexers/user/mappings.py
+@@ -7,6 +7,7 @@ es_to_db_mapping = {
+     "name": "user.name",
+     "email": "user_profile.email",
+     "orcid_id": "user_profile.orcid_id",
++    "affiliations": "user_profile.affiliations",
+     "is_active": "account.active",
+     "account_id": "account.id",
+     "institution_name": "institution.name",
+diff --git a/src/replication/indexers/user/user.py b/src/replication/indexers/user/user.py
+index 7d3680e..7e584ae 100644
+--- a/src/replication/indexers/user/user.py
++++ b/src/replication/indexers/user/user.py
+@@ -1,3 +1,5 @@
++import json
++
+ from replication.indexers import Index, get_by_id
+ from replication.indexers.user.db_queries import get_account_user_id, QUERY
+ from replication.indexers.user.mappings import db_fields, es_to_db_mapping
+@@ -74,4 +76,13 @@ class User(Index):
+ 
+             es_dict["free_quota"] = es_dict["quota"] - es_dict["used_quota"]
+ 
++            # Parse profile affiliations from JSON blob to list of dicts.
++            raw_affiliations = es_dict.get("affiliations")
++            if raw_affiliations:
++                if isinstance(raw_affiliations, (bytes, bytearray)):
++                    raw_affiliations = raw_affiliations.decode("utf-8")
++                es_dict["affiliations"] = json.loads(raw_affiliations)
++            else:
++                es_dict["affiliations"] = []
++
+             super().upsert_document(index, entity_id, es_dict)
+diff --git a/tests/replication/user/data.py b/tests/replication/user/data.py
+index 5fa0b84..a9461a4 100644
+--- a/tests/replication/user/data.py
++++ b/tests/replication/user/data.py
+@@ -19,6 +19,7 @@ class TestUserWithAccountUpdateData:
+             "user.name": "John Smith",
+             "user_profile.orcid_id": "random_orcid",
+             "user_profile.email": "jsmith@figshare.com",
++            "user_profile.affiliations": '[{"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}]',
+             "account.active": 1,
+             "account.id": 1000035,
+             "account.quota": 100000000,
+@@ -55,6 +56,9 @@ class TestUserWithAccountUpdateData:
+             "projects_count": 10,
+             "group": {"id": 4, "name": "Group L2", "path": "/10/4"},
+             "free_quota": 96576576,
++            "affiliations": [
++                {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
++            ],
+         }
+ 
+ 
+@@ -79,6 +83,7 @@ class TestUserWithoutAccountUpdateData:
+             "user.name": "John Smith",
+             "user_profile.orcid_id": "random_orcid",
+             "user_profile.email": "jsmith@figshare.com",
++            "user_profile.affiliations": '[{"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}]',
+             "account.active": None,
+             "account.institution_user_id": None,
+             "account.symplectic_user_id": None,
+@@ -113,6 +118,9 @@ class TestUserWithoutAccountUpdateData:
+             "institution_name": "",
+             "account_id": 0,
+             "free_quota": 0,
++            "affiliations": [
++                {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
++            ],
+         }
+ 
+ 
+@@ -137,6 +145,7 @@ class TestUserInsertData:
+             "user.name": "Test User",
+             "user_profile.orcid_id": "orcid_id_123",
+             "user_profile.email": "tuser@figshare.com",
++            "user_profile.affiliations": '[{"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}]',
+             "account.active": 1,
+             "account.id": 1000004,
+             "account.quota": 100000000,
+@@ -173,6 +182,9 @@ class TestUserInsertData:
+             "projects_count": 10,
+             "group": {"id": 4, "name": "Group L2", "path": "/10/4"},
+             "free_quota": 96576576,
++            "affiliations": [
++                {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
++            ],
+         }
+ 
+ 
+@@ -223,6 +235,7 @@ class TestUserProfileUpdateData:
+             "user.name": "John Smith",
+             "user_profile.orcid_id": "orcid_135",
+             "user_profile.email": "tuser@figshare.com",
++            "user_profile.affiliations": '[{"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}]',
+             "account.active": 0,
+             "account.id": 1000099,
+             "account.quota": 100000000,
+@@ -259,6 +272,9 @@ class TestUserProfileUpdateData:
+             "projects_count": 10,
+             "group": {"id": 4, "name": "Group L2", "path": "/10/4"},
+             "free_quota": 96576576,
++            "affiliations": [
++                {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
++            ],
+         }
+ 
+ 
+@@ -283,6 +299,7 @@ class TestUserProfileInsertData:
+             "user.name": "Test User",
+             "user_profile.orcid_id": "orcid_555",
+             "user_profile.email": "tuser@figshare.com",
++            "user_profile.affiliations": '[{"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}]',
+             "account.active": 0,
+             "account.id": 1000005,
+             "account.quota": 100000000,
+@@ -319,6 +336,9 @@ class TestUserProfileInsertData:
+             "projects_count": 10,
+             "group": {"id": 4, "name": "Group L2", "path": "/10/4"},
+             "free_quota": 96576576,
++            "affiliations": [
++                {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
++            ],
+         }
+ 
+ 
+@@ -369,6 +389,7 @@ class TestAccountUpdateData:
+             "user.name": "John Smith",
+             "user_profile.orcid_id": "random_orcid",
+             "user_profile.email": "jsmith@figshare.com",
++            "user_profile.affiliations": '[{"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}]',
+             "account.active": 0,
+             "account.quota": 100000000,
+             "account.used_quota": 3423424,
+@@ -405,6 +426,9 @@ class TestAccountUpdateData:
+             "projects_count": 10,
+             "group": {"id": 4, "name": "Group L2", "path": "/10/4"},
+             "free_quota": 96576576,
++            "affiliations": [
++                {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
++            ],
+         }
+ 
+ 
+@@ -429,6 +453,7 @@ class TestAccountInsertData:
+             "user.name": "Test User",
+             "user_profile.orcid_id": "orcid_id_123",
+             "user_profile.email": "tuser@figshare.com",
++            "user_profile.affiliations": '[{"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}]',
+             "account.active": 1,
+             "account.quota": 100000000,
+             "account.used_quota": 3423424,
+@@ -465,6 +490,9 @@ class TestAccountInsertData:
+             "projects_count": 10,
+             "group": {"id": 4, "name": "Group L2", "path": "/10/4"},
+             "free_quota": 96576576,
++            "affiliations": [
++                {"name": "University of Cambridge", "ror_id": "013meh722", "url": "https://www.cam.ac.uk", "order": 0}
++            ],
+         }
+ 
+ 
+diff --git a/tests/scripts/test_schema_user.py b/tests/scripts/test_schema_user.py
+index bff419f..555458b 100644
+--- a/tests/scripts/test_schema_user.py
++++ b/tests/scripts/test_schema_user.py
+@@ -32,6 +32,15 @@ def test_schema_user(mocker):
+                     },
+                 },
+                 "orcid_id": {"type": "text", "analyzer": "fig_simple_string"},
++                "affiliations": {
++                    "dynamic": "strict",
++                    "properties": {
++                        "name": {"type": "text"},
++                        "ror_id": {"type": "keyword", "normalizer": "fig_keyword"},
++                        "url": {"type": "keyword", "normalizer": "fig_keyword"},
++                        "order": {"type": "integer"},
++                    },
++                },
+                 "institution_id": {"type": "integer"},
+                 "institution_name": {"type": "text"},
+                 "institution_user_id": {"type": "keyword"},

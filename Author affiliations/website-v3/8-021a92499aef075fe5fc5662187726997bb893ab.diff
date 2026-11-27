@@ -1,0 +1,150 @@
+diff --git a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/components/authorEditor/RorSearchField/RorSearchField.test.tsx b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/components/authorEditor/RorSearchField/RorSearchField.test.tsx
+index 16eacbbc0..2567aec81 100644
+--- a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/components/authorEditor/RorSearchField/RorSearchField.test.tsx
++++ b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/components/authorEditor/RorSearchField/RorSearchField.test.tsx
+@@ -199,6 +199,21 @@ describe("<RorSearchField />", () => {
+     teardown();
+   });
+ 
++  // -- Keyboard accessibility --
++
++  it("makes SearchInput search button keyboard-reachable", () => {
++    const scope = setup();
++    scope.run();
++
++    // The FCL SearchInput sets tabIndex={-1} on its submit button. Our
++    // workaround overrides it to tabIndex=0 so it's keyboard-reachable.
++    const searchWrap = document.querySelector("[role='search']");
++    const submitButton = searchWrap.querySelector("[data-part='search-input-submit-button']");
++    expect(submitButton.getAttribute("tabindex")).toBe("0");
++
++    teardown();
++  });
++
+   // -- Controlled value --
+ 
+   it("controlled value prop overrides internal searchTerm display", () => {
+diff --git a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/components/authorEditor/RorSearchField/RorSearchField.tsx b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/components/authorEditor/RorSearchField/RorSearchField.tsx
+index f1c823594..9b0563a08 100644
+--- a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/components/authorEditor/RorSearchField/RorSearchField.tsx
++++ b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/components/authorEditor/RorSearchField/RorSearchField.tsx
+@@ -1,4 +1,4 @@
+-import React, { useState, useCallback, useEffect } from "react";
++import React, { useState, useCallback, useEffect, useRef } from "react";
+ import { noop } from "utils/noop";
+ import { Dropdown, Toggle, Menu } from "@digital-science/figshare-fcl/dropdown";
+ import { SearchInput } from "@digital-science/figshare-fcl/latest/SearchInput";
+@@ -57,6 +57,17 @@ export function RorSearchField({
+   // When showOnFocus is false (inline search mode), start with the dropdown
+   // visible so the empty-state hint appears immediately on mount.
+   const [focused, setFocused] = useState(!showOnFocus);
++  const searchInputRef = useRef<HTMLDivElement>(null);
++
++  // FCL SearchInput sets tabIndex={-1} on its clear/submit buttons, making them
++  // unreachable via keyboard. Override with tabIndex=0 after each render.
++  useEffect(() => {
++    if (!searchInputRef.current) {
++      return;
++    }
++    const buttons = searchInputRef.current.querySelectorAll("button[tabindex='-1']");
++    buttons.forEach((btn) => btn.setAttribute("tabindex", "0"));
++  });
+ 
+   // Keep internal searchTerm in sync with controlled value so the ROR query
+   // and AffiliationDropdown state match what the input displays.
+@@ -109,6 +120,7 @@ export function RorSearchField({
+                 <div {...toggleProps} className={onCancel ? styles.row : undefined}>
+                   <div ref={toggleRef} className={onCancel ? styles.inputWrapper : undefined}>
+                     <SearchInput
++                      ref={searchInputRef}
+                       placeholder={placeholder}
+                       value={displayValue}
+                       onChange={handleChange}
+diff --git a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/index.jsx b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/index.jsx
+index 0ccabb823..9d7d139f9 100644
+--- a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/index.jsx
++++ b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/index.jsx
+@@ -83,10 +83,17 @@ export default class Authors extends Component {
+ 
+     // Ref to the "Add author" section — used for click-outside detection
+     this.searchSectionRef = React.createRef();
++    // Ref to SearchInput — used to override tabIndex on its buttons (FCL hardcodes tabIndex={-1})
++    this.searchInputRef = React.createRef();
+   }
+ 
+   componentDidMount() {
+     document.addEventListener("mousedown", this.onClickOutsideSearch);
++    this.fixSearchInputButtonTabIndex();
++  }
++
++  componentDidUpdate() {
++    this.fixSearchInputButtonTabIndex();
+   }
+ 
+   componentWillUnmount() {
+@@ -134,6 +141,7 @@ export default class Authors extends Component {
+                 Also the click-outside boundary — clicks on the Label won't close the dropdown. */}
+             <div ref={this.searchSectionRef} className={styles.searchInputWrapper}>
+               <SearchInput
++                ref={this.searchInputRef}
+                 id={`add-person-${authorInputId}`}
+                 disabled={disabled || isMaxAuthorsLength}
+                 placeholder={`Search for existing researchers/organizations, or create a new ${lowerLabel} if unlisted.`}
+@@ -502,6 +510,16 @@ export default class Authors extends Component {
+     }
+   };
+ 
++  // FCL SearchInput sets tabIndex={-1} on its clear/submit buttons, making them
++  // unreachable via keyboard. Override with tabIndex=0 after each render.
++  fixSearchInputButtonTabIndex() {
++    if (!this.searchInputRef.current) {
++      return;
++    }
++    const buttons = this.searchInputRef.current.querySelectorAll("button[tabindex='-1']");
++    buttons.forEach((btn) => btn.setAttribute("tabindex", "0"));
++  }
++
+   // Show a success alert that auto-dismisses after 5 seconds
+   showAuthorAlert = (message) => {
+     clearTimeout(this.alertTimer);
+diff --git a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/index.test.tsx b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/index.test.tsx
+index d93eaf7f3..435cf3cb2 100644
+--- a/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/index.test.tsx
++++ b/src/pages/editItem/EditItemMain/EditItemForm/EditItemFormField/figshareFields/authors/index.test.tsx
+@@ -364,6 +364,36 @@ describe("<Authors />", () => {
+     teardown();
+   });
+ 
++  it("makes SearchInput search button keyboard-reachable", () => {
++    const scope = setup();
++    scope.run();
++
++    // The FCL SearchInput sets tabIndex={-1} on its submit button. Our
++    // workaround overrides it to tabIndex=0 so it's keyboard-reachable.
++    const searchWrap = document.querySelector("[role='search']");
++    const submitButton = searchWrap.querySelector("[data-part='search-input-submit-button']");
++    expect(submitButton.getAttribute("tabindex")).toBe("0");
++
++    teardown();
++  });
++
++  it("makes SearchInput clear button keyboard-reachable after typing", async() => {
++    const scope = setup();
++    scope.run();
++
++    // Type so the clear button appears
++    await scope.typeInSearch("test");
++
++    const searchWrap = document.querySelector("[role='search']");
++    await waitFor(() => {
++      const clearBtn = searchWrap.querySelector("[data-part='search-input-clear-button']");
++      expect(clearBtn).toBeTruthy();
++      expect(clearBtn.getAttribute("tabindex")).toBe("0");
++    });
++
++    teardown();
++  });
++
+   it("should call onDiscardChanges and update the state correctly", async() => {
+     const scope = setup();
+     scope.run();

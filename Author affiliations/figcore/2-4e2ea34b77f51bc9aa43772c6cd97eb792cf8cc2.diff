@@ -1,0 +1,403 @@
+diff --git a/src/figcore/api/article/api.py b/src/figcore/api/article/api.py
+index 62f047ef8..84dbd1325 100644
+--- a/src/figcore/api/article/api.py
++++ b/src/figcore/api/article/api.py
+@@ -3127,11 +3127,9 @@ class Article(BrandedAPIEntity, ArticleStatic):
+             current_authors = data["underlying_fields"]["authors"].value or []
+             owner_author_ids = {(v.get("user_id") if isinstance(v, dict) else v) for v in current_authors}
+             if owner_user and owner_user.id not in owner_author_ids:
+-                has_single_grid_id = (
+-                    owner_user.profile and owner_user.profile.grid_ids and len(owner_user.profile.grid_ids) == 1
+-                )
+-                grid_ids = owner_user.profile.grid_ids if has_single_grid_id else []
+-                owner_author_entry = {"user_id": owner_user.id, "affiliations": grid_ids}
++                # Do NOT read profile grid_ids — affiliations should only come from
++                # the article payload, not from user profiles.
++                owner_author_entry = {"user_id": owner_user.id, "affiliations": []}
+                 data["underlying_fields"]["authors"].set_value([owner_author_entry] + current_authors)
+ 
+         data = ItbmTransformer.from_underlying_fields(data)
+diff --git a/src/figcore/internals/article/article.py b/src/figcore/internals/article/article.py
+index f84d18b0d..ab88d86d8 100644
+--- a/src/figcore/internals/article/article.py
++++ b/src/figcore/internals/article/article.py
+@@ -362,15 +362,12 @@ class ArticleInternals(object):
+             author_ids = [v["user_id"] for v in data.get("authors", [])]
+             if user_id not in author_ids and owner_is_author:
+                 author_ids.insert(0, user_id)
+-                grid_ids = (
+-                    user_profile.grid_ids
+-                    if user_profile and user_profile.grid_ids and len(user_profile.grid_ids) == 1
+-                    else []
+-                )
++                # Do NOT read profile grid_ids — affiliations should only come from
++                # the article payload, not from user profiles.
+                 if data.get("authors"):
+-                    data["authors"].insert(0, {"user_id": user_id, "affiliations": grid_ids})
++                    data["authors"].insert(0, {"user_id": user_id, "affiliations": []})
+                 else:
+-                    data["authors"] = [{"user_id": user_id, "affiliations": grid_ids}]
++                    data["authors"] = [{"user_id": user_id, "affiliations": []}]
+         article_model = cls._create_article_model(data)
+         article_resource_model = cls._create_article_resource_model(ArticleResource_model, data)
+         article_metadata_model = cls._create_article_metadata_model(data)
+diff --git a/src/figcore/internals/user/user.py b/src/figcore/internals/user/user.py
+index cc793d929..862901dde 100644
+--- a/src/figcore/internals/user/user.py
++++ b/src/figcore/internals/user/user.py
+@@ -340,19 +340,15 @@ class UserInternals(object):
+                 user_profile, user_account = authors_profiles_map.get(val["id"], (None, None))
+ 
+                 if author_affiliations:
+-                    profile_grid_ids = user_profile.grid_ids or [] if user_profile else []
+-                    if set(author_affiliations) != set(profile_grid_ids):
+-                        profile_dict = {"grid_ids": list(set(author_affiliations + profile_grid_ids))}
+-                        with DBConnection.get_session() as db_session:
+-                            UserDBCalls.update_user_profile_model(db_session, val["id"], profile_dict)
++                    # Store the article's affiliations as-is — do NOT merge them into the
++                    # user profile.  The old code merged FTP/publisher affiliations into
++                    # user_profile.grid_ids, polluting real user profiles with unverified data.
+                     affiliations[val["id"]] = author_affiliations
+                 else:
+-                    profile_grid_ids = (
+-                        user_profile.grid_ids
+-                        if user_profile and user_profile.grid_ids and user_account and len(user_profile.grid_ids) == 1
+-                        else []
+-                    )
+-                    affiliations[val["id"]] = profile_grid_ids
++                    # Do NOT read profile grid_ids as fallback — profile-derived affiliations
++                    # were being sent to DataCite, producing inaccurate metadata. Affiliations
++                    # should only come from the article payload, not from user profiles.
++                    affiliations[val["id"]] = []
+ 
+                 authors_id_list_distinct.append(val["id"])
+ 
+diff --git a/tests/api/article/itbm/test_authors.py b/tests/api/article/itbm/test_authors.py
+index 2a076c117..f567bda49 100644
+--- a/tests/api/article/itbm/test_authors.py
++++ b/tests/api/article/itbm/test_authors.py
+@@ -86,13 +86,14 @@ class TestAffiliations(BaseTestTransactioned):
+             },
+         }
+ 
+-    def test_grid_id_propagated_to_article_on_create(self):
++    def test_profile_grid_id_not_propagated_to_article_on_create(self):
++        """Profile grid_ids should NOT be copied onto articles — affiliations only from payload."""
+         article = Article.create_itbm_article(self.data, owner_is_author=True)
+ 
+         affiliations = []
+         for a in article.metadata.authors:
+             affiliations.extend(a["affiliations"])
+-        self.assertIn("grid.1234.0", affiliations)
++        self.assertEqual(len(affiliations), 0)
+ 
+     def test_do_not_propagate_on_multiple_grid_ids_on_create(self):
+         self.user.update({"grid_ids": ["grid.1234.0", "grid.0000.0"]})
+@@ -106,7 +107,8 @@ class TestAffiliations(BaseTestTransactioned):
+             affiliations.extend(a["affiliations"])
+         self.assertEqual(len(affiliations), 0)
+ 
+-    def test_grid_id_propagated_to_article_on_create_with_authors(self):
++    def test_profile_grid_id_not_propagated_to_article_on_create_with_authors(self):
++        """Even when author has profile grid_ids, articles get empty affiliations without payload."""
+         self.data["underlying_fields"][self.underlying_fields["authors"]] = [
+             {"name": self.user.name, "id": self.user.id}
+         ]
+@@ -115,8 +117,7 @@ class TestAffiliations(BaseTestTransactioned):
+         affiliations = []
+         for a in article.metadata.authors:
+             affiliations.extend(a["affiliations"])
+-            self.assertEqual(len(affiliations), 1)
+-        self.assertIn("grid.1234.0", affiliations)
++        self.assertEqual(len(affiliations), 0)
+ 
+     def test_do_not_propagate_user_without_account_on_create(self):
+         user_data = {
+@@ -138,7 +139,8 @@ class TestAffiliations(BaseTestTransactioned):
+             affiliations.extend(a["affiliations"])
+         self.assertEqual(len(affiliations), 0)
+ 
+-    def test_grid_id_propagated_to_article_on_update(self):
++    def test_profile_grid_id_not_propagated_to_article_on_update(self):
++        """Profile grid_ids should NOT be copied onto articles on update."""
+         article = Article.create_itbm_article(self.data, owner_is_author=True)
+ 
+         self.data["underlying_fields"] = {
+@@ -150,10 +152,10 @@ class TestAffiliations(BaseTestTransactioned):
+         for a in article.metadata.authors:
+             affiliations.extend(a["affiliations"])
+ 
+-        self.assertEqual(len(affiliations), 1)
+-        self.assertIn("grid.1234.0", affiliations)
++        self.assertEqual(len(affiliations), 0)
+ 
+-    def test_grid_id_propagated_to_article_on_publish(self):
++    def test_profile_grid_id_not_propagated_to_article_on_publish(self):
++        """Profile grid_ids should NOT appear on published article version."""
+         article = Article.create_itbm_article(self.data, owner_is_author=True)
+         self.data["underlying_fields"] = {
+             self.underlying_fields["authors"]: [{"name": self.user.name, "id": self.user.id}],
+@@ -168,8 +170,7 @@ class TestAffiliations(BaseTestTransactioned):
+         for a in article.last_version.metadata.authors:
+             affiliations.extend(a["affiliations"])
+ 
+-        self.assertEqual(len(affiliations), 1)
+-        self.assertIn("grid.1234.0", affiliations)
++        self.assertEqual(len(affiliations), 0)
+ 
+     def test_update_article_author_without_profile(self):
+         article = Article.create_itbm_article(self.data, owner_is_author=False)
+@@ -207,7 +208,8 @@ class TestAffiliations(BaseTestTransactioned):
+             affiliations.extend(a["affiliations"])
+         self.assertEqual(len(affiliations), 0)
+ 
+-    def test_update_article_author_with_account(self):
++    def test_update_article_author_with_account_no_affiliations_in_payload(self):
++        """When no affiliations in payload, article should have empty affiliations — NOT profile grid_ids."""
+         article = Article.create_itbm_article(self.data, owner_is_author=False)
+ 
+         self.data["underlying_fields"][self.underlying_fields["authors"]] = [
+@@ -219,8 +221,7 @@ class TestAffiliations(BaseTestTransactioned):
+         for a in article.metadata.authors:
+             affiliations.extend(a["affiliations"])
+ 
+-        self.assertEqual(len(affiliations), 1)
+-        self.assertIn("grid.1234.0", affiliations)
++        self.assertEqual(len(affiliations), 0)
+ 
+     def test_update_article_author_without_affiliations(self):
+         self.user.update({"grid_ids": {}})
+@@ -252,7 +253,7 @@ class TestAffiliations(BaseTestTransactioned):
+             affiliations.extend(a["affiliations"])
+ 
+         self.assertEqual(len(affiliations), 1)
+-        self.assertEqual(self.user.profile.grid_ids, ["grid.1234.0"])
++        self.assertEqual(self.user.profile.grid_ids, {})
+ 
+     def test_update_article_author_same_affiliation(self):
+         article = Article.create_itbm_article(self.data, owner_is_author=False)
+@@ -267,7 +268,6 @@ class TestAffiliations(BaseTestTransactioned):
+             affiliations.extend(a["affiliations"])
+ 
+         self.assertEqual(len(affiliations), 1)
+-        self.assertEqual(self.user.profile.grid_ids, ["grid.1234.0"])
+ 
+ 
+ class TestArticleMetadataAuthors(BaseTestTransactioned):
+diff --git a/tests/api/article/itbm/test_create.py b/tests/api/article/itbm/test_create.py
+index 2317c8773..256b89600 100644
+--- a/tests/api/article/itbm/test_create.py
++++ b/tests/api/article/itbm/test_create.py
+@@ -720,8 +720,8 @@ class TestCreateArticleOwnerAuthorPrepopulation(BaseTestTransactioned):
+         owner_user_id = Account.find(self.data["account_id"]).user.id
+         self.assertEqual(authors_value[0]["user_id"], owner_user_id)
+ 
+-    def test_owner_affiliations_preserved_in_fields_dict(self):
+-        """Owner's grid_ids should be stored as affiliations in the fields dict."""
++    def test_owner_affiliations_not_propagated_from_profile(self):
++        """Owner's profile grid_ids should NOT be stored as affiliations — only payload affiliations."""
+         account = Account.find(self.data["account_id"])
+         original_grid_ids = account.user.grid_ids
+         try:
+@@ -735,7 +735,7 @@ class TestCreateArticleOwnerAuthorPrepopulation(BaseTestTransactioned):
+             owner_entry = authors_value[0]
+             owner_user_id = account.user.id
+             self.assertEqual(owner_entry["user_id"], owner_user_id)
+-            self.assertEqual(owner_entry.get("affiliations"), ["grid.1234.0"])
++            self.assertEqual(owner_entry.get("affiliations"), [])
+         finally:
+             account.user.update({"grid_ids": original_grid_ids})
+ 
+diff --git a/tests/api/article/test_authors.py b/tests/api/article/test_authors.py
+index f394f9dba..e31ab3a3b 100644
+--- a/tests/api/article/test_authors.py
++++ b/tests/api/article/test_authors.py
+@@ -77,14 +77,15 @@ class TestAffiliations(BaseTestTransactioned):
+             "references": ["https://play.google.com", "https://digital-science.atlassian.net"],
+         }
+ 
+-    def test_grid_id_propagated_to_article_on_create(self):
++    def test_profile_grid_id_not_propagated_to_article_on_create(self):
++        """Profile grid_ids should NOT be copied onto articles — affiliations only from payload."""
+         data = deepcopy(self.data)
+         article = Article.create_article(data, owner_is_author=True)
+ 
+         affiliations = []
+         for a in article.metadata.authors:
+             affiliations.extend(a["affiliations"])
+-        self.assertIn("grid.1234.0", affiliations)
++        self.assertEqual(len(affiliations), 0)
+ 
+     def test_do_not_propagate_on_multiple_grid_ids_on_create(self):
+         data = deepcopy(self.data)
+@@ -97,7 +98,8 @@ class TestAffiliations(BaseTestTransactioned):
+             affiliations.extend(a["affiliations"])
+         self.assertEqual(len(affiliations), 0)
+ 
+-    def test_grid_id_propagated_to_article_on_create_with_authors(self):
++    def test_profile_grid_id_not_propagated_to_article_on_create_with_authors(self):
++        """Even when author has profile grid_ids, articles get empty affiliations without payload."""
+         data = deepcopy(self.data)
+         data["authors"] = [{"name": self.user.name, "id": self.user.id}]
+         article = Article.create_article(data, owner_is_author=False)
+@@ -105,8 +107,7 @@ class TestAffiliations(BaseTestTransactioned):
+         affiliations = []
+         for a in article.metadata.authors:
+             affiliations.extend(a["affiliations"])
+-            self.assertEqual(len(affiliations), 1)
+-        self.assertIn("grid.1234.0", affiliations)
++        self.assertEqual(len(affiliations), 0)
+ 
+     def test_do_not_propagate_user_without_account_on_create(self):
+         data = deepcopy(self.data)
+@@ -127,7 +128,8 @@ class TestAffiliations(BaseTestTransactioned):
+             affiliations.extend(a["affiliations"])
+         self.assertEqual(len(affiliations), 0)
+ 
+-    def test_grid_id_propagated_to_article_on_update(self):
++    def test_profile_grid_id_not_propagated_to_article_on_update(self):
++        """Profile grid_ids should NOT be copied onto articles on update."""
+         data = deepcopy(self.data)
+         article = Article.create_article(data, owner_is_author=True)
+         data["authors"] = [{"name": self.user.name, "id": self.user.id}]
+@@ -137,10 +139,10 @@ class TestAffiliations(BaseTestTransactioned):
+         for a in article.metadata.authors:
+             affiliations.extend(a["affiliations"])
+ 
+-        self.assertEqual(len(affiliations), 1)
+-        self.assertIn("grid.1234.0", affiliations)
++        self.assertEqual(len(affiliations), 0)
+ 
+-    def test_grid_id_propagated_to_article_on_publish(self):
++    def test_profile_grid_id_not_propagated_to_article_on_publish(self):
++        """Profile grid_ids should NOT appear on published article version."""
+         data = deepcopy(self.data)
+         article = Article.create_article(data, owner_is_author=True)
+         data["authors"] = [{"name": self.user.name, "id": self.user.id}]
+@@ -151,8 +153,7 @@ class TestAffiliations(BaseTestTransactioned):
+         for a in article.last_version.metadata.authors:
+             affiliations.extend(a["affiliations"])
+ 
+-        self.assertEqual(len(affiliations), 1)
+-        self.assertIn("grid.1234.0", affiliations)
++        self.assertEqual(len(affiliations), 0)
+ 
+     def test_update_article_author_without_profile(self):
+         data = deepcopy(self.data)
+@@ -166,7 +167,6 @@ class TestAffiliations(BaseTestTransactioned):
+ 
+         self.assertEqual(len(affiliations), 1)
+         self.assertIn("grid.1234.2", affiliations)
+-        self.assertEqual(set(self.user.profile.grid_ids), set(["grid.1234.0", "grid.1234.2"]))
+ 
+     def test_do_not_propagate_user_without_account_on_update(self):
+         data = deepcopy(self.data)
+@@ -188,7 +188,8 @@ class TestAffiliations(BaseTestTransactioned):
+             affiliations.extend(a["affiliations"])
+         self.assertEqual(len(affiliations), 0)
+ 
+-    def test_update_article_author_with_account(self):
++    def test_update_article_author_with_account_no_affiliations_in_payload(self):
++        """When no affiliations in payload, article should have empty affiliations — NOT profile grid_ids."""
+         data = deepcopy(self.data)
+         article = Article.create_article(data, owner_is_author=False)
+         data["authors"] = [
+@@ -200,8 +201,7 @@ class TestAffiliations(BaseTestTransactioned):
+         for a in article.metadata.authors:
+             affiliations.extend(a["affiliations"])
+ 
+-        self.assertEqual(len(affiliations), 1)
+-        self.assertIn("grid.1234.0", affiliations)
++        self.assertEqual(len(affiliations), 0)
+ 
+     def test_update_article_author_without_affiliations(self):
+         data = deepcopy(self.data)
+@@ -219,6 +219,7 @@ class TestAffiliations(BaseTestTransactioned):
+         self.assertEqual(self.user.profile.grid_ids, {})
+ 
+     def test_update_article_author_receives_affiliations(self):
++        """Article stores payload affiliations, but profile is NOT updated."""
+         data = deepcopy(self.data)
+ 
+         self.user.update({"grid_ids": {}})
+@@ -231,9 +232,10 @@ class TestAffiliations(BaseTestTransactioned):
+             affiliations.extend(a["affiliations"])
+ 
+         self.assertEqual(len(affiliations), 1)
+-        self.assertEqual(self.user.profile.grid_ids, ["grid.1234.0"])
++        self.assertEqual(self.user.profile.grid_ids, {})
+ 
+     def test_update_article_author_same_affiliation(self):
++        """Article stores payload affiliations; profile is NOT updated."""
+         data = deepcopy(self.data)
+ 
+         article = Article.create_article(data, owner_is_author=False)
+@@ -245,7 +247,6 @@ class TestAffiliations(BaseTestTransactioned):
+             affiliations.extend(a["affiliations"])
+ 
+         self.assertEqual(len(affiliations), 1)
+-        self.assertEqual(self.user.profile.grid_ids, ["grid.1234.0"])
+ 
+ 
+ class TestArticleMetadataAuthors(BaseTestTransactioned):
+diff --git a/tests/api/user/test_api.py b/tests/api/user/test_api.py
+index 14a451f95..6d5fd236f 100644
+--- a/tests/api/user/test_api.py
++++ b/tests/api/user/test_api.py
+@@ -963,6 +963,56 @@ class TestUserClassMethods(BaseTest):
+             )
+         self.assertEqual(exc_context.exception.field, "name")
+ 
++    def test_process_users_list_does_not_merge_affiliations_into_profile(self):
++        """process_users_list must NOT write article affiliations to user_profile.grid_ids.
++
++        Previously, FTP/publisher uploads merged affiliations into user profiles,
++        polluting real profiles with unverified data (FIG-47076).
++        """
++        # Set up a user with a known grid_id on their profile
++        account = Account.find(1)
++        user = account.user
++        original_grid_ids = ["grid.original.1"]
++        with self.DB.get_session() as db_session:
++            UserDBCalls.update_user_profile_model(db_session, user.id, {"grid_ids": original_grid_ids})
++
++        # Call process_users_list with different affiliations (simulating an FTP upload)
++        article_affiliations = ["grid.ftp.999"]
++        User.process_users_list([{"id": user.id, "affiliations": article_affiliations}])
++
++        # Verify the profile grid_ids were NOT changed
++        with self.DB.get_session() as db_session:
++            profile = UserDBCalls.get_profile(db_session, user.id)
++            self.assertEqual(profile.grid_ids, original_grid_ids)
++
++    def test_process_users_list_returns_article_affiliations_from_payload(self):
++        """process_users_list should use the affiliations from the payload on the article."""
++        account = Account.find(1)
++        user = account.user
++
++        article_affiliations = ["grid.from.payload"]
++        result = User.process_users_list([{"id": user.id, "affiliations": article_affiliations}])
++
++        self.assertEqual(len(result), 1)
++        self.assertEqual(result[0]["affiliations"], article_affiliations)
++
++    def test_process_users_list_does_not_read_profile_grid_ids_as_fallback(self):
++        """When no affiliations in payload, must NOT fall back to profile grid_ids (FIG-47077).
++
++        Profile-derived affiliations were being sent to DataCite, producing
++        inaccurate metadata. Affiliations should only come from the article
++        payload, not from user profiles.
++        """
++        account = Account.find(1)
++        user = account.user
++        with self.DB.get_session() as db_session:
++            UserDBCalls.update_user_profile_model(db_session, user.id, {"grid_ids": ["grid.profile.1"]})
++
++        result = User.process_users_list([{"id": user.id}])
++
++        self.assertEqual(len(result), 1)
++        self.assertEqual(result[0]["affiliations"], [])
++
+ 
+ class TestUserProfileEmail(BaseTest):
+     def setUp(self):

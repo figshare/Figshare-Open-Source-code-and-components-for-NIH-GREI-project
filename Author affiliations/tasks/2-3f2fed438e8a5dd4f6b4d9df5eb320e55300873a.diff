@@ -1,0 +1,124 @@
+diff --git a/src/figtasks/tasks/ror_import/ror_import.py b/src/figtasks/tasks/ror_import/ror_import.py
+index f4210765..a174e5e8 100644
+--- a/src/figtasks/tasks/ror_import/ror_import.py
++++ b/src/figtasks/tasks/ror_import/ror_import.py
+@@ -52,7 +52,7 @@ def _get_parent_ror_id(relationships):
+ 
+ 
+ def _build_children_map(orgs):
+-    """Build a map of parent_ror_id (full URL) -> list of child {ror_id, name} dicts.
++    """Build a map of parent_ror_id (stripped) -> list of child {ror_id, name} dicts.
+ 
+     Used to denormalize children onto parent documents so the search UI
+     can display departments/sub-orgs alongside a parent match.
+@@ -61,9 +61,9 @@ def _build_children_map(orgs):
+     for org in orgs:
+         parent_id = _get_parent_ror_id(org.get("relationships", []))
+         if parent_id:
+-            children[parent_id].append(
++            children[_strip_ror_prefix(parent_id)].append(
+                 {
+-                    "ror_id": org["id"],
++                    "ror_id": _strip_ror_prefix(org["id"]),
+                     "name": _get_display_name(org.get("names", [])),
+                 }
+             )
+@@ -73,8 +73,7 @@ def _build_children_map(orgs):
+ def _transform_org(org, children_map):
+     """Transform a single ROR org dict into the ES document format.
+ 
+-    All ror_id fields store the full URL (e.g. "https://ror.org/02bfwt286").
+-    The ES _id uses only the stripped identifier for cleaner document IDs.
++    All ror_id fields store the stripped identifier (e.g. "02bfwt286").
+     """
+     location = {}
+     locations = org.get("locations", [])
+@@ -86,7 +85,8 @@ def _transform_org(org, children_map):
+             "city": geo.get("name", ""),
+         }
+ 
+-    ror_id = org["id"]  # full URL
++    ror_id = _strip_ror_prefix(org["id"])
++    parent_ror_id = _get_parent_ror_id(org.get("relationships", []))
+     return {
+         "ror_id": ror_id,
+         "name": _get_display_name(org.get("names", [])),
+@@ -94,7 +94,7 @@ def _transform_org(org, children_map):
+         "country_code": location.get("country_code", ""),
+         "country_name": location.get("country_name", ""),
+         "city": location.get("city", ""),
+-        "parent_ror_id": _get_parent_ror_id(org.get("relationships", [])),
++        "parent_ror_id": _strip_ror_prefix(parent_ror_id) if parent_ror_id else None,
+         "children": children_map.get(ror_id, []),
+     }
+ 
+@@ -172,8 +172,7 @@ def _bulk_index_to_es(orgs, children_map):
+         doc = _transform_org(org, children_map)
+ 
+         # NDJSON: action line + document line
+-        # Use stripped ID for _id (e.g. "02bfwt286"), full URL stays in the document
+-        action = json.dumps({"index": {"_index": "ror", "_id": _strip_ror_prefix(doc["ror_id"])}})
++        action = json.dumps({"index": {"_index": "ror", "_id": doc["ror_id"]}})
+         body = json.dumps(doc)
+         batch.append(action)
+         batch.append(body)
+diff --git a/tests/tasks/ror_import/test_ror_import.py b/tests/tasks/ror_import/test_ror_import.py
+index d05ec082..37815469 100644
+--- a/tests/tasks/ror_import/test_ror_import.py
++++ b/tests/tasks/ror_import/test_ror_import.py
+@@ -149,11 +149,11 @@ def test_build_children_map_groups_children():
+     orgs = [SAMPLE_ORG, SAMPLE_CHILD_ORG]
+     children_map = _build_children_map(orgs)
+ 
+-    # The parent should have one child — keyed by full URL
+-    assert "https://ror.org/041kmwe10" in children_map
+-    assert len(children_map["https://ror.org/041kmwe10"]) == 1
+-    assert children_map["https://ror.org/041kmwe10"][0]["ror_id"] == "https://ror.org/02x9ncv92"
+-    assert children_map["https://ror.org/041kmwe10"][0]["name"] == "Imperial College Business School"
++    # The parent should have one child — keyed by stripped ID
++    assert "041kmwe10" in children_map
++    assert len(children_map["041kmwe10"]) == 1
++    assert children_map["041kmwe10"][0]["ror_id"] == "02x9ncv92"
++    assert children_map["041kmwe10"][0]["name"] == "Imperial College Business School"
+ 
+ 
+ def test_build_children_map_no_parents():
+@@ -168,10 +168,10 @@ def test_build_children_map_no_parents():
+ 
+ 
+ def test_transform_org_full():
+-    children_map = {"https://ror.org/041kmwe10": [{"ror_id": "https://ror.org/02x9ncv92", "name": "Business School"}]}
++    children_map = {"041kmwe10": [{"ror_id": "02x9ncv92", "name": "Business School"}]}
+     doc = _transform_org(SAMPLE_ORG, children_map)
+ 
+-    assert doc["ror_id"] == "https://ror.org/041kmwe10"
++    assert doc["ror_id"] == "041kmwe10"
+     assert doc["name"] == "Imperial College London"
+     assert doc["status"] == 1  # STATUS_MAP["active"]
+     assert doc["country_code"] == "GB"
+@@ -179,14 +179,14 @@ def test_transform_org_full():
+     assert doc["city"] == "London"
+     assert doc["parent_ror_id"] is None
+     assert len(doc["children"]) == 1
+-    assert doc["children"][0]["ror_id"] == "https://ror.org/02x9ncv92"
++    assert doc["children"][0]["ror_id"] == "02x9ncv92"
+ 
+ 
+ def test_transform_org_child_with_parent():
+     doc = _transform_org(SAMPLE_CHILD_ORG, {})
+ 
+-    assert doc["ror_id"] == "https://ror.org/02x9ncv92"
+-    assert doc["parent_ror_id"] == "https://ror.org/041kmwe10"
++    assert doc["ror_id"] == "02x9ncv92"
++    assert doc["parent_ror_id"] == "041kmwe10"
+     assert doc["children"] == []
+ 
+ 
+@@ -422,5 +422,5 @@ def test_run_ror_import_orchestrates_all_steps(mocker):
+     mock_bulk.assert_called_once()
+     args = mock_bulk.call_args[0]
+     assert len(args[0]) == 2  # 2 orgs
+-    # Children map should have parent (full URL) with child
+-    assert "https://ror.org/041kmwe10" in args[1]
++    # Children map should have parent (stripped ID) with child
++    assert "041kmwe10" in args[1]

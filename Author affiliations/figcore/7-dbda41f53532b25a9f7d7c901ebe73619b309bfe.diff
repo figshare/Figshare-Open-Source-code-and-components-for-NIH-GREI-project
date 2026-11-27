@@ -1,0 +1,75 @@
+diff --git a/src/figcore/api/account/actions/user.py b/src/figcore/api/account/actions/user.py
+index 5963da758..50d642822 100644
+--- a/src/figcore/api/account/actions/user.py
++++ b/src/figcore/api/account/actions/user.py
+@@ -115,6 +115,7 @@ class UserActions(BaseActions):
+         validator.validate_allowed_public_profile_fields()
+         validator.validate_user_names_limit(self.item)
+         validator.validate_publications()
++        validator.validate_affiliations()
+         validator.validate_personal_profiles()
+ 
+         self._check_orcid(data.get("orcid_id"), institution_id, user_account)
+diff --git a/src/figcore/api/user/validator.py b/src/figcore/api/user/validator.py
+index 255290b69..3410bf25b 100644
+--- a/src/figcore/api/user/validator.py
++++ b/src/figcore/api/user/validator.py
+@@ -17,6 +17,7 @@ class UserValidator(Validator):
+     MAX_BIO_LENGTH = 25000
+     MAX_PERSONAL_PROFILE_LIST_LEN = 10
+     MAX_PERSONAL_PROFILE_LEN = 512
++    MAX_AFFILIATIONS = 100
+ 
+     def __init__(self, data=None):
+         self._data = data
+@@ -184,6 +185,17 @@ class UserValidator(Validator):
+                 f"first_name and last_name cannot exceed {self.MAX_NAME_LENGTH} characters together"
+             )
+ 
++    def validate_affiliations(self):
++        affiliations = self._data.get("affiliations")
++        if affiliations is None:
++            return
++
++        if not isinstance(affiliations, list):
++            raise fig_exc.InvalidValue("affiliations must be a list")
++
++        if len(affiliations) > self.MAX_AFFILIATIONS:
++            raise fig_exc.InvalidValue(f"You can add a maximum of {self.MAX_AFFILIATIONS} affiliations")
++
+     def validate_personal_profiles(self):
+         personal_profiles = self._data.get("personal_profiles")
+         if not personal_profiles:
+diff --git a/tests/api/user/test_update_public_profile.py b/tests/api/user/test_update_public_profile.py
+index a852c2b31..37d99a133 100644
+--- a/tests/api/user/test_update_public_profile.py
++++ b/tests/api/user/test_update_public_profile.py
+@@ -444,3 +444,28 @@ class TestUpdatePublicProfile(BaseTestTransactioned):
+             self.admin_account.actions_for(self.inst_user).update_public_profile({"last_name": "aaaaa"})
+ 
+         self.admin_account.actions_for(self.inst_user).update_public_profile({"first_name": "", "last_name": "a" * 255})
++
++    def test_affiliations_max_limit(self):
++        # Exactly 100 affiliations should be accepted
++        affiliations_100 = [{"ror_id": f"ror-{i}", "name": f"Org {i}", "url": ""} for i in range(100)]
++        self.figsh_account.actions_for(self.figsh_user).update_public_profile({"affiliations": affiliations_100})
++        self.assertEqual(len(self.figsh_user.affiliations), 100)
++
++        # 101 affiliations should be rejected
++        affiliations_101 = [{"ror_id": f"ror-{i}", "name": f"Org {i}", "url": ""} for i in range(101)]
++        with self.assertRaises(fig_exc.InvalidValue):
++            self.figsh_account.actions_for(self.figsh_user).update_public_profile({"affiliations": affiliations_101})
++
++    def test_affiliations_not_a_list(self):
++        with self.assertRaises(fig_exc.InvalidValue):
++            self.figsh_account.actions_for(self.figsh_user).update_public_profile({"affiliations": "not a list"})
++
++    def test_affiliations_falsy_non_list_rejected(self):
++        # Falsy non-list values should still be rejected, not silently skipped
++        for invalid_value in ["", 0, {}, False]:
++            with self.assertRaises(fig_exc.InvalidValue, msg=f"Expected InvalidValue for {invalid_value!r}"):
++                self.figsh_account.actions_for(self.figsh_user).update_public_profile({"affiliations": invalid_value})
++
++    def test_affiliations_empty_list_accepted(self):
++        # An empty list is a valid value (user clearing all affiliations)
++        self.figsh_account.actions_for(self.figsh_user).update_public_profile({"affiliations": []})

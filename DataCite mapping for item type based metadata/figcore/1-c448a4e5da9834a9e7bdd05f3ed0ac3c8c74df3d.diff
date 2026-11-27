@@ -1,0 +1,1348 @@
+diff --git a/src/figcore/lib/identifier/doi/datacite.py b/src/figcore/lib/identifier/doi/datacite.py
+index fbdc518a5..9080c8b0b 100644
+--- a/src/figcore/lib/identifier/doi/datacite.py
++++ b/src/figcore/lib/identifier/doi/datacite.py
+@@ -102,6 +102,21 @@ class DataCiteDOIHelper(DOIHelper):
+             for crosswalk in custom_field["crosswalks"]:
+                 self.generate_custom_field_xml(root, crosswalk, custom_field["cf_value"], duplicate_mapping)
+ 
++    def add_custom_xml_itbm(self, root, field_options, value):
++        # Crosswalk config is read from item_type_field.options["crosswalks"][provider].
++        # This is the ITBM equivalent of custom_field.crosswalks, with two differences:
++        #   - wrapped under a "crosswalks" key (options may also carry other config, e.g. is_facet)
++        #   - no intermediate item-type key (item_type_field rows are already per item type)
++        # Old format (custom_field.crosswalks):
++        #   {"datacite": {"item_type_default": [{"mapping": "contributors.contributor.nameIdentifier", ...}]}}
++        # New format (item_type_field.options):
++        #   {"crosswalks": {"datacite": [{"mapping": "contributors.contributor.nameIdentifier", ...}]}}
++        if field_options and field_options.get("crosswalks", {}).get(self.PROVIDER_NAME, []):
++            duplicate_mapping = self._generate_duplicate_mapping(root, first_level_only=True)
++
++            for crosswalk in field_options["crosswalks"][self.PROVIDER_NAME]:
++                self.generate_custom_field_xml(root, crosswalk, value, duplicate_mapping)
++
+     def generate_funding_xml(self, root, item_data):
+         # not ITBM compatible
+         # set funding information
+@@ -134,6 +149,49 @@ class DataCiteDOIHelper(DOIHelper):
+                 award_title = ET.SubElement(funding_reference, "awardTitle")
+                 award_title.text = funding["award_title"]
+ 
++    def generate_funding_xml_itbm(self, root, field, funding_list):
++        if not funding_list:
++            return
++
++        # field.options may be None for rows that were created before the options column was added
++        options = field.options if isinstance(field.options, dict) else {}
++        # <fundingReferences> is created lazily to avoid an empty element when
++        # the list contains only free-text entries with no configured crosswalks.
++        funding_references = None
++
++        for funding in funding_list:
++            if funding.get("type") == "free_text_funding":
++                # Free-text funding uses crosswalk config from item_type_field.options, same
++                # format as custom fields. The old equivalent was standard_field.crosswalks:
++                #   {"datacite": {"item_type_default": [{"mapping": "fundingReference.funderName", "text": "{data[funder_name]}"}]}}
++                provider_crosswalks = options.get("crosswalks", {}).get(self.PROVIDER_NAME, [])
++                if not provider_crosswalks:
++                    continue
++                if funding_references is None:
++                    funding_references = ET.SubElement(root, "fundingReferences")
++                for crosswalk in provider_crosswalks:
++                    self.generate_custom_field_xml(funding_references, crosswalk, funding, {})
++            else:
++                if funding_references is None:
++                    funding_references = ET.SubElement(root, "fundingReferences")
++                funding_reference = ET.SubElement(funding_references, "fundingReference")
++                funder_name = ET.SubElement(funding_reference, "funderName")
++                funder_name.text = funding["funder_name"]
++
++                if funding["funder_identifier_type"] == "ROR":
++                    funder_identifier = ET.SubElement(funding_reference, "funderIdentifier")
++                    funder_identifier.set("funderIdentifierType", funding["funder_identifier_type"])
++                    funder_identifier.set("schemeURI", funding["funder_identifier_scheme_uri"])
++                    funder_identifier.text = funding["funder_identifier"]
++
++                award_number = ET.SubElement(funding_reference, "awardNumber")
++                if funding["award_uri"]:
++                    award_number.set("awardURI", funding["award_uri"])
++                award_number.text = funding["award_number"]
++
++                award_title = ET.SubElement(funding_reference, "awardTitle")
++                award_title.text = funding["award_title"]
++
+     def reserve_doi(self, item_data, replace=True):
+         item_doi = item_data.get("doi")
+         standard_doi = self.doi_prefix + str(item_data["item_id"])
+diff --git a/src/figcore/lib/identifier/doi/helper.py b/src/figcore/lib/identifier/doi/helper.py
+index 8b20edbe5..593ffa4b8 100644
+--- a/src/figcore/lib/identifier/doi/helper.py
++++ b/src/figcore/lib/identifier/doi/helper.py
+@@ -10,6 +10,8 @@ import six
+ from six import unichr
+ import six.moves.http_client
+ 
++from figcore.api.category import Category
++from figcore.api.funding import Funding
+ from figcore.api.grid import Grid
+ from figcore.api.item_type import ItemType
+ from figcore.api.related_material import RelatedMaterial
+@@ -133,9 +135,9 @@ class DOIHelper(object):
+         return output
+ 
+     @staticmethod
+-    def _process_funding(item):
++    def _process_funding(item_funding):
+         funding = []
+-        for fund in item.funding:
++        for fund in item_funding:
+             if not fund.funder_title:
+                 funding.append({"type": "free_text_funding", "funder_name": fund.title})
+             else:
+@@ -225,7 +227,7 @@ class DOIHelper(object):
+                 "tags": article.tags,
+                 "size": str(article.size or 0),
+                 "publisher": self._get_publisher(article),
+-                "funding": self._process_funding(article),
++                "funding": self._process_funding(article.funding),
+                 "version": article.version,
+                 "related_materials": article.related_materials,
+                 "custom_fields": self.get_custom_fields_data(article, type_key=item_type_key),
+@@ -279,7 +281,9 @@ class DOIHelper(object):
+                 "description": replace_invalid_xml(article.description),
+                 "licence": article.licence.name if article.licence else "",
+                 "licence_url": article.licence.url if article.licence else "",
+-                # item fields (core / stock / custom)
++                # publisher, related_materials, categories are handled
++                "publisher": self._get_publisher(article),
++                # item fields (all core / stock / custom fields)
+                 "fields": article.fields,
+                 "has_itbm": article.has_itbm,
+             }
+@@ -343,7 +347,7 @@ class DOIHelper(object):
+             "categories": collection.categories,
+             "tags": collection.tags,
+             "publisher": self._get_publisher(collection),
+-            "funding": self._process_funding(collection),
++            "funding": self._process_funding(collection.funding),
+             "version": collection.version,
+             "custom_fields": self.get_custom_fields_data(collection, type_key="collection"),
+             "standard_field_mappings": self.get_standard_fields_mapping(collection, type_key="collection"),
+@@ -426,7 +430,7 @@ class DOIHelper(object):
+     def add_custom_xml(self, root, item_data):
+         return
+ 
+-    def add_custom_xml_itbm(self, root, item_data):
++    def add_custom_xml_itbm(self, root, field_options, value):
+         return
+ 
+     def preview_doi(self, item_data):
+@@ -652,6 +656,10 @@ class DOIHelper(object):
+ 
+         # TODO: are 'keywords' / 'tags' not sent to datacite?
+ 
++        # Set fig**share** as the item publisher
++        publisher = ET.SubElement(root, "publisher")
++        publisher.text = item_data.get("publisher") or FIGSHARE_BRANDING
++
+         # Set the publication year
+         publication_year = ET.SubElement(root, "publicationYear")
+         publication_year.text = item_data["year"]
+@@ -698,6 +706,8 @@ class DOIHelper(object):
+             if item_data.get("next_version") and self.can_customize_doi:
+                 self._add_relation_node(related_ids, "DOI", "IsPreviousVersionOf", base_identifier)
+ 
++        _issued_date_el = None
++
+         underlying_fields_schema = item_data["item_type_api"].get_underlying_fields(
+             institution_id=item_data["institution_id"] or 0, group_id=item_data["group_id"] or 0
+         )
+@@ -725,16 +735,55 @@ class DOIHelper(object):
+                         self._add_relation_node(
+                             related_ids, material.identifier_type, material.relation, material.identifier
+                         )
++                elif uf.name == "funding_list":
++                    processed_funding_list = self._process_funding(Funding.get_by_ids(_value))
++                    self.generate_funding_xml_itbm(root, uf, processed_funding_list)
++                elif uf.name == "categories":
++                    forcode_uri = "http://www.abs.gov.au/ausstats/abs@.nsf/0/6BB427AB9696C225CA2574180004463E"
++                    categories = Category.get_categories_by_id_list(
++                        _value,
++                        institution_id=item_data["institution_id"] or 0,
++                        group_id=item_data["group_id"] or 0,
++                    )
++                    if categories:
++                        subjects = ET.SubElement(root, "subjects")
++                        for category in categories:
++                            subject = ET.SubElement(subjects, "subject")
++                            if category.source_id:
++                                subject.set("schemeURI", forcode_uri)
++                                subject.set("subjectScheme", "ANZSRC Fields of Research")
++                                subject.set("classificationCode", str(category.source_id))
++                            subject.text = category.title
++                elif uf.name == "first_online":
++                    date = ET.SubElement(dates, "date")
++                    date.set("dateType", "Available")
++                    date.text = _value
++                    if _issued_date_el is None:
++                        _issued_date_el = ET.SubElement(dates, "date")
++                        _issued_date_el.set("dateType", "Issued")
++                        _issued_date_el.text = _value
++                elif uf.name == "publisher_published":
++                    # publisher_published takes priority over first_online for issued date
++                    if _issued_date_el is not None:
++                        dates.remove(_issued_date_el)
++                    _issued_date_el = ET.SubElement(dates, "date")
++                    _issued_date_el.set("dateType", "Issued")
++                    _issued_date_el.text = _value
++                elif uf.name == "publisher_accepted":
++                    date = ET.SubElement(dates, "date")
++                    date.set("dateType", "Accepted")
++                    date.text = _value
+                 elif item_data["fields"][uf_id].get("internal_type") == "custom":
+-                    self.add_custom_xml_itbm(root, uf)
++                    self.add_custom_xml_itbm(root, uf.options, _value)
+ 
+-                    # TODO: build XML nodes based on the crosswalk mapping for custom fields for ITBM items
+-                    # we'll most likely store the crosswalk mapping in the options column in item_type_field, but some of the custom fields
+-                    # might be migrated to stock fields during the migration
+-                else:
+-                    # TODO: generate subjects (categories), publisher, related identifiers (related_materials), funding (funding_list)
+-                    # XMLs using stock fields values for ITBM items
+-                    pass
++        if _issued_date_el is None and item_data.get("published_date"):
++            # fallback: neither publisher_published nor first_online was set
++            issued_date_value = item_data["published_date"]
++            if hasattr(issued_date_value, "date"):
++                issued_date_value = issued_date_value.date()
++            _issued_date_el = ET.SubElement(dates, "date")
++            _issued_date_el.set("dateType", "Issued")
++            _issued_date_el.text = str(issued_date_value)
+ 
+         if return_xml_element:
+             return root
+@@ -767,6 +816,29 @@ class DOIHelper(object):
+                 award_title = ET.SubElement(funding_reference, "awardTitle")
+                 award_title.text = funding["award_title"]
+ 
++    def generate_funding_xml_itbm(self, root, field, funding_list):
++        if funding_list:
++            funding_references = ET.SubElement(root, "fundingReferences")
++            for funding in funding_list:
++                if funding.get("type") == "free_text_funding":
++                    continue
++                funding_reference = ET.SubElement(funding_references, "fundingReference")
++                funder_name = ET.SubElement(funding_reference, "funderName")
++                funder_name.text = funding["funder_name"]
++
++                funder_identifier = ET.SubElement(funding_reference, "funderIdentifier")
++                funder_identifier.set("funderIdentifierType", funding["funder_identifier_type"])
++                funder_identifier.set("schemeURI", funding["funder_identifier_scheme_uri"])
++                funder_identifier.text = funding["funder_identifier"]
++
++                award_number = ET.SubElement(funding_reference, "awardNumber")
++                if funding["award_uri"]:
++                    award_number.set("awardURI", funding["award_uri"])
++                award_number.text = funding["award_number"]
++
++                award_title = ET.SubElement(funding_reference, "awardTitle")
++                award_title.text = funding["award_title"]
++
+ 
+ class DOIServiceInterface(object):
+     """Configuration class for DOI utilities"""
+diff --git a/tests/lib/identifier/doi/test_datacite.py b/tests/lib/identifier/doi/test_datacite.py
+index fc7d9f117..7cc543d6a 100644
+--- a/tests/lib/identifier/doi/test_datacite.py
++++ b/tests/lib/identifier/doi/test_datacite.py
+@@ -12,6 +12,8 @@ import xml.etree.cElementTree as ET
+ from unittest.mock import call
+ 
+ from figcore.api import Account, Grid, Institution, MintingInfo, StandardField, RelatedMaterial
++from figcore.api.category import Category
++from figcore.api.funding import Funding
+ from figcore.lib.db import DBConnection
+ from figcore.lib.identifier.doi import DataCiteDOIHelper, DOIHelper, DOIService
+ from figcore.exc import DOIServiceError, InvalidDOIRequest
+@@ -182,6 +184,368 @@ class TestDataCiteDOIHelper(unittest.TestCase):
+         # Check that no Issued date exists in XML
+         self.assertNotIn('dateType="Issued"', doi_xml)
+ 
++    # ------------------------------------------------------------------
++    # build_xml branch coverage (non-ITBM)
++    # ------------------------------------------------------------------
++
++    def test_no_authors_omits_creators(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        # no authors key
++        xml = helper.build_xml(item_data)
++        self.assertNotIn("<creators>", xml)
++
++    def test_with_authors_emits_creators_with_given_family_orcid(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["authors"] = [["Jane Smith", "0000-0002-1825-0097", "Jane", "Smith", []]]
++        with mock.patch.object(Grid, "get_by_ids", return_value=[]):
++            xml = helper.build_xml(item_data)
++        self.assertIn("<creatorName>Jane Smith</creatorName>", xml)
++        self.assertIn("<givenName>Jane</givenName>", xml)
++        self.assertIn("<familyName>Smith</familyName>", xml)
++        self.assertIn('nameIdentifierScheme="ORCID"', xml)
++        self.assertIn(">0000-0002-1825-0097<", xml)
++
++    def test_author_without_given_family_name_omits_name_elements(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["authors"] = [["Organisation X", None, None, None, []]]
++        with mock.patch.object(Grid, "get_by_ids", return_value=[]):
++            xml = helper.build_xml(item_data)
++        self.assertIn("<creatorName>Organisation X</creatorName>", xml)
++        self.assertNotIn("<givenName>", xml)
++        self.assertNotIn("<familyName>", xml)
++        self.assertNotIn("<nameIdentifier", xml)
++
++    def test_author_affiliation_with_ror_identifier(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["authors"] = [["Researcher A", None, "A", "Researcher", ["grid.1234.5678"]]]
++        ror_grid = mock.Mock(title="University A", grid_id="grid.1234.5678")
++        ror_grid.crosswalk.return_value = "https://ror.org/04fa4r544"
++        with mock.patch.object(Grid, "get_by_ids", return_value=[ror_grid]):
++            xml = helper.build_xml(item_data)
++        self.assertIn('affiliationIdentifierScheme="ROR"', xml)
++        self.assertIn('schemeURI="https://ror.org/"', xml)
++        self.assertIn("University A", xml)
++
++    def test_author_affiliation_without_ror_uses_grid_identifier(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["authors"] = [["Researcher B", None, "B", "Researcher", ["grid.9999.0001"]]]
++        grid_only = mock.Mock(title="Old Institute", grid_id="grid.9999.0001")
++        grid_only.crosswalk.return_value = None
++        with mock.patch.object(Grid, "get_by_ids", return_value=[grid_only]):
++            xml = helper.build_xml(item_data)
++        self.assertIn('affiliationIdentifierScheme="GRID"', xml)
++        self.assertIn('schemeURI="https://www.grid.ac/"', xml)
++        self.assertIn("grid.9999.0001", xml)
++
++    def test_no_description_omits_descriptions(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["description"] = ""
++        xml = helper.build_xml(item_data)
++        self.assertNotIn("<descriptions>", xml)
++
++    def test_categories_with_source_id_emits_anzsrc_attrs(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        cat_with = mock.Mock(title="Mathematics", source_id="3333")
++        cat_without = mock.Mock(title="Other Field", source_id=None)
++        item_data["categories"] = [cat_with, cat_without]
++        xml = helper.build_xml(item_data)
++        self.assertIn("<subjects>", xml)
++        self.assertIn('classificationCode="3333"', xml)
++        self.assertIn("ANZSRC Fields of Research", xml)
++        self.assertIn("<subject>Other Field</subject>", xml)
++
++    def test_no_categories_omits_subjects(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        # categories key absent
++        xml = helper.build_xml(item_data)
++        self.assertNotIn("<subjects>", xml)
++
++    def test_no_modified_date_omits_updated_date(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        # modified_date not set in setUp
++        xml = helper.build_xml(item_data)
++        self.assertNotIn('dateType="Updated"', xml)
++        self.assertIn('dateType="Created"', xml)
++
++    def test_modified_date_emits_updated_date(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["modified_date"] = "2024-06-01"
++        xml = helper.build_xml(item_data)
++        self.assertIn('dateType="Updated">2024-06-01', xml)
++
++    def test_size_emits_sizes_element(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["size"] = 1024
++        xml = helper.build_xml(item_data)
++        self.assertIn("<sizes><size>1024 Bytes</size></sizes>", xml)
++
++    def test_no_size_omits_sizes(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        # size not set in setUp
++        xml = helper.build_xml(item_data)
++        self.assertNotIn("<sizes>", xml)
++
++    def test_version_element_emitted_for_non_base_entity(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["version"] = 2
++        item_data["is_base_entity"] = False
++        xml = helper.build_xml(item_data)
++        self.assertIn("<version>2</version>", xml)
++
++    def test_version_element_omitted_for_base_entity(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["version"] = 2
++        item_data["is_base_entity"] = True
++        xml = helper.build_xml(item_data)
++        self.assertNotIn("<version>", xml)
++
++    def test_is_last_version_emits_identical_to_relation(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["is_last_version"] = True
++        item_data["next_version"] = None
++        xml = helper.build_xml(item_data)
++        self.assertIn('relationType="IsIdenticalTo"', xml)
++        self.assertNotIn('relationType="IsPreviousVersionOf"', xml)
++
++    def test_next_version_emits_previous_version_relation(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["is_last_version"] = False
++        item_data["next_version"] = "10.0166/FK2.stagefigshare.12345.v2"
++        xml = helper.build_xml(item_data)
++        self.assertIn('relationType="IsPreviousVersionOf"', xml)
++
++    def test_related_materials_emits_related_identifiers(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["related_materials"] = [1]
++        rm = mock.Mock(identifier="10.1234/abc", identifier_type="DOI", relation="IsCitedBy")
++        with mock.patch.object(RelatedMaterial, "find", return_value=rm):
++            xml = helper.build_xml(item_data)
++        self.assertIn('<relatedIdentifier relatedIdentifierType="DOI" relationType="IsCitedBy">10.1234/abc', xml)
++
++    def test_build_xml_returns_valid_xml_string(self):
++        # Verify the default behavior returns a well-formed XML string with the expected root element.
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        result = helper.build_xml(self.item_data)
++        self.assertIsInstance(result, str)
++        root = ET.fromstring(result)
++        self.assertEqual(root.tag, "{http://datacite.org/schema/kernel-4}resource")
++
++    def test_mint_draft_doi_skips_when_no_authors(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        helper.doi = "10.0166/FK2.stagefigshare.12345"
++        item_data = dict(self.item_data)
++        item_data["authors"] = []
++        item_data["has_itbm"] = False
++        with mock.patch.object(helper, "opener") as mock_opener:
++            helper._mint_draft_doi(item_data)
++            mock_opener.open.assert_not_called()
++
++    def test_reserve_doi_skips_minting_when_standard_doi_already_set(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        standard_doi = helper.doi_prefix + str(item_data["item_id"])
++        item_data["doi"] = standard_doi
++        with mock.patch.object(helper, "_mint_draft_doi") as mock_mint:
++            helper.reserve_doi(item_data)
++            mock_mint.assert_not_called()
++        self.assertEqual(helper.doi, standard_doi)
++
++    def test_deactivate_doi_skips_when_no_doi(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = {"doi": None}
++        with mock.patch.object(helper, "_deactivate_doi") as mock_deact:
++            helper.deactivate_doi(item_data)
++            mock_deact.assert_not_called()
++
++    @mock.patch("urllib.request.build_opener")
++    def test_deactivate_doi_raises_doi_service_error_on_url_error(self, opener_mock):
++        opener_mock.return_value.open.side_effect = urllib.error.URLError("connection refused")
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        helper.doi = "10.0166/FK2.stagefigshare.12345"
++        with self.assertRaises(DOIServiceError):
++            helper._deactivate_doi()
++
++    @mock.patch("urllib.request.build_opener")
++    def test_deactivate_doi_raises_invalid_request_on_http_error(self, opener_mock):
++        fp = io.BytesIO(b"Not Found")
++        http_err = urllib.error.HTTPError(
++            "https://mds.test.datacite.org/metadata/10.0166/FK2.stagefigshare.12345", 404, "Not Found", {}, fp
++        )
++        opener_mock.return_value.open.side_effect = http_err
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        helper.doi = "10.0166/FK2.stagefigshare.12345"
++        with self.assertRaises(InvalidDOIRequest):
++            helper._deactivate_doi()
++
++    # ------------------------------------------------------------------
++    # generate_funding_xml (non-ITBM DataCite override)
++    # ------------------------------------------------------------------
++
++    def test_generate_funding_xml_no_funding_returns_early(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        root = ET.Element("resource")
++        item_data = dict(self.item_data)
++        item_data["funding"] = None
++        helper.generate_funding_xml(root, item_data)
++        self.assertIsNone(root.find("fundingReferences"))
++
++    def test_generate_funding_xml_ror_emits_funder_identifier(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        root = ET.Element("resource")
++        item_data = dict(self.item_data)
++        item_data["funding"] = [
++            {
++                "type": "funding",
++                "funder_name": "Wellcome Trust",
++                "funder_identifier": "https://ror.org/029chgv08",
++                "funder_identifier_type": "ROR",
++                "funder_identifier_scheme_uri": "https://ror.org/",
++                "award_number": "WT-2020-001",
++                "award_uri": "https://grants.wellcome.ac.uk/2020",
++                "award_title": "Genomics Study",
++            }
++        ]
++        helper.generate_funding_xml(root, item_data)
++        xml = ET.tostring(root).decode()
++        self.assertIn("<funderName>Wellcome Trust</funderName>", xml)
++        self.assertIn('funderIdentifierType="ROR"', xml)
++        self.assertIn("https://ror.org/029chgv08", xml)
++        self.assertIn('awardURI="https://grants.wellcome.ac.uk/2020"', xml)
++        self.assertIn("<awardTitle>Genomics Study</awardTitle>", xml)
++
++    def test_generate_funding_xml_non_ror_omits_funder_identifier(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        root = ET.Element("resource")
++        item_data = dict(self.item_data)
++        item_data["funding"] = [
++            {
++                "type": "funding",
++                "funder_name": "Old Foundation",
++                "funder_identifier": "grid.9999.0001",
++                "funder_identifier_type": "GRID",
++                "funder_identifier_scheme_uri": "https://www.grid.ac/",
++                "award_number": "OF-001",
++                "award_uri": None,
++                "award_title": "Old Study",
++            }
++        ]
++        helper.generate_funding_xml(root, item_data)
++        xml = ET.tostring(root).decode()
++        self.assertIn("<funderName>Old Foundation</funderName>", xml)
++        self.assertNotIn("<funderIdentifier", xml)
++        self.assertNotIn("awardURI=", xml)
++
++    def test_generate_funding_xml_free_text_uses_standard_field_crosswalk(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        root = ET.Element("resource")
++        item_data = dict(self.item_data)
++        item_data["funding"] = [{"type": "free_text_funding", "funder_name": "Anonymous Donor"}]
++        item_data["standard_field_mappings"] = {
++            "free_text_funding": {
++                "crosswalks": [
++                    {"mapping": "fundingReferences.fundingReference.funderName", "text": "{data[funder_name]}"}
++                ]
++            }
++        }
++        helper.generate_funding_xml(root, item_data)
++        xml = ET.tostring(root).decode()
++        self.assertIn("<funderName>Anonymous Donor</funderName>", xml)
++
++    # ------------------------------------------------------------------
++    # _process_funding (base class static method)
++    # ------------------------------------------------------------------
++
++    def test_process_funding_grid_find_none_falls_back_to_grid_type(self):
++        fund = mock.Mock(
++            funder_title="Some Institute",
++            grid_id="grid.1234.5",
++            grant_code="SI-001",
++            title="Climate Study",
++        )
++        with mock.patch.object(Grid, "find", return_value=None):
++            result = DOIHelper._process_funding([fund])
++        self.assertEqual(len(result), 1)
++        self.assertEqual(result[0]["funder_identifier_type"], "GRID")
++        self.assertEqual(result[0]["funder_identifier"], "grid.1234.5")
++        self.assertEqual(result[0]["funder_identifier_scheme_uri"], "https://www.grid.ac/")
++
++    # ------------------------------------------------------------------
++    # reserve_doi — keep existing DOI when replace=False
++    # ------------------------------------------------------------------
++
++    def test_reserve_doi_replace_false_keeps_existing_doi(self):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = dict(self.item_data)
++        item_data["doi"] = "10.0166/FK2.stagefigshare.CUSTOM"
++        with mock.patch.object(helper, "_mint_draft_doi") as mock_mint:
++            helper.reserve_doi(item_data, replace=False)
++        self.assertEqual(helper.doi, "10.0166/FK2.stagefigshare.CUSTOM")
++        mock_mint.assert_called_once_with(item_data)
++
++    # ------------------------------------------------------------------
++    # _mint_draft_doi HTTP error branches
++    # ------------------------------------------------------------------
++
++    @mock.patch("urllib.request.build_opener")
++    def test_mint_draft_doi_already_taken_error_is_swallowed(self, opener_mock):
++        already_taken = json.dumps({"errors": [{"source": "doi", "title": "This DOI has already been taken"}]}).encode(
++            "utf-8"
++        )
++        fp = io.BytesIO(already_taken)
++        http_err = urllib.error.HTTPError(
++            "https://mds.test.datacite.org/metadata/10.0166/FK2.stagefigshare.12345", 422, "Unprocessable", {}, fp
++        )
++        opener_mock.return_value.open.side_effect = http_err
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        helper.doi = "10.0166/FK2.stagefigshare.12345"
++        item_data = dict(self.item_data)
++        item_data["authors"] = [["Author", None, "A", "Author", []]]
++        item_data["has_itbm"] = False
++
++        # should NOT raise
++        try:
++            helper._mint_draft_doi(item_data)
++        except InvalidDOIRequest:
++            self.fail("_mint_draft_doi should swallow 'already taken' error")
++
++    @mock.patch("urllib.request.build_opener")
++    def test_mint_draft_doi_other_http_error_raises_invalid_doi_request(self, opener_mock):
++        other_error = json.dumps({"errors": [{"source": "metadata", "title": "Schema validation error"}]}).encode(
++            "utf-8"
++        )
++        fp = io.BytesIO(other_error)
++        http_err = urllib.error.HTTPError(
++            "https://mds.test.datacite.org/metadata/10.0166/FK2.stagefigshare.12345", 422, "Unprocessable", {}, fp
++        )
++        opener_mock.return_value.open.side_effect = http_err
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        helper.doi = "10.0166/FK2.stagefigshare.12345"
++        item_data = dict(self.item_data)
++        item_data["authors"] = [["Author", None, "A", "Author", []]]
++        item_data["has_itbm"] = False
++
++        with self.assertRaises(InvalidDOIRequest):
++            helper._mint_draft_doi(item_data)
++
+ 
+ class TestCustomDatacite(BaseTestTransactioned):
+     CONFIG = {
+@@ -583,7 +947,33 @@ class TestCustomDatacite(BaseTestTransactioned):
+         self.assertEqual(result["titles.title"].attrib, {"code": "EU"})
+ 
+ 
++@mock.patch.object(
++    Category,
++    "get_categories_by_id_list",
++    return_value=[
++        mock.Mock(title="Category1", source_id=None),
++        mock.Mock(title="Category2", source_id=12345),
++    ],
++)
+ @mock.patch.object(Grid, "get_by_ids", return_value=[])
++@mock.patch.object(
++    Grid,
++    "find",
++    return_value=mock.Mock(**{"crosswalk.return_value": "https://ror.org/04fa4r544"}),
++)
++@mock.patch.object(
++    Funding,
++    "get_by_ids",
++    return_value=[
++        mock.Mock(funder_title=None, title="Swedish Research Council"),
++        mock.Mock(
++            funder_title="Australian Research Council",
++            grid_id="grid.1234.5678",
++            grant_code="ARC-2020-12345",
++            title="Biodiversity Research Initiative",
++        ),
++    ],
++)
+ @mock.patch.object(
+     RelatedMaterial,
+     "find",
+@@ -610,23 +1000,98 @@ class TestDataCiteDOIHelperITBM(unittest.TestCase):
+ 
+         funding_list_field = mock.Mock(id=102)
+         funding_list_field.name = "funding_list"
++        funding_list_field.options = {
++            "crosswalks": {
++                "datacite": [
++                    {
++                        "mapping": "fundingReference.funderName",
++                        "text": "{data[funder_name]}",
++                    }
++                ]
++            }
++        }
+ 
+         related_materials_field = mock.Mock(id=103)
+         related_materials_field.name = "related_materials"
+ 
+-        publisher_field = mock.Mock(id=104)
+-        publisher_field.name = "publisher"
+-
+         language_field = mock.Mock(id=105)
+         language_field.name = "language"
+ 
++        # Two crosswalks for the same field: creates a <contributor> with a <contributorName> child.
++        organizational_contributor_field = mock.Mock(id=106)
++        organizational_contributor_field.name = "organizational_contributor"
++        organizational_contributor_field.options = {
++            "crosswalks": {
++                "datacite": [
++                    {
++                        "mapping": "contributors.contributor",
++                        "attributes": {"contributorType": "Producer"},
++                    },
++                    {
++                        "mapping": "contributors.contributor.contributorName",
++                        "text": "{data}",
++                        "attributes": {"nameType": "Organizational"},
++                    },
++                ]
++            }
++        }
++
++        # Appends a <date> to the existing <dates> element (reuses it via duplicate_mapping).
++        advice_period_field = mock.Mock(id=107)
++        advice_period_field.name = "advice_period"
++        advice_period_field.options = {
++            "crosswalks": {
++                "datacite": [
++                    {
++                        "mapping": "dates.date",
++                        "text": "{data}",
++                        "attributes": {"dateInformation": "Period covered by advice", "dateType": "Valid"},
++                    }
++                ]
++            }
++        }
++
++        # No DataCite mapping — options is None. No XML produced.
++        notes_field = mock.Mock(id=108)
++        notes_field.name = "notes"
++        notes_field.options = None
++
++        # CrossRef-only mapping — no DataCite XML produced.
++        series_field = mock.Mock(id=109)
++        series_field.name = "series"
++        series_field.options = {
++            "crosswalks": {
++                "crossref": [
++                    {
++                        "mapping": "program.related_item.series_title",
++                        "text": "{data}",
++                    }
++                ]
++            }
++        }
++
++        first_online_field = mock.Mock(id=110)
++        first_online_field.name = "first_online"
++
++        publisher_published_field = mock.Mock(id=111)
++        publisher_published_field.name = "publisher_published"
++
++        publisher_accepted_field = mock.Mock(id=112)
++        publisher_accepted_field.name = "publisher_accepted"
++
+         item_type = mock.Mock(id=3, name="Dataset")
+         item_type.get_underlying_fields.return_value = [
+             categories_field,
+             funding_list_field,
+             related_materials_field,
+-            publisher_field,
+             language_field,
++            first_online_field,
++            publisher_published_field,
++            publisher_accepted_field,
++            organizational_contributor_field,
++            advice_period_field,
++            notes_field,
++            series_field,
+         ]
+ 
+         self.item_data = {
+@@ -656,6 +1121,7 @@ class TestDataCiteDOIHelperITBM(unittest.TestCase):
+             "item_type_api": item_type,
+             "institution_id": 1,
+             "group_id": 10,
++            "publisher": "Test Publisher",
+             "title": "Test title",
+             "authors": [
+                 ["John Doe", "1234-5678-9754-99XX", "John", "Doe", [{123: "ror/figshare"}]],
+@@ -666,11 +1132,17 @@ class TestDataCiteDOIHelperITBM(unittest.TestCase):
+             "licence": "CC-BY",
+             "licence_url": "https://licence.com/cc-by",
+             "fields": {
+-                "101": {"value": ["Category1", "Category2"]},
+-                "102": {"value": None},
+-                "103": {"value": [1, 2]},
+-                "104": {"value": "Test Publisher"},
++                "101": {"value": [301, 302]},
++                "102": {"value": [501, 502]},
++                "103": {"value": [401, 402]},
+                 "105": {"value": ["English"]},
++                "110": {"value": "2024-03-15"},
++                "111": {"value": "2024-05-01"},
++                "112": {"value": "2024-04-10"},
++                "106": {"value": "Expert Group", "internal_type": "custom"},
++                "107": {"value": "2020-2025", "internal_type": "custom"},
++                "108": {"value": "Some note", "internal_type": "custom"},
++                "109": {"value": "Scientific Reports", "internal_type": "custom"},
+             },
+             "has_itbm": True,
+         }
+@@ -684,7 +1156,9 @@ class TestDataCiteDOIHelperITBM(unittest.TestCase):
+ 
+     @mock.patch("urllib.request.build_opener")
+     @mock.patch("urllib.request.Request")
+-    def test_update_doi_mds_api(self, request_mock, opener_mock, mock_rm, mock_grids):
++    def test_update_doi_mds_api(
++        self, request_mock, opener_mock, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
+         helper = DataCiteDOIHelper(**self.CONFIG)
+         self.item_data["doi"] = self.expected_doi
+         helper.update_doi(self.item_data)
+@@ -712,7 +1186,9 @@ class TestDataCiteDOIHelperITBM(unittest.TestCase):
+             helper.update_doi(self.item_data)
+ 
+     @mock.patch("urllib.request.build_opener")
+-    def test_mint_doi_httperror_includes_body(self, opener_mock, mock_rm, mock_grids):
++    def test_mint_doi_httperror_includes_body(
++        self, opener_mock, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
+         # simulate HTTPError with body 'Can\'t be blank'
+         body = b"Can't be blank"
+         fp = io.BytesIO(body)
+@@ -728,7 +1204,9 @@ class TestDataCiteDOIHelperITBM(unittest.TestCase):
+         self.assertIn(helper.doi, str(cm.exception))
+ 
+     @mock.patch("urllib.request.build_opener")
+-    def test_update_doi_suppresses_blank_error(self, opener_mock, mock_rm, mock_grids):
++    def test_update_doi_suppresses_blank_error(
++        self, opener_mock, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
+         body = b"Can't be blank"
+         fp = io.BytesIO(body)
+         http_err = urllib.error.HTTPError(self.CONFIG["request_url"] + "doi", 422, "Unprocessable Entity", {}, fp)
+@@ -747,7 +1225,9 @@ class TestDataCiteDOIHelperITBM(unittest.TestCase):
+             self.fail("update_doi should suppress 'Can't be blank' InvalidDOIRequest")
+ 
+     @mock.patch("urllib.request.build_opener")
+-    def test_update_doi_propagates_other_errors(self, opener_mock, mock_rm, mock_grids):
++    def test_update_doi_propagates_other_errors(
++        self, opener_mock, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
+         # simulate other error message JSON
+         body = json.dumps({"errors": [{"title": "Some other error", "source": "url"}]}).encode("utf-8")
+         fp = io.BytesIO(body)
+@@ -760,61 +1240,448 @@ class TestDataCiteDOIHelperITBM(unittest.TestCase):
+         with self.assertRaises(InvalidDOIRequest):
+             helper.update_doi(item_data)
+ 
+-    def test_complete_xml(self, mock_rm, mock_grids):
+-        helper = DataCiteDOIHelper(**self.CONFIG)
+-
+-        expected_xml = """
+-            <resource xmlns="http://datacite.org/schema/kernel-4" 
+-                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+-                xsi:schemaLocation="http://datacite.org/schema/kernel-4 http://schema.datacite.org/meta/kernel-4.4/metadata.xsd">
+-                <identifier identifierType="DOI">10.0166/FK2.stagefigshare.123456</identifier>
+-                <creators>
+-                    <creator>
+-                        <creatorName>John Doe</creatorName>
+-                        <givenName>John</givenName>
+-                        <familyName>Doe</familyName>
+-                        <nameIdentifier nameIdentifierScheme="ORCID" schemeURI="https://orcid.org">1234-5678-9754-99XX</nameIdentifier>
+-                    </creator>
+-                    <creator>
+-                        <creatorName>Jane Doe</creatorName>
+-                        <givenName>Jane</givenName>
+-                        <familyName>Doe</familyName>
+-                    </creator>
+-                </creators>
+-                <titles>
+-                    <title>Test title</title>
+-                </titles>
+-                <descriptions>
+-                    <description descriptionType="Abstract">Test description</description>
+-                </descriptions>
+-                <rightsList>
+-                    <rights rightsURI="https://licence.com/cc-by">CC-BY</rights>
+-                </rightsList>
+-                <publicationYear>2026</publicationYear>
+-                <dates>
+-                    <date dateType="Created">2026-01-01 00:00:00</date>
+-                    <date dateType="Updated">2026-01-01 00:00:01</date>
+-                </dates>
+-                <resourceType resourceTypeGeneral="Dataset">Dataset</resourceType>
+-                <sizes>
+-                    <size>100 Bytes</size>
+-                </sizes>
+-                <relatedIdentifiers>
+-                    <relatedIdentifier relatedIdentifierType="ISSN" relationType="IsPartOf">1234-5678</relatedIdentifier>
+-                    <relatedIdentifier relatedIdentifierType="ISBN" relationType="IsSupplementTo">8765-4321</relatedIdentifier>
+-                </relatedIdentifiers>
+-                <language>en</language>
+-            </resource>
+-        """
+-
+-        expected_xml_normalized = re.sub(r">\s+<", "><", expected_xml.strip())
+-        expected_xml_normalized = re.sub(r"\s+", " ", expected_xml_normalized)
+-
+-        self.assertEqual(expected_xml_normalized, helper.build_xml_itbm(self.item_data))
+-
+-    def test_language_not_in_mapping(self, mock_rm, mock_grids):
++    def test_complete_xml(self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++
++        forcode_uri = "http://www.abs.gov.au/ausstats/abs@.nsf/0/6BB427AB9696C225CA2574180004463E"
++        expected_xml = (
++            '<resource xmlns="http://datacite.org/schema/kernel-4"'
++            ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
++            ' xsi:schemaLocation="http://datacite.org/schema/kernel-4 http://schema.datacite.org/meta/kernel-4.4/metadata.xsd">'
++            '<identifier identifierType="DOI">10.0166/FK2.stagefigshare.123456</identifier>'
++            "<creators>"
++            "<creator>"
++            "<creatorName>John Doe</creatorName>"
++            "<givenName>John</givenName>"
++            "<familyName>Doe</familyName>"
++            '<nameIdentifier nameIdentifierScheme="ORCID" schemeURI="https://orcid.org">1234-5678-9754-99XX</nameIdentifier>'
++            "</creator>"
++            "<creator>"
++            "<creatorName>Jane Doe</creatorName>"
++            "<givenName>Jane</givenName>"
++            "<familyName>Doe</familyName>"
++            "</creator>"
++            "</creators>"
++            "<titles><title>Test title</title></titles>"
++            '<descriptions><description descriptionType="Abstract">Test description</description></descriptions>'
++            '<rightsList><rights rightsURI="https://licence.com/cc-by">CC-BY</rights></rightsList>'
++            "<publisher>Test Publisher</publisher>"
++            "<publicationYear>2026</publicationYear>"
++            "<dates>"
++            '<date dateType="Created">2026-01-01 00:00:00</date>'
++            '<date dateType="Updated">2026-01-01 00:00:01</date>'
++            '<date dateType="Available">2024-03-15</date>'
++            '<date dateType="Issued">2024-05-01</date>'
++            '<date dateType="Accepted">2024-04-10</date>'
++            '<date dateInformation="Period covered by advice" dateType="Valid">2020-2025</date>'
++            "</dates>"
++            '<resourceType resourceTypeGeneral="Dataset">Dataset</resourceType>'
++            "<sizes><size>100 Bytes</size></sizes>"
++            "<subjects>"
++            "<subject>Category1</subject>"
++            f'<subject schemeURI="{forcode_uri}" subjectScheme="ANZSRC Fields of Research" classificationCode="12345">Category2</subject>'
++            "</subjects>"
++            "<fundingReferences>"
++            "<fundingReference><funderName>Swedish Research Council</funderName></fundingReference>"
++            "<fundingReference>"
++            "<funderName>Australian Research Council</funderName>"
++            '<funderIdentifier funderIdentifierType="ROR" schemeURI="https://ror.org/">https://ror.org/04fa4r544</funderIdentifier>'
++            "<awardNumber>ARC-2020-12345</awardNumber>"
++            "<awardTitle>Biodiversity Research Initiative</awardTitle>"
++            "</fundingReference>"
++            "</fundingReferences>"
++            "<relatedIdentifiers>"
++            '<relatedIdentifier relatedIdentifierType="ISSN" relationType="IsPartOf">1234-5678</relatedIdentifier>'
++            '<relatedIdentifier relatedIdentifierType="ISBN" relationType="IsSupplementTo">8765-4321</relatedIdentifier>'
++            "</relatedIdentifiers>"
++            "<language>en</language>"
++            "<contributors>"
++            '<contributor contributorType="Producer">'
++            '<contributorName nameType="Organizational">Expert Group</contributorName>'
++            "</contributor>"
++            "</contributors>"
++            "</resource>"
++        )
++
++        self.assertEqual(expected_xml, helper.build_xml_itbm(self.item_data))
++
++    def test_language_not_in_mapping(self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats):
+         helper = DataCiteDOIHelper(**self.CONFIG)
+ 
+         self.item_data["fields"]["105"] = {"value": ["Klingon"]}
+         doi_xml = helper.build_xml_itbm(self.item_data)
+         self.assertNotIn("<language>Klingon</language>", doi_xml)
++
++    # ------------------------------------------------------------------
++    # Helpers for focused single-branch tests
++    # ------------------------------------------------------------------
++
++    def _minimal_item_data(self, fields=None, schema=None):
++        """item_data with empty fields and schema, avoiding side-effect consumption on class mocks."""
++        item_type_api = mock.Mock()
++        item_type_api.get_underlying_fields.return_value = schema or []
++        data = dict(self.item_data)
++        data["fields"] = fields if fields is not None else {}
++        data["item_type_api"] = item_type_api
++        return data
++
++    # ------------------------------------------------------------------
++    # Core optional fields
++    # ------------------------------------------------------------------
++
++    def test_no_authors_omits_creators(self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        item_data["authors"] = []
++        xml = helper.build_xml_itbm(item_data)
++        self.assertNotIn("<creators>", xml)
++        self.assertIn("<titles><title>Test title</title></titles>", xml)
++
++    def test_no_description_omits_descriptions(self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        item_data["description"] = ""
++        xml = helper.build_xml_itbm(item_data)
++        self.assertNotIn("<descriptions>", xml)
++
++    def test_no_modified_date_omits_updated_date(self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        item_data["modified_date"] = None
++        xml = helper.build_xml_itbm(item_data)
++        self.assertNotIn('dateType="Updated"', xml)
++        self.assertIn('dateType="Created"', xml)
++
++    def test_no_size_omits_sizes(self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        item_data["size"] = 0
++        xml = helper.build_xml_itbm(item_data)
++        self.assertNotIn("<sizes>", xml)
++
++    # ------------------------------------------------------------------
++    # Version / related identifier relations
++    # ------------------------------------------------------------------
++
++    def test_version_element_emitted_for_non_base_entity(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        item_data["version"] = 3
++        item_data["is_base_entity"] = False
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn("<version>3</version>", xml)
++
++    def test_is_last_version_emits_identical_to_relation(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        item_data["is_last_version"] = True
++        item_data["next_version"] = None
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn('relationType="IsIdenticalTo"', xml)
++        self.assertNotIn('relationType="IsPreviousVersionOf"', xml)
++
++    def test_next_version_emits_previous_version_relation(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        item_data["is_last_version"] = False
++        item_data["next_version"] = "10.0166/FK2.stagefigshare.123456.v2"
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn('relationType="IsPreviousVersionOf"', xml)
++
++    def test_related_materials_reuse_existing_related_ids_node(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        # When has_identifiers is True the code must reuse the existing <relatedIdentifiers>
++        # element rather than creating a second one.
++        mock_rm.side_effect = [
++            mock.Mock(identifier="1234-5678", identifier_type="ISSN", relation="IsPartOf"),
++        ]
++        related_materials_field = mock.Mock(id=103)
++        related_materials_field.name = "related_materials"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"103": {"value": [401]}},
++            schema=[related_materials_field],
++        )
++        item_data["is_last_version"] = True
++        xml = helper.build_xml_itbm(item_data)
++
++        self.assertEqual(xml.count("<relatedIdentifiers>"), 1)
++        self.assertIn('relationType="IsIdenticalTo"', xml)
++        self.assertIn('relationType="IsPartOf"', xml)
++
++    # ------------------------------------------------------------------
++    # Timeline dates
++    # ------------------------------------------------------------------
++
++    def test_first_online_only_sets_both_available_and_issued_dates(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        first_online_field = mock.Mock(id=110)
++        first_online_field.name = "first_online"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"110": {"value": "2024-03-15"}},
++            schema=[first_online_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn('dateType="Available">2024-03-15', xml)
++        self.assertIn('dateType="Issued">2024-03-15', xml)
++
++    def test_publisher_published_overrides_first_online_for_issued_date(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        first_online_field = mock.Mock(id=110)
++        first_online_field.name = "first_online"
++        publisher_published_field = mock.Mock(id=111)
++        publisher_published_field.name = "publisher_published"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"110": {"value": "2024-03-15"}, "111": {"value": "2024-05-01"}},
++            schema=[first_online_field, publisher_published_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn('dateType="Available">2024-03-15', xml)
++        self.assertEqual(xml.count('dateType="Issued"'), 1)
++        self.assertIn('dateType="Issued">2024-05-01', xml)
++
++    def test_no_timeline_dates_falls_back_to_published_date_for_issued(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        # Neither first_online nor publisher_published in schema → fallback to published_date.
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        item_data["published_date"] = "2023-11-30"
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn('dateType="Issued">2023-11-30', xml)
++
++    def test_no_issued_date_when_no_timeline_or_published_date(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        item_data["published_date"] = None
++        xml = helper.build_xml_itbm(item_data)
++        self.assertNotIn('dateType="Issued"', xml)
++
++    # ------------------------------------------------------------------
++    # Language
++    # ------------------------------------------------------------------
++
++    def test_language_multiple_values_skipped(self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats):
++        language_field = mock.Mock(id=105)
++        language_field.name = "language"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"105": {"value": ["English", "French"]}},
++            schema=[language_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertNotIn("<language>", xml)
++
++    # ------------------------------------------------------------------
++    # Categories
++    # ------------------------------------------------------------------
++
++    def test_no_categories_returned_omits_subjects(self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats):
++        mock_cats.return_value = []
++        categories_field = mock.Mock(id=101)
++        categories_field.name = "categories"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"101": {"value": [301]}},
++            schema=[categories_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertNotIn("<subjects>", xml)
++
++    # ------------------------------------------------------------------
++    # Funding
++    # ------------------------------------------------------------------
++
++    def test_empty_funding_list_omits_funding_references(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        mock_funding.return_value = []
++        funding_list_field = mock.Mock(id=102)
++        funding_list_field.name = "funding_list"
++        funding_list_field.options = {}
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"102": {"value": [501]}},
++            schema=[funding_list_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertNotIn("<fundingReferences>", xml)
++
++    def test_non_ror_funding_omits_funder_identifier(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        # When Grid.find returns a grid with no ROR crosswalk, funder_identifier_type stays
++        # "GRID"; generate_funding_xml_itbm only emits <funderIdentifier> for ROR.
++        mock_grid_find.return_value = mock.Mock(**{"crosswalk.return_value": None})
++        mock_funding.return_value = [
++            mock.Mock(
++                funder_title="National Science Foundation",
++                grid_id="grid.1234.5678",
++                grant_code="NSF-2021-001",
++                title="Climate Study",
++            )
++        ]
++        funding_list_field = mock.Mock(id=102)
++        funding_list_field.name = "funding_list"
++        funding_list_field.options = {}
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"102": {"value": [501]}},
++            schema=[funding_list_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn("<funderName>National Science Foundation</funderName>", xml)
++        self.assertNotIn("<funderIdentifier", xml)
++
++    def test_generate_funding_xml_itbm_free_text_uses_crosswalk(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        # free_text_funding dispatches to generate_custom_field_xml via the crosswalk config
++        # on field.options, not via the standard fundingReference block.
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        root = ET.Element("resource")
++        field = mock.Mock()
++        field.options = {
++            "crosswalks": {"datacite": [{"mapping": "fundingReference.funderName", "text": "{data[funder_name]}"}]}
++        }
++        funding_list = [{"type": "free_text_funding", "funder_name": "Open Society Foundations"}]
++        helper.generate_funding_xml_itbm(root, field, funding_list)
++        xml = ET.tostring(root).decode()
++        self.assertIn("<fundingReferences>", xml)
++        self.assertIn("Open Society Foundations", xml)
++        # No <awardNumber> or <funderIdentifier> — crosswalk only produces what's configured
++        self.assertNotIn("<awardNumber>", xml)
++        self.assertNotIn("<funderIdentifier", xml)
++
++    def test_generate_funding_xml_itbm_award_uri_emits_attribute(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        # When award_uri is set, <awardNumber> must carry the awardURI attribute.
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        root = ET.Element("resource")
++        field = mock.Mock()
++        field.options = {}
++        funding_list = [
++            {
++                "funder_name": "Wellcome Trust",
++                "funder_identifier_type": "ROR",
++                "funder_identifier_scheme_uri": "https://ror.org/",
++                "funder_identifier": "https://ror.org/029chgv08",
++                "award_number": "WT-2020-001",
++                "award_uri": "https://grants.wellcome.ac.uk/WT-2020-001",
++                "award_title": "Genomics Study",
++            }
++        ]
++        helper.generate_funding_xml_itbm(root, field, funding_list)
++        xml = ET.tostring(root).decode()
++        self.assertIn('awardURI="https://grants.wellcome.ac.uk/WT-2020-001"', xml)
++        self.assertIn("<awardNumber", xml)
++        self.assertIn("<awardTitle>Genomics Study</awardTitle>", xml)
++
++    # ------------------------------------------------------------------
++    # Misc
++    # ------------------------------------------------------------------
++
++    def test_field_with_none_value_skipped(self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats):
++        language_field = mock.Mock(id=105)
++        language_field.name = "language"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"105": {"value": None}},
++            schema=[language_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertNotIn("<language>", xml)
++
++    def test_return_xml_element_returns_et_element(self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats):
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        result = helper.build_xml_itbm(item_data, return_xml_element=True)
++        self.assertIsInstance(result, ET.Element)
++        self.assertEqual(result.tag, "resource")
++
++    # ------------------------------------------------------------------
++    # related_materials when has_identifiers=False — creates relatedIdentifiers
++    # ------------------------------------------------------------------
++
++    def test_related_materials_creates_new_related_ids_when_no_version_relations(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        # has_identifiers is False (no next_version, no is_last_version) so the code
++        # must create the <relatedIdentifiers> element inside the related_materials branch.
++        mock_rm.side_effect = [
++            mock.Mock(identifier="1234-5678", identifier_type="ISSN", relation="IsPartOf"),
++        ]
++        related_materials_field = mock.Mock(id=103)
++        related_materials_field.name = "related_materials"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"103": {"value": [401]}},
++            schema=[related_materials_field],
++        )
++        # ensure no version-relation flags
++        item_data["is_last_version"] = False
++        item_data["next_version"] = None
++        xml = helper.build_xml_itbm(item_data)
++
++        self.assertEqual(xml.count("<relatedIdentifiers>"), 1)
++        self.assertIn('relationType="IsPartOf"', xml)
++
++    # ------------------------------------------------------------------
++    # publisher_published without first_online (no remove() call)
++    # ------------------------------------------------------------------
++
++    def test_publisher_published_only_sets_issued_without_removing_previous(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        # _issued_date_el is None when publisher_published is processed (first_online absent),
++        # so the `dates.remove()` branch is NOT taken — only one Issued date emitted.
++        publisher_published_field = mock.Mock(id=111)
++        publisher_published_field.name = "publisher_published"
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data(
++            fields={"111": {"value": "2024-07-20"}},
++            schema=[publisher_published_field],
++        )
++        xml = helper.build_xml_itbm(item_data)
++        self.assertEqual(xml.count('dateType="Issued"'), 1)
++        self.assertIn('dateType="Issued">2024-07-20', xml)
++        self.assertNotIn('dateType="Available"', xml)
++
++    # ------------------------------------------------------------------
++    # published_date fallback — datetime object calls .date()
++    # ------------------------------------------------------------------
++
++    def test_published_date_datetime_object_uses_date_portion(
++        self, mock_rm, mock_funding, mock_grid_find, mock_grids, mock_cats
++    ):
++        from datetime import datetime
++
++        helper = DataCiteDOIHelper(**self.CONFIG)
++        item_data = self._minimal_item_data()
++        item_data["published_date"] = datetime(2023, 11, 30, 14, 35, 0)
++        xml = helper.build_xml_itbm(item_data)
++        self.assertIn('dateType="Issued">2023-11-30', xml)

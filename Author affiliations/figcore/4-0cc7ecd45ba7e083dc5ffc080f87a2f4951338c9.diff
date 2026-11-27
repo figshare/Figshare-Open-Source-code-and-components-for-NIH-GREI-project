@@ -1,0 +1,58 @@
+diff --git a/src/figcore/graphql/interceptors/user.py b/src/figcore/graphql/interceptors/user.py
+index aadd160d1..7232e2f6f 100644
+--- a/src/figcore/graphql/interceptors/user.py
++++ b/src/figcore/graphql/interceptors/user.py
+@@ -50,6 +50,17 @@ def publications(obj, info, offset, limit):
+     return {"elements": elements_with_defaults, "has_more": has_more}
+ 
+ 
++def ror_ids(obj, info):
++    # a list of objects stored in a JSON column is not resolved by the generic db layer (like
++    # `publications`): read the decoded column and give every entry all the RorAffiliation keys
++    ror_ids = obj["_raw_db"]["user_profile.ror_ids"] or []
++    if not isinstance(ror_ids, list):
++        return []
++
++    default = {"ror_id": None, "name": None, "url": None, "order": None}
++    return [{**default, **ror_id} for ror_id in ror_ids if isinstance(ror_id, dict)]
++
++
+ def hide_email(obj, info=None):
+     if obj:
+         name, domain = obj.split("@")
+diff --git a/src/figcore/graphql/schema/types/user.py b/src/figcore/graphql/schema/types/user.py
+index 3c001f61b..1808b11f3 100644
+--- a/src/figcore/graphql/schema/types/user.py
++++ b/src/figcore/graphql/schema/types/user.py
+@@ -1,4 +1,4 @@
+-from figcore.graphql.interceptors.user import hide_email, open_in_new_tab, publications, url_with_domain
++from figcore.graphql.interceptors.user import hide_email, open_in_new_tab, publications, ror_ids, url_with_domain
+ from figcore.graphql.internals import GqlType
+ from figcore.graphql.resolvers.generic import entity_to_many_paginated
+ from figcore.graphql.resolvers.user import fields_of_interest, institution_string_id, photo_url
+@@ -193,7 +193,11 @@ class User(GqlType):
+ 
+     @classmethod
+     def ror_ids(cls):
+-        return {"meta": {"db_model": "user_profile", "db_column": "ror_ids"}, "type": [RorAffiliation]}
++        return {
++            "meta": {"db_model": "user_profile", "db_column": "ror_ids"},
++            "interceptors": [ror_ids],
++            "type": [RorAffiliation],
++        }
+ 
+ 
+ user = User._type_class_to_dict()
+diff --git a/tests/graphql/api/account/test_account.py b/tests/graphql/api/account/test_account.py
+index 37eb874db..7224822a2 100644
+--- a/tests/graphql/api/account/test_account.py
++++ b/tests/graphql/api/account/test_account.py
+@@ -318,7 +318,7 @@ class TestAccountMutation(BaseTestTransactionedGql):
+         result = gql_parser.query(
+             "account",
+             params={"id": self.account1.id},
+-            fields=["user { rorIds { rorId name url order } }"],
++            fields=[{"user": [{"ror_ids": ["ror_id", "name", "url", "order"]}]}],
+             account_id=self.account1.id,
+             get_url_details=self.mock_get_url_details,
+         )

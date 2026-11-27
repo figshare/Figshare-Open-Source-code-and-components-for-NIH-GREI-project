@@ -1,0 +1,210 @@
+diff --git a/src/pages/editProject/utils.jsx b/src/pages/editProject/utils.jsx
+index b7425bfc3..7cd7c115a 100644
+--- a/src/pages/editProject/utils.jsx
++++ b/src/pages/editProject/utils.jsx
+@@ -2,6 +2,13 @@ import { extractContentFromLtrParagraph } from "utils/extractContentFromLtrParag
+ 
+ 
+ const DROPDOWN_FIELD_TYPES = new Set(["dropdown"]);
++const PERSON_LIST_FIELD_TYPES = new Set(["personList", "person_list"]);
++
++// Allowed keys for person_list entries — strip display-only keys added by
++// hydrate_person_list (isActive, isPublic, publicUrl, name for persons,
++// hasAccount, isCorresponding) and frontend-only tracking keys (id, authorType).
++const PERSON_KEYS = ["type", "userId", "firstName", "lastName", "email", "orcidId", "affiliations"];
++const ORG_KEYS = ["type", "userId", "name", "rorId", "contributors"];
+ 
+ export function buildItbmProjectFields(fields, fieldsByName, formattedFundings, fieldTypeById = {}, allowedFieldIds = null) {
+   const underlying = {};
+@@ -28,7 +35,29 @@ export function buildItbmProjectFields(fields, fieldsByName, formattedFundings,
+       const value = fields[key]?.value ?? null;
+       const fieldType = fieldTypeById[id];
+ 
+-      if (DROPDOWN_FIELD_TYPES.has(fieldType) && value !== null && !Array.isArray(value)) {
++      if (PERSON_LIST_FIELD_TYPES.has(fieldType)) {
++        underlying[id] = (value || []).map((entry) => {
++          const allowed = entry.type === 2 ? ORG_KEYS : PERSON_KEYS;
++
++          const serialized = allowed.reduce((acc, k) => {
++            if (Object.prototype.hasOwnProperty.call(entry, k)) acc[k] = entry[k];
++
++            return acc;
++          }, {});
++
++          // Convert person affiliations from camelCase (rorId) to snake_case (ror_id) for the API
++          if (serialized.affiliations) {
++            serialized.affiliations = serialized.affiliations.map((aff) => { // eslint-disable-line arrow-body-style
++              return {
++                name: aff.name,
++                ror_id: aff.rorId ?? aff.ror_id ?? null, // eslint-disable-line camelcase
++              };
++            });
++          }
++
++          return serialized;
++        });
++      } else if (DROPDOWN_FIELD_TYPES.has(fieldType) && value !== null && !Array.isArray(value)) {
+         underlying[id] = [value];
+       } else {
+         underlying[id] = value;
+diff --git a/src/pages/editProject/utils.test.tsx b/src/pages/editProject/utils.test.tsx
+index 1af9a2126..b4fabf630 100644
+--- a/src/pages/editProject/utils.test.tsx
++++ b/src/pages/editProject/utils.test.tsx
+@@ -296,6 +296,156 @@ describe("buildItbmProjectFields", () => {
+     });
+   });
+ 
++  describe("fieldTypeById — person_list key filtering", () => {
++    it("strips display-only keys from person entries", () => {
++      const scope = setup({
++        fields: {
++          "field_5": {
++            value: [
++              {
++                type: 1,
++                userId: 10,
++                firstName: "Jane",
++                lastName: "Doe",
++                email: "jane@doe.com",
++                orcidId: "",
++                affiliations: [],
++                // display-only keys that should be stripped
++                isActive: true,
++                isPublic: true,
++                publicUrl: "https://figshare.com/jane",
++                name: "Jane Doe",
++                hasAccount: true,
++                isCorresponding: false,
++              },
++            ],
++          },
++        },
++      });
++
++      expect(scope.run({ "5": "person_list" })).toEqual({
++        "5": [
++          {
++            type: 1,
++            userId: 10,
++            firstName: "Jane",
++            lastName: "Doe",
++            email: "jane@doe.com",
++            orcidId: "",
++            affiliations: [],
++          },
++        ],
++      });
++
++      teardown();
++    });
++
++    it("strips display-only keys from organization entries (type 2)", () => {
++      const scope = setup({
++        fields: {
++          "field_5": {
++            value: [
++              {
++                type: 2,
++                userId: null,
++                name: "CERN",
++                rorId: "01ggx4157",
++                contributors: [],
++                isActive: false,
++                isPublic: false,
++                hasAccount: false,
++              },
++            ],
++          },
++        },
++      });
++
++      expect(scope.run({ "5": "person_list" })).toEqual({
++        "5": [
++          {
++            type: 2,
++            userId: null,
++            name: "CERN",
++            rorId: "01ggx4157",
++            contributors: [],
++          },
++        ],
++      });
++
++      teardown();
++    });
++
++    it("converts affiliation rorId from camelCase to snake_case", () => {
++      const scope = setup({
++        fields: {
++          "field_5": {
++            value: [
++              {
++                type: 1,
++                firstName: "John",
++                lastName: "Smith",
++                affiliations: [
++                  { name: "MIT", rorId: "042nb2s44" },
++                  { name: "Manual Org" },
++                ],
++              },
++            ],
++          },
++        },
++      });
++
++      const result = scope.run({ "5": "personList" });
++
++      expect(result["5"][0].affiliations).toEqual([
++        { name: "MIT", "ror_id": "042nb2s44" }, // eslint-disable-line camelcase
++        { name: "Manual Org", "ror_id": null }, // eslint-disable-line camelcase
++      ]);
++
++      teardown();
++    });
++
++    it("handles mixed saved and new authors in the same list", () => {
++      const scope = setup({
++        fields: {
++          "field_5": {
++            value: [
++              {
++                type: 1, userId: 10, firstName: "Saved", lastName: "Author",
++                email: "", orcidId: "", affiliations: [],
++                isActive: true, isPublic: false, publicUrl: "", name: "Saved Author", hasAccount: true,
++              },
++              {
++                type: 1, userId: null, firstName: "New", lastName: "Author",
++                email: "new@test.com", orcidId: "", affiliations: [],
++              },
++            ],
++          },
++        },
++      });
++
++      const result = scope.run({ "5": "person_list" });
++
++      expect(result["5"]).toHaveLength(2);
++      expect(result["5"][0]).not.toHaveProperty("isActive");
++      expect(result["5"][0]).not.toHaveProperty("hasAccount");
++      expect(result["5"][0]).not.toHaveProperty("name");
++      expect(result["5"][1]).toEqual({
++        type: 1, userId: null, firstName: "New", lastName: "Author",
++        email: "new@test.com", orcidId: "", affiliations: [],
++      });
++
++      teardown();
++    });
++
++    it("returns empty array when person_list value is null", () => {
++      const scope = setup({ fields: { "field_5": { value: null } } });
++
++      expect(scope.run({ "5": "person_list" })).toEqual({ "5": [] });
++
++      teardown();
++    });
++  });
++
+   describe("allowedFieldIds — payload filtering", () => {
+     it("includes fields in the allowedFieldIds set", () => {
+       const scope = setup({
